@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>PMSI-SMR — TDB choix</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e;
+    --muted: #898781; --border: rgba(11,11,11,0.10); --grid: #e1e0d9;
+    --rhs: #2a78d6; --vid: #1baf7a; --warn: #fab219; --warn-ink: #6b4c00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+      --muted: #898781; --border: rgba(255,255,255,0.10); --grid: #2c2c2a;
+      --rhs: #3987e5; --vid: #199e70; --warn: #fab219; --warn-ink: #3a2900;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+    --muted: #898781; --border: rgba(255,255,255,0.10); --grid: #2c2c2a;
+    --rhs: #3987e5; --vid: #199e70; --warn: #fab219; --warn-ink: #3a2900;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page); color: var(--ink);
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 32px 16px 56px; }
+  a.back { color: var(--ink-2); font-size: 13px; text-decoration: none; }
+  a.back:hover { text-decoration: underline; }
+  h1 { font-size: 22px; margin: 14px 0 4px; }
+  p.sub { color: var(--ink-2); font-size: 13.5px; margin: 0 0 24px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 20px; margin-bottom: 18px;
+  }
+  .card h2 {
+    font-size: 12.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--ink-2); margin: 0 0 12px;
+  }
+  .chip-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  label.chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer; user-select: none;
+    background: var(--page);
+  }
+  label.chip input { accent-color: var(--rhs); }
+  label.chip.disabled { opacity: 0.4; cursor: not-allowed; }
+  label.chip input[type="radio"] { accent-color: var(--vid); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  button#go {
+    background: var(--rhs); color: #fff; border: none; border-radius: 8px;
+    padding: 12px 22px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button#go:disabled { opacity: 0.5; cursor: not-allowed; }
+  .msg {
+    font-size: 13px; padding: 10px 14px; border-radius: 8px; margin-top: 14px;
+  }
+  .msg.error { background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border)); color: var(--warn-ink); }
+  #results { margin-top: 20px; }
+  .report {
+    border-bottom: 1px solid var(--grid); padding: 12px 0; font-size: 13.5px;
+  }
+  .report:last-child { border-bottom: none; }
+  .report .fin { font-weight: 700; margin-bottom: 6px; }
+  .report a {
+    color: var(--rhs); text-decoration: none; margin-right: 14px; font-size: 13px;
+  }
+  .report a:hover { text-decoration: underline; }
+  .spinner { font-size: 13px; color: var(--ink-2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/index.html">&larr; Accueil</a>
+  <h1>Tableaux de bord simples — choix</h1>
+  <p class="sub">Sélectionnez les années (3 maximum), les établissements, et éventuellement un TDB secondaire.</p>
+
+  <div class="card">
+    <h2>Années à comparer (3 max.)</h2>
+    <div id="years" class="chip-grid"><span class="hint">Chargement…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Établissements (FINESS)</h2>
+    <div id="finess" class="chip-grid"><span class="hint">Chargement…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>TDB secondaire</h2>
+    <div class="chip-grid">
+      <label class="chip"><input type="radio" name="axis" value="none" checked> Aucun</label>
+      <label class="chip"><input type="radio" name="axis" value="uf"> Par UF</label>
+      <label class="chip"><input type="radio" name="axis" value="type_hospitalisation"> Par type d'hospitalisation (HC / HTP)</label>
+    </div>
+  </div>
+
+  <button id="go" disabled>Générer le(s) TDB</button>
+  <div id="msg"></div>
+  <div id="results"></div>
+</div>
+
+<script>
+(function () {
+  const MAX_ANNEES = 3;
+  const yearsBox = document.getElementById("years");
+  const finessBox = document.getElementById("finess");
+  const goBtn = document.getElementById("go");
+  const msgBox = document.getElementById("msg");
+  const resultsBox = document.getElementById("results");
+
+  let yearsByFiness = {};
+
+  function selectedValues(container, name) {
+    return Array.from(container.querySelectorAll(`input[name="${name}"]:checked`)).map(i => i.value);
+  }
+
+  function refreshYearAvailability() {
+    const chosenFiness = selectedValues(finessBox, "finess");
+    const available = new Set();
+    (chosenFiness.length ? chosenFiness : Object.keys(yearsByFiness)).forEach(f => {
+      (yearsByFiness[f] || []).forEach(y => available.add(y));
+    });
+    yearsBox.querySelectorAll("label.chip").forEach(label => {
+      const input = label.querySelector("input");
+      const has = available.has(input.value);
+      label.classList.toggle("disabled", !has);
+      input.disabled = !has;
+      if (!has) input.checked = false;
+    });
+    enforceYearLimit();
+  }
+
+  function enforceYearLimit() {
+    const checked = yearsBox.querySelectorAll('input[name="year"]:checked');
+    const atMax = checked.length >= MAX_ANNEES;
+    yearsBox.querySelectorAll('input[name="year"]').forEach(input => {
+      if (!input.checked) input.disabled = atMax || input.disabled;
+    });
+    // ré-active celles qui ne sont pas au-delà de la limite (sauf si année indisponible)
+    if (!atMax) refreshDisabledFromAvailability();
+    updateGoState();
+  }
+
+  function refreshDisabledFromAvailability() {
+    const chosenFiness = selectedValues(finessBox, "finess");
+    const available = new Set();
+    (chosenFiness.length ? chosenFiness : Object.keys(yearsByFiness)).forEach(f => {
+      (yearsByFiness[f] || []).forEach(y => available.add(y));
+    });
+    yearsBox.querySelectorAll('input[name="year"]').forEach(input => {
+      if (!input.checked) input.disabled = !available.has(input.value);
+    });
+  }
+
+  function updateGoState() {
+    const years = selectedValues(yearsBox, "year");
+    const finess = selectedValues(finessBox, "finess");
+    goBtn.disabled = !(years.length > 0 && finess.length > 0);
+  }
+
+  fetch("/api/meta").then(r => r.json()).then(meta => {
+    yearsByFiness = meta.years_by_finess || {};
+    const allYears = Array.from(new Set(Object.values(yearsByFiness).flat())).sort();
+
+    yearsBox.innerHTML = allYears.map(y =>
+      `<label class="chip"><input type="checkbox" name="year" value="${y}"> ${y}</label>`
+    ).join("") || '<span class="hint">Aucune donnée disponible.</span>';
+
+    finessBox.innerHTML = (meta.finess || []).map(f =>
+      `<label class="chip"><input type="checkbox" name="finess" value="${f}"> ${f}</label>`
+    ).join("") || '<span class="hint">Aucun établissement en base.</span>';
+
+    yearsBox.addEventListener("change", enforceYearLimit);
+    finessBox.addEventListener("change", refreshYearAvailability);
+    refreshYearAvailability();
+  }).catch(err => {
+    yearsBox.innerHTML = finessBox.innerHTML = '<span class="hint">Erreur de chargement.</span>';
+    console.error(err);
+  });
+
+  goBtn.addEventListener("click", () => {
+    const years = selectedValues(yearsBox, "year");
+    const finess = selectedValues(finessBox, "finess");
+    const axis = document.querySelector('input[name="axis"]:checked').value;
+
+    msgBox.innerHTML = '<p class="spinner">Génération en cours…</p>';
+    resultsBox.innerHTML = "";
+    goBtn.disabled = true;
+
+    fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ years, finess, axis })
+    })
+      .then(r => r.json().then(body => ({ ok: r.ok, body })))
+      .then(({ ok, body }) => {
+        goBtn.disabled = false;
+        if (!ok) {
+          msgBox.innerHTML = `<div class="msg error">${body.error || "Erreur inconnue."}</div>`;
+          return;
+        }
+        msgBox.innerHTML = "";
+        resultsBox.innerHTML = body.reports.map(r => `
+          <div class="report">
+            <div class="fin">${r.finess} — ${r.annees.join(", ")}</div>
+            <a href="${r.tdb}" target="_blank">Tableau de bord</a>
+            <a href="${r.annexe}" target="_blank">Annexe</a>
+            <a href="${r.journal}" target="_blank">Journal</a>
+            ${(r.secondaires || []).map(s =>
+              `<a href="${s.url}" target="_blank">TDB — ${s.libelle}</a>`
+            ).join("")}
+          </div>
+        `).join("");
+      })
+      .catch(err => {
+        goBtn.disabled = false;
+        msgBox.innerHTML = `<div class="msg error">Erreur réseau : ${err}</div>`;
+      });
+  });
+})();
+</script>
+</body>
+</html>

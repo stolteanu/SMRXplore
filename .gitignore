@@ -3,10 +3,21 @@
 input/
 data/
 
-# Artefacts générés (régénérables via `python pmsi.py dashboard`/`publier`) —
-# dérivés de données patients réelles (établissement, activité, montants),
-# pas du code : on garde le code source dans git, pas ses sorties.
-app/
+# app/ mélange du code source (interface de lancement/exploration) et des
+# artefacts générés (tableaux de bord dérivés de données patients réelles —
+# établissement, activité, montants) : on ignore tout par défaut, puis on
+# ré-autorise explicitement les fichiers SOURCE (jamais les rapports générés
+# tableau_de_bord_*/annexe_*/journal_*/generated/, ni app/data/pmsi.db —
+# celui-ci déjà couvert par la règle data/ ci-dessus).
+app/*
+!app/index.html
+!app/tdb-choix.html
+!app/explorateur.html
+!app/catalogue.js
+!app/app.js
+!app/lib/
+!app/lib/**
+
 output/
 temp/
 
