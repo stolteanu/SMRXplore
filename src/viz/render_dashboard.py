@@ -19,6 +19,7 @@ la conception (choix utilisateur 2026-07-30). La section "Erreurs groupage"
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from src.viz.tableau_de_bord import build
@@ -245,7 +246,11 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
     return m
 
 
-def render(data: dict) -> str:
+def render(data: dict, axis_label: str | None = None) -> str:
+    """`axis_label` (optionnel, ex. "UF 3001" ou "type d'hospitalisation
+    Hospitalisation complète (HC)", 2026-08-04) : ajouté au sous-titre et au
+    titre de la page quand ce TDB est un TDB secondaire (un par valeur d'axe,
+    voir generate_axis_reports()) plutôt que le TDB principal non filtré."""
     years = data["years"]
     periods_by_year = {p["year"]: p for p in data["periods"]}
     notes = NoteCollector()
@@ -554,7 +559,7 @@ def render(data: dict) -> str:
     valorisation_rows = ""
     for y in years:
         v = data["valorisation"][y]
-        ecart = v["montant_br_tot"] - v["montant_br_pt"]
+        ecart = v["montant_br_tot"] - v["montant_br_pt"] if v["montant_br_tot"] is not None else None
         valorisation_rows += (
             f"<tr><td>{periods_by_year[y]['label']}</td>"
             f"<td>{fmt(v['montant_br_pt'], 2, ' €')}</td>"
@@ -639,8 +644,12 @@ def render(data: dict) -> str:
         _structure_section(9, data["structure_gme"], note10),
     ])
 
+    subtitle = _period_subtitle(data["finess"], data["periods"])
+    if axis_label:
+        subtitle += f" · {axis_label}"
+
     body = HTML_TEMPLATE.format(
-        period_subtitle=_period_subtitle(data["finess"], data["periods"]),
+        period_subtitle=subtitle,
         patients_rows=patients_rows,
         sejours_rows=sejours_rows,
         lines_svg=lines_svg,
@@ -669,7 +678,10 @@ def render(data: dict) -> str:
         note5=note5, note6=note6, note7=note7, note8=note8, note9=note9, note10=note10,
         notes_section=notes_section,
     )
-    return _wrap_page("PMSI-SMR — Tableau de bord", body)
+    title = "PMSI-SMR — Tableau de bord"
+    if axis_label:
+        title += f" ({axis_label})"
+    return _wrap_page(title, body)
 
 
 def render_annexe(data: dict) -> str:
@@ -714,7 +726,10 @@ def _wrap_page(title: str, body: str) -> str:
     donc ses accolades CSS n'ont pas besoin d'être doublées comme dans les
     templates .format() ci-dessous — évite d'avoir à dupliquer ~110 lignes de
     CSS entre le TDB principal et l'annexe."""
-    return f'<title>{title}</title>\n<meta name="color-scheme" content="light dark">\n<style>\n{STYLE_BLOCK}\n</style>\n\n{body}'
+    return (
+        f'<meta charset="utf-8">\n<title>{title}</title>\n'
+        f'<meta name="color-scheme" content="light dark">\n<style>\n{STYLE_BLOCK}\n</style>\n\n{body}'
+    )
 
 
 STYLE_BLOCK = """
@@ -1042,7 +1057,65 @@ JOURNAL_TEMPLATE = """<div class="viz-root">
 """
 
 
-def main(finess: str | None = None) -> None:
+AXIS_CHAMP = {
+    "uf": "numero_unite_medicale",
+    "type_hospitalisation": "type_hospitalisation",
+}
+
+AXIS_TITLE = {
+    "uf": "UF",
+    "type_hospitalisation": "type d'hospitalisation",
+}
+
+
+def generate_axis_reports(finess: str, years: list[str] | None, axis: str) -> list[dict]:
+    """TDB secondaire (2026-08-04, décision utilisateur) : PAS une section
+    résumé en plus du TDB principal, mais un TDB COMPLET (sections 1-9,
+    mêmes gabarits que render()) par valeur de l'axe choisi — un par UF, ou
+    un par type d'hospitalisation (HC/HTP). `axis` = "uf" ou
+    "type_hospitalisation" (clés d'AXIS_CHAMP).
+
+    Limites assumées (voir docstrings de tableau_de_bord.section_patients et
+    section_valorisation) : la section Patients restreint aux séjours ayant
+    ≥1 semaine RHS dans le filtre (proxy, VID-HOSP n'a pas cette notion), et
+    `montant_br_tot` (montant officiel ATIH, non ventilable par séjour) est
+    absent — seul `montant_br_pt` (notre calcul prorata) est reproraté par
+    axe. Rubrique nouvelle, non issue d'un tableau ATIH de référence.
+    """
+    from src.viz.tableau_de_bord import build, compute_reporting_periods, connect, valeurs_axe
+
+    if axis not in AXIS_CHAMP:
+        raise ValueError(f"axe inconnu : {axis!r} (attendu : {list(AXIS_CHAMP)})")
+    champ = AXIS_CHAMP[axis]
+
+    conn = connect()
+    periods = compute_reporting_periods(conn, finess, years)
+    values = valeurs_axe(conn, periods, finess, champ)
+    conn.close()
+
+    from src.viz.tableau_de_bord import TYPE_HOSPITALISATION_LABELS
+
+    labels = TYPE_HOSPITALISATION_LABELS if axis == "type_hospitalisation" else {}
+
+    GENERATED_DIR = OUT_DIR / "generated"
+    GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = "-".join(years) if years else "toutes"
+
+    reports = []
+    for value in values:
+        label = labels.get(value, value)
+        data = build(finess, years, axis_filter=(champ, value))
+        if not data["years"]:
+            continue
+        html = render(data, axis_label=f"{AXIS_TITLE[axis]} {label}")
+        slug = re.sub(r"[^A-Za-z0-9_-]+", "_", value)
+        path = GENERATED_DIR / f"tableau_de_bord_{finess}_{suffix}_{axis}-{slug}.html"
+        path.write_text(html, encoding="utf-8")
+        reports.append({"value": value, "libelle": label, "url": f"/generated/{path.name}"})
+    return reports
+
+
+def main(finess: str | None = None, years: list[str] | None = None) -> None:
     import sys
 
     from src.viz.tableau_de_bord import connect, list_finess
@@ -1054,7 +1127,7 @@ def main(finess: str | None = None) -> None:
         finess = list_finess(conn)[0]
         conn.close()
 
-    data = build(finess)
+    data = build(finess, years)
     html = render(data)
     out_path = OUT_DIR / f"tableau_de_bord_{finess}.html"
     out_path.write_text(html, encoding="utf-8")

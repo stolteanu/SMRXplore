@@ -79,7 +79,9 @@ def _last_week_of_month(year: int, month: int) -> int:
     return last
 
 
-def compute_reporting_periods(conn: sqlite3.Connection, finess: str) -> list[dict]:
+def compute_reporting_periods(
+    conn: sqlite3.Connection, finess: str, years: list[str] | None = None
+) -> list[dict]:
     """Détermine les périodes de reporting COMPARABLES à partir des numero_semaine présents.
 
     La période cible est l'année ISO la plus récente présente (semaine 1 -> dernière
@@ -93,6 +95,12 @@ def compute_reporting_periods(conn: sqlite3.Connection, finess: str) -> list[dic
     ne sont que des semaines résiduelles d'un séjour à cheval (queue d'une transmission
     précédente), pas une vraie période M01-M0N comparable, et l'année est exclue (voir
     docstring du module).
+
+    `years` (optionnel, ex. ["2025", "2026"] — pour le choix utilisateur dans la page
+    "TDB choix", max 3 années) restreint le résultat à ces années-là uniquement ; le
+    "mois cible" (année la plus récente PARMI `years`) reste la même règle du jeudi
+    que sans restriction, juste appliquée à un sous-ensemble d'années plutôt qu'à
+    toutes les années présentes en base.
     """
     rows = conn.execute(
         "SELECT DISTINCT numero_semaine FROM rhs_groupe WHERE numero_semaine IS NOT NULL AND finess_epmsi = ?",
@@ -103,6 +111,10 @@ def compute_reporting_periods(conn: sqlite3.Connection, finess: str) -> list[dic
         ns = r["numero_semaine"]
         week, year = int(ns[:2]), ns[2:6]
         weeks_by_year.setdefault(year, []).append(week)
+
+    if years:
+        wanted = {str(y) for y in years}
+        weeks_by_year = {y: w for y, w in weeks_by_year.items() if y in wanted}
 
     if not weeks_by_year:
         return []
@@ -130,17 +142,41 @@ def compute_reporting_periods(conn: sqlite3.Connection, finess: str) -> list[dic
     return periods
 
 
-def _period_filter(period: dict, finess: str) -> tuple[str, list]:
-    return (
-        "finess_epmsi = ? AND substr(numero_semaine, 3, 4) = ? AND CAST(substr(numero_semaine, 1, 2) AS INTEGER) <= ?",
-        [finess, period["year"], period["max_week"]],
-    )
+def years_disponibles(conn: sqlite3.Connection, finess: str) -> list[str]:
+    """Années ISO présentes dans le RHS groupé pour un FINESS (pour peupler le
+    formulaire de choix — indépendant de la logique de période comparable
+    ci-dessus, juste la liste brute des années qui ont au moins une ligne)."""
+    rows = conn.execute(
+        "SELECT DISTINCT substr(numero_semaine, 3, 4) AS annee FROM rhs_groupe "
+        "WHERE numero_semaine IS NOT NULL AND finess_epmsi = ? ORDER BY 1",
+        [finess],
+    ).fetchall()
+    return [r["annee"] for r in rows if r["annee"]]
 
 
-def section_sejours(conn: sqlite3.Connection, periods: list[dict], finess: str) -> dict:
+def _period_filter(
+    period: dict, finess: str, axis_filter: tuple[str, str] | None = None
+) -> tuple[str, list]:
+    """`axis_filter` (optionnel, ex. `("numero_unite_medicale", "3001")` ou
+    `("type_hospitalisation", "1")`, 2026-08-04) restreint aussi la ligne RHS
+    à cette valeur — utilisé pour générer un TDB secondaire complet PAR
+    valeur d'UF ou de type d'hospitalisation (une ligne RHS ne peut avoir
+    qu'une seule valeur, donc pas d'ambiguïté)."""
+    clause = "finess_epmsi = ? AND substr(numero_semaine, 3, 4) = ? AND CAST(substr(numero_semaine, 1, 2) AS INTEGER) <= ?"
+    params = [finess, period["year"], period["max_week"]]
+    if axis_filter:
+        champ, valeur = axis_filter
+        clause += f" AND {champ} = ?"
+        params.append(valeur)
+    return clause, params
+
+
+def section_sejours(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
     out = {}
     for period in periods:
-        clause, params = _period_filter(period, finess)
+        clause, params = _period_filter(period, finess, axis_filter)
         rows = conn.execute(f"SELECT * FROM rhs_groupe WHERE {clause}", params).fetchall()
         nb_rhs = len(rows)
         nb_ssr = len({r["numero_admin_sejour"] for r in rows})
@@ -194,7 +230,9 @@ def _last_rhs_presence_by_sejour(conn: sqlite3.Connection, finess: str) -> dict[
     return out
 
 
-def section_patients(conn: sqlite3.Connection, period: dict, finess: str) -> dict:
+def section_patients(
+    conn: sqlite3.Connection, period: dict, finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
     """Patients distincts sur LA période de reporting, à partir de VID-HOSP
     (pas de jointure RHS pour l'identité/sexe/âge — seule la borne de fin de
     présence peut être étendue par la dernière semaine RHS du séjour, voir
@@ -214,8 +252,16 @@ def section_patients(conn: sqlite3.Connection, period: dict, finess: str) -> dic
     avec 2 séjours dans l'année contribue 2 fois à la moyenne d'âge même s'il
     n'est compté qu'une fois dans l'effectif. Âge = (date_entree − date_naissance)
     en jours / 365,25, par séjour (pas par patient).
+
+    `axis_filter` (optionnel, TDB secondaire "par UF"/"par type
+    d'hospitalisation", 2026-08-04) : VID-HOSP n'a pas ces champs (propres au
+    RHS), donc pas de filtrage direct possible — on restreint plutôt aux
+    séjours ayant ≥1 ligne RHS correspondant au filtre sur la période (voir
+    _sejours_matching_axis). Proxy assumé, différent de la méthode VID-HOSP
+    pure validée pour le TDB principal non filtré.
     """
     period_start, period_end = period["start"], period["end"]
+    sejours_ok = _sejours_matching_axis(conn, period, finess, axis_filter)
 
     rows = conn.execute(
         "SELECT numero_ipp, sexe_beneficiaire, date_naissance_beneficiaire, "
@@ -228,6 +274,8 @@ def section_patients(conn: sqlite3.Connection, period: dict, finess: str) -> dic
     bucket = {"F": 0, "M": 0, "ages_f": [], "ages_m": []}
     seen_ipp: set[str] = set()
     for r in rows:
+        if sejours_ok is not None and int(r["numero_admin_sejour"]) not in sejours_ok:
+            continue
         start_raw = r["date_entree"] or r["date_hospitalisation"]
         if not start_raw:
             continue
@@ -277,10 +325,12 @@ def section_patients(conn: sqlite3.Connection, period: dict, finess: str) -> dic
     }
 
 
-def section_journees_semaine(conn: sqlite3.Connection, periods: list[dict], finess: str) -> dict:
+def section_journees_semaine(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
     out = {}
     for period in periods:
-        clause, params = _period_filter(period, finess)
+        clause, params = _period_filter(period, finess, axis_filter)
         rows = conn.execute(
             f"SELECT numero_semaine, jours_hors_weekend, jours_weekend FROM rhs_groupe WHERE {clause}",
             params,
@@ -323,10 +373,12 @@ def _dedup_child_rows(
     return kept
 
 
-def section_indicateurs(conn: sqlite3.Connection, periods: list[dict], finess: str) -> dict:
+def section_indicateurs(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
     out = {}
     for period in periods:
-        clause, params = _period_filter(period, finess)
+        clause, params = _period_filter(period, finess, axis_filter)
         rhs_rows = conn.execute(f"SELECT * FROM rhs_groupe WHERE {clause}", params).fetchall()
         nb_rhs = len(rhs_rows)
 
@@ -390,7 +442,9 @@ def section_indicateurs(conn: sqlite3.Connection, periods: list[dict], finess: s
     return out
 
 
-def section_activite_csarr(conn: sqlite3.Connection, periods: list[dict], finess: str) -> dict:
+def section_activite_csarr(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
     # Validé exact (2026-07-28) contre le rapport ATIH officiel "Activité CSARR par
     # intervenant, année N" (année 2024 complète, 6 professions + total 14649 ; puis
     # M01/M02/M03-2026 cumulatifs) : AUCUN dédoublonnage — SUM(nombre_realisations) brut,
@@ -404,7 +458,7 @@ def section_activite_csarr(conn: sqlite3.Connection, periods: list[dict], finess
     labels = _load_intervenant_labels(conn)
     out = {}
     for period in periods:
-        clause, params = _period_filter(period, finess)
+        clause, params = _period_filter(period, finess, axis_filter)
         rows = conn.execute(
             "SELECT c.code_intervenant, SUM(c.nombre_realisations) n "
             "FROM rhs_groupe_csarr c "
@@ -474,7 +528,9 @@ def _load_modulateurs(conn: sqlite3.Connection) -> dict[str, dict]:
     return {r["code"]: {"individuel": _pct(r["majoration_individuel"]), "collectif": _pct(r["majoration_collectif"])} for r in rows}
 
 
-def section_ponderation_csarr(conn: sqlite3.Connection, periods: list[dict], finess: str) -> dict:
+def section_ponderation_csarr(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
     """Score pondéré par intervenant = somme, sur chaque réalisation CSARR, de
     `ponderation_patient` (nomenclature_ponderation_actes) éventuellement
     majoré par le modulateur de LIEU (HW/LJ/XH/L3, nomenclature_ponderation_
@@ -490,7 +546,7 @@ def section_ponderation_csarr(conn: sqlite3.Connection, periods: list[dict], fin
     modulateurs = _load_modulateurs(conn)
     out = {}
     for period in periods:
-        clause, params = _period_filter(period, finess)
+        clause, params = _period_filter(period, finess, axis_filter)
         rows = conn.execute(
             "SELECT c.code_intervenant, c.code_principal, c.code_modulateur_lieu, "
             "c.nombre_realisations, c.nombre_reel_patients "
@@ -520,7 +576,9 @@ def section_ponderation_csarr(conn: sqlite3.Connection, periods: list[dict], fin
     return out
 
 
-def section_erreurs_activite(conn: sqlite3.Connection, periods: list[dict], finess: str) -> dict:
+def section_erreurs_activite(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
     """Décompte (diag, CSARR, CSAR) porté par des séjours en erreur de groupage
     bloquante (indicateur_erreur rempli), à titre d'information seulement — ce tableau
     de bord garde volontairement ces séjours dans tous les totaux (logique activité,
@@ -529,7 +587,7 @@ def section_erreurs_activite(conn: sqlite3.Connection, periods: list[dict], fine
     """
     out = {}
     for period in periods:
-        clause, params = _period_filter(period, finess)
+        clause, params = _period_filter(period, finess, axis_filter)
         rhs_ids = [
             r["id"] for r in conn.execute(
                 f"SELECT id FROM rhs_groupe WHERE {clause} AND indicateur_erreur IS NOT NULL AND trim(indicateur_erreur) != ''",
@@ -569,10 +627,12 @@ def section_erreurs_activite(conn: sqlite3.Connection, periods: list[dict], fine
     return out
 
 
-def section_absence_csarr(conn: sqlite3.Connection, periods: list[dict], finess: str) -> dict:
+def section_absence_csarr(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
     out = {}
     for period in periods:
-        clause, params = _period_filter(period, finess)
+        clause, params = _period_filter(period, finess, axis_filter)
         rows = conn.execute(
             f"SELECT numero_admin_sejour, n2_nb_csarr, jours_hors_weekend, jours_weekend FROM rhs_groupe WHERE {clause}",
             params,
@@ -597,10 +657,12 @@ def section_absence_csarr(conn: sqlite3.Connection, periods: list[dict], finess:
     return out
 
 
-def section_erreurs_groupage(conn: sqlite3.Connection, periods: list[dict], finess: str) -> dict:
+def section_erreurs_groupage(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
     out = {}
     for period in periods:
-        clause, params = _period_filter(period, finess)
+        clause, params = _period_filter(period, finess, axis_filter)
         rows = conn.execute(
             "SELECT indicateur_erreur, numero_admin_sejour FROM rhs_groupe "
             f"WHERE {clause} AND indicateur_erreur IS NOT NULL AND indicateur_erreur != ''",
@@ -705,6 +767,45 @@ def list_finess(conn: sqlite3.Connection) -> list[str]:
     return sorted(r["finess_epmsi"] for r in rows if r["finess_epmsi"])
 
 
+TYPE_HOSPITALISATION_LABELS = {
+    "1": "Hospitalisation complète (HC)",
+    "2": "Hospitalisation partielle de jour (HTP)",
+    "3": "Hospitalisation partielle de nuit (HTP)",
+}
+
+
+def valeurs_axe(conn: sqlite3.Connection, periods: list[dict], finess: str, champ: str) -> list[str]:
+    """Valeurs distinctes de `champ` (`numero_unite_medicale` ou
+    `type_hospitalisation`) réellement présentes sur les périodes demandées —
+    sert à énumérer les TDB secondaires à générer (un TDB complet PAR valeur,
+    demande utilisateur 2026-08-04, voir build(..., axis_filter=...))."""
+    values: set[str] = set()
+    for period in periods:
+        clause, params = _period_filter(period, finess)
+        rows = conn.execute(
+            f"SELECT DISTINCT {champ} FROM rhs_groupe WHERE {clause} AND {champ} IS NOT NULL AND {champ} != ''",
+            params,
+        ).fetchall()
+        values.update(r[0] for r in rows)
+    return sorted(values)
+
+
+def _sejours_matching_axis(
+    conn: sqlite3.Connection, period: dict, finess: str, axis_filter: tuple[str, str] | None
+) -> set[int] | None:
+    """Séjours ayant au moins une ligne RHS correspondant à `axis_filter` sur
+    la période — utilisé pour restreindre la section Patients (VID-HOSP,
+    aucune notion d'UF/type d'hospitalisation propre) dans un TDB secondaire.
+    Renvoie None si `axis_filter` est None (pas de restriction)."""
+    if not axis_filter:
+        return None
+    clause, params = _period_filter(period, finess, axis_filter)
+    rows = conn.execute(
+        f"SELECT DISTINCT numero_admin_sejour FROM rhs_groupe WHERE {clause}", params
+    ).fetchall()
+    return {int(r[0]) for r in rows}
+
+
 _GME_CODE_LENGTH = {"CM": 2, "GN": 4, "GME": 7}
 
 
@@ -715,12 +816,18 @@ def _load_gme_labels(conn: sqlite3.Connection, quoi: str) -> dict[str, str]:
     return {r["code"]: (r["libelle_long"] or r["libelle_court"] or r["code"]) for r in rows}
 
 
-def _sejour_code_gme_by_period(conn: sqlite3.Connection, period: dict, finess: str, length: int) -> dict[int, str]:
+def _sejour_code_gme_by_period(
+    conn: sqlite3.Connection,
+    period: dict,
+    finess: str,
+    length: int,
+    axis_filter: tuple[str, str] | None = None,
+) -> dict[int, str]:
     """Pour chaque séjour actif dans la période, le code GME (tronqué à
     `length` caractères — CM=2/GN=4/GME=7, cf. gme.py) de sa DERNIÈRE semaine
     RHS connue dans la période : représente son classement le plus à jour,
     au cas où un séjour serait re-groupé d'une semaine à l'autre."""
-    clause, params = _period_filter(period, finess)
+    clause, params = _period_filter(period, finess, axis_filter)
     rows = conn.execute(
         f"SELECT numero_admin_sejour, numero_semaine, code_gme FROM rhs_groupe "
         f"WHERE {clause} AND code_gme IS NOT NULL AND code_gme != ''",
@@ -736,7 +843,14 @@ def _sejour_code_gme_by_period(conn: sqlite3.Connection, period: dict, finess: s
     return {k: v[1] for k, v in best.items()}
 
 
-def section_palmares_gme(conn: sqlite3.Connection, periods: list[dict], finess: str, quoi: str, top_n: int = 5) -> dict:
+def section_palmares_gme(
+    conn: sqlite3.Connection,
+    periods: list[dict],
+    finess: str,
+    quoi: str,
+    top_n: int = 5,
+    axis_filter: tuple[str, str] | None = None,
+) -> dict:
     """Palmarès des `top_n` codes CM/GN/GME les plus fréquents (classés sur
     l'EFFECTIF total cumulé sur toutes les périodes comparées — mêmes 5 codes
     affichés pour chaque année, même si leur rang change d'une année à
@@ -759,7 +873,7 @@ def section_palmares_gme(conn: sqlite3.Connection, periods: list[dict], finess: 
 
     for period in periods:
         y = period["year"]
-        sejour_codes = _sejour_code_gme_by_period(conn, period, finess, length)
+        sejour_codes = _sejour_code_gme_by_period(conn, period, finess, length, axis_filter)
 
         eff: dict[str, int] = {}
         for code in sejour_codes.values():
@@ -856,7 +970,9 @@ def _structure_bucket_key(code: str, block: str) -> str:
     return sev if sev in _SEVERITE_LABELS else _ERREUR_KEY
 
 
-def section_structure_gme(conn: sqlite3.Connection, periods: list[dict], finess: str) -> dict:
+def section_structure_gme(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
     """Section 9 — trois blocs statistiques TRANSVERSES (toutes CM/GN
     confondues, pas de top N) sur la structure du groupage GME, demandés par
     l'utilisateur en complément des palmarès CM/GN (sections 7-8) : type de
@@ -873,7 +989,7 @@ def section_structure_gme(conn: sqlite3.Connection, periods: list[dict], finess:
 
     for period in periods:
         y = period["year"]
-        sejour_codes = _sejour_code_gme_by_period(conn, period, finess, 7)
+        sejour_codes = _sejour_code_gme_by_period(conn, period, finess, 7, axis_filter)
 
         for block in blocks:
             eff: dict[str, int] = {}
@@ -959,7 +1075,13 @@ def section_structure_gme(conn: sqlite3.Connection, periods: list[dict], finess:
     }
 
 
-def section_valorisation(conn: sqlite3.Connection, periods: list[dict], finess: str, sejours: dict) -> dict:
+def section_valorisation(
+    conn: sqlite3.Connection,
+    periods: list[dict],
+    finess: str,
+    sejours: dict,
+    axis_filter: tuple[str, str] | None = None,
+) -> dict:
     """Section 6 — Valorisation : montant BR (Budget Régulé) reconstitué pour
     la période, réparti au prorata temporis par jour de présence (voir
     src/viz/valorisation.py — répartition uniforme du montant de chaque
@@ -987,17 +1109,29 @@ def section_valorisation(conn: sqlite3.Connection, periods: list[dict], finess: 
     stable/connu dans une vraie transmission M04 de son année, même s'il
     apparaît déjà soldé dans le fichier M12 qu'on a chargé. Approximation
     assumée (pas de vraie transmission M04 2024/2025 disponible).
+
+    `axis_filter` (optionnel, TDB secondaire "par UF"/"par type
+    d'hospitalisation", 2026-08-04, décision utilisateur) : `montant_br_pt`
+    est reproraté sur les seuls jours de présence RHS qui tombent dans le
+    filtre (voir valeur_sur_periode/compute_valeur_journaliere) — nouvelle
+    hypothèse de calcul, non validée contre une référence externe.
+    `montant_br_tot` (figure OFFICIELLE ATIH, attachée au séjour ENTIER, donc
+    non ventilable par UF/type d'hospitalisation) devient None dans ce cas :
+    pas de valeur inventée pour un montant qui n'est pas attribuable au
+    filtre.
     """
     from src.viz.valorisation import valeur_sur_periode, montant_br_tot_campagne_comparable
 
     out = {}
     for period in periods:
         y = period["year"]
-        montant_br_pt = valeur_sur_periode(conn, period["start"], period["end"], finess)
+        montant_br_pt = valeur_sur_periode(conn, period["start"], period["end"], finess, axis_filter)
         sej = sejours[y]
         out[y] = {
             "montant_br_pt": montant_br_pt,
-            "montant_br_tot": montant_br_tot_campagne_comparable(conn, y, period["max_week"], finess),
+            "montant_br_tot": (
+                None if axis_filter else montant_br_tot_campagne_comparable(conn, y, period["max_week"], finess)
+            ),
             "pmct": montant_br_pt / sej["nb_ssr"] if sej["nb_ssr"] else None,
             "pmst": montant_br_pt / sej["nb_rhs"] if sej["nb_rhs"] else None,
             "pmjt": montant_br_pt / sej["nb_journees"] if sej["nb_journees"] else None,
@@ -1005,28 +1139,41 @@ def section_valorisation(conn: sqlite3.Connection, periods: list[dict], finess: 
     return out
 
 
-def build(finess: str) -> dict:
+def build(
+    finess: str, years: list[str] | None = None, axis_filter: tuple[str, str] | None = None
+) -> dict:
+    """`years` (optionnel, ex. ["2025", "2026"], max 3) restreint le TDB aux
+    années choisies dans la page "TDB choix" — voir compute_reporting_periods.
+    Sans argument, comportement inchangé (toutes les années comparables
+    disponibles), pour ne pas casser les appels existants (CLI, main()).
+
+    `axis_filter` (optionnel, ex. `("numero_unite_medicale", "3001")` ou
+    `("type_hospitalisation", "1")`, 2026-08-04) : produit un TDB complet
+    restreint à cette seule valeur d'UF/type d'hospitalisation — un TDB
+    secondaire = un appel à build() par valeur (voir
+    src/viz/render_dashboard.py generate_axis_reports()), pas une section en
+    plus du TDB principal."""
     conn = connect()
-    periods = compute_reporting_periods(conn, finess)
+    periods = compute_reporting_periods(conn, finess, years)
     years = [p["year"] for p in periods]
-    sejours = section_sejours(conn, periods, finess)
+    sejours = section_sejours(conn, periods, finess, axis_filter)
     data = {
         "finess": finess,
         "periods": periods,
         "years": years,
         "sejours": sejours,
-        "patients": {p["year"]: section_patients(conn, p, finess) for p in periods},
-        "journees_semaine": section_journees_semaine(conn, periods, finess),
-        "indicateurs": section_indicateurs(conn, periods, finess),
-        "activite_csarr": section_activite_csarr(conn, periods, finess),
-        "ponderation_csarr": section_ponderation_csarr(conn, periods, finess),
-        "valorisation": section_valorisation(conn, periods, finess, sejours),
-        "palmares_cm": section_palmares_gme(conn, periods, finess, "CM"),
-        "palmares_gn": section_palmares_gme(conn, periods, finess, "GN"),
-        "structure_gme": section_structure_gme(conn, periods, finess),
-        "erreurs_activite": section_erreurs_activite(conn, periods, finess),
-        "absence_csarr": section_absence_csarr(conn, periods, finess),
-        "erreurs_groupage": section_erreurs_groupage(conn, periods, finess),
+        "patients": {p["year"]: section_patients(conn, p, finess, axis_filter) for p in periods},
+        "journees_semaine": section_journees_semaine(conn, periods, finess, axis_filter),
+        "indicateurs": section_indicateurs(conn, periods, finess, axis_filter),
+        "activite_csarr": section_activite_csarr(conn, periods, finess, axis_filter),
+        "ponderation_csarr": section_ponderation_csarr(conn, periods, finess, axis_filter),
+        "valorisation": section_valorisation(conn, periods, finess, sejours, axis_filter),
+        "palmares_cm": section_palmares_gme(conn, periods, finess, "CM", axis_filter=axis_filter),
+        "palmares_gn": section_palmares_gme(conn, periods, finess, "GN", axis_filter=axis_filter),
+        "structure_gme": section_structure_gme(conn, periods, finess, axis_filter),
+        "erreurs_activite": section_erreurs_activite(conn, periods, finess, axis_filter),
+        "absence_csarr": section_absence_csarr(conn, periods, finess, axis_filter),
+        "erreurs_groupage": section_erreurs_groupage(conn, periods, finess, axis_filter),
         "incoherences_vidhosp_rhs": section_incoherences_vidhosp_rhs(conn, finess),
     }
     conn.close()

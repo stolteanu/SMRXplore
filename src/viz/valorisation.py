@@ -208,7 +208,63 @@ def _date_entree_par_sejour(
     return out
 
 
-def compute_valeur_journaliere(conn: sqlite3.Connection, finess: str | None = None) -> list[dict]:
+def _rhs_day_axis(
+    conn: sqlite3.Connection, finess: str | None = None
+) -> dict[tuple[str, int, datetime.date], tuple[str | None, str | None]]:
+    """Pour chaque jour de présence RHS, l'UF (`numero_unite_medicale`) et le
+    type d'hospitalisation de la ligne RHS qui l'a produit — utilisé pour
+    ventiler compute_valeur_journaliere par axe (TDB secondaire "par UF" /
+    "par type d'hospitalisation", 2026-08-04) SANS changer le dénominateur
+    (nb total de jours du séjour/de la campagne) qui détermine le tarif
+    journalier — seule la sélection des jours SOMMÉS dans le résultat change,
+    pas le calcul de valeur_jour lui-même."""
+    clause = "WHERE numero_semaine IS NOT NULL"
+    params: list = []
+    if finess is not None:
+        clause += " AND finess_epmsi = ?"
+        params.append(finess)
+    rows = conn.execute(
+        "SELECT finess_epmsi, numero_admin_sejour, numero_semaine, "
+        "jours_hors_weekend, jours_weekend, numero_unite_medicale, type_hospitalisation "
+        f"FROM rhs_groupe {clause}",
+        params,
+    ).fetchall()
+    out: dict[tuple[str, int, datetime.date], tuple[str | None, str | None]] = {}
+    for finess_v, numadmin, numero_semaine, jhw, jwe, uf, type_hosp in rows:
+        week, year = int(numero_semaine[:2]), int(numero_semaine[2:6])
+        flags = (jhw or "") + (jwe or "")
+        for weekday, flag in enumerate(flags, start=1):
+            if flag != "1":
+                continue
+            try:
+                jour = datetime.date.fromisocalendar(year, week, weekday)
+            except ValueError:
+                continue
+            out[(finess_v, int(numadmin), jour)] = (uf, type_hosp)
+    return out
+
+
+def _matches_axis(
+    day_axis: dict[tuple[str, int, datetime.date], tuple[str | None, str | None]],
+    axis_filter: tuple[str, str] | None,
+    finess_v: str,
+    numadmin: int,
+    jour: datetime.date,
+) -> bool:
+    if axis_filter is None:
+        return True
+    got = day_axis.get((finess_v, numadmin, jour))
+    if got is None:
+        return False
+    uf, type_hosp = got
+    champ, valeur = axis_filter
+    value = uf if champ == "numero_unite_medicale" else type_hosp
+    return value == valeur
+
+
+def compute_valeur_journaliere(
+    conn: sqlite3.Connection, finess: str | None = None, axis_filter: tuple[str, str] | None = None
+) -> list[dict]:
     """Une ligne par (séjour, jour de présence RHS concerné) avec sa valeur
     pro-rata temporis (mnt_br_pt). `campagne` porte l'année de la campagne
     ATIH qui a produit ce montant (utile pour tracer sa provenance), mais
@@ -216,7 +272,18 @@ def compute_valeur_journaliere(conn: sqlite3.Connection, finess: str | None = No
     peut appartenir à une autre année civile que `campagne` (cf. cas 2 dans
     la docstring module). `finess` filtre sur l'établissement — sans lui, un
     TDB multi-établissements sommerait le montant de TOUS les établissements
-    de la base (bug corrigé 2026-07-30)."""
+    de la base (bug corrigé 2026-07-30).
+
+    `axis_filter` (optionnel, ex. `("numero_unite_medicale", "3001")` ou
+    `("type_hospitalisation", "1")`, 2026-08-04) : pour le TDB secondaire "par
+    UF"/"par type d'hospitalisation", répartit le montant du séjour au
+    PRORATA de ses journées de présence qui tombent dans le filtre — le tarif
+    journalier (valeur_jour = montant / nb jours total) reste calculé sur le
+    total des jours du séjour/campagne, seuls les jours SOMMÉS dans le
+    résultat sont restreints à ceux dont la ligne RHS d'origine correspond au
+    filtre. Nouvelle hypothèse de calcul, non validée contre une référence
+    ATIH externe (contrairement au reste de ce module)."""
+    day_axis = _rhs_day_axis(conn, finess) if axis_filter else {}
     # montant_br_tot = 0.0 n'est pas une vraie facturation (campagne où le
     # séjour existe mais n'a encore rien déclenché de facturable, distinct
     # de NULL en base mais équivalent ici) : exclu au même titre que NULL,
@@ -280,6 +347,7 @@ def compute_valeur_journaliere(conn: sqlite3.Connection, finess: str | None = No
                             "valeur": valeur_jour,
                         }
                         for jour in jours
+                        if _matches_axis(day_axis, axis_filter, finess_v, numadmin, jour)
                     )
                 continue
 
@@ -316,6 +384,7 @@ def compute_valeur_journaliere(conn: sqlite3.Connection, finess: str | None = No
                     "valeur": valeur_jour,
                 }
                 for jour in jours
+                if _matches_axis(day_axis, axis_filter, finess_v, numadmin, jour)
             )
     return out
 
@@ -435,8 +504,10 @@ def valeur_sur_periode(
     date_debut: datetime.date,
     date_fin: datetime.date,
     finess: str | None = None,
+    axis_filter: tuple[str, str] | None = None,
 ) -> float:
     """Somme des valeurs journalières pro-rata dont le jour tombe dans
-    [date_debut, date_fin] (bornes incluses)."""
-    rows = compute_valeur_journaliere(conn, finess)
+    [date_debut, date_fin] (bornes incluses). `axis_filter` : voir
+    compute_valeur_journaliere (TDB secondaire par UF/type d'hospitalisation)."""
+    rows = compute_valeur_journaliere(conn, finess, axis_filter)
     return sum(r["valeur"] for r in rows if date_debut <= r["date"] <= date_fin)
