@@ -1,0 +1,16 @@
+{
+  "nomenclature": "csar_transcodage_csarr",
+  "spec_source": "Fichier associé CSAR (ATIH), feuille transcodage_CSARR_CSAR (= Annexe 4 'Table d'aide au codage' du guide) — pour chaque code CSARR, le code CSAR suggéré comme équivalent",
+  "table": "nomenclature_csar_transcodage_csarr",
+  "natural_key": ["code_csarr", "code_csar"],
+  "columns": [
+    {"name": "code_csarr", "type": "TEXT"},
+    {"name": "libelle_csarr", "type": "TEXT"},
+    {"name": "code_csar", "type": "TEXT", "note": "'ZZZ' = pas de correspondance CSAR pour ce code CSARR (3 cas)"},
+    {"name": "libelle_csar", "type": "TEXT"}
+  ],
+  "notes": [
+    "code_csarr = 'ZZZ' pour 9 lignes : ce sont des actes CSAR créés sans équivalent CSARR préexistant — d'où la clé composite (code_csarr, code_csar) plutôt que code_csarr seul.",
+    "Cette table est une aide au codage suggestive, pas une nomenclature de référence stricte : le guide précise explicitement qu'un autre choix que celui proposé peut être fait par le codeur dans certains cas."
+  ]
+}

@@ -1,0 +1,17 @@
+# Données patients réelles (RHS/VID-HOSP/valorisation, même anonymisées) —
+# ne doivent jamais entrer dans l'historique de version.
+input/
+data/
+
+# Artefacts générés (régénérables via `python pmsi.py dashboard`/`publier`) —
+# dérivés de données patients réelles (établissement, activité, montants),
+# pas du code : on garde le code source dans git, pas ses sorties.
+app/
+output/
+temp/
+
+__pycache__/
+*.pyc
+
+# Config Claude Code locale à cette machine (permissions), pas du projet.
+.claude/settings.local.json

@@ -1,0 +1,25 @@
+{
+  "format": "tarifs_gmt",
+  "source": "input/tarifs/tarifs_qv.xlsx — grille tarifaire GMT compilée par l'utilisateur, 3 feuilles",
+  "natural_key": ["feuille_source", "code_gmt", "code_gme", "date_debut"],
+  "note_natural_key": "Chaque ligne est une version tarifaire d'un couple (GMT, GME) valide sur [date_debut, date_fin] — plusieurs lignes par GME au fil des années, ce n'est PAS du dernier-gagne (contrairement aux nomenclatures code/libellé). feuille_source distingue les 3 régimes qui partagent le même schéma de colonnes : 'Sheet1' = GMT standard (<=90j), 'GMT_en_8' = GMT 8xxx (HC Réadaptation spécialisée), 'GMT_en_7' = GMT 7xxx (GMTH, journées au-delà du 90e jour).",
+  "note_mise_a_jour": "Pour intégrer une nouvelle année (ex. 2027) : ajouter les lignes dans le MÊME fichier tarifs_qv.xlsx, mêmes feuilles, mêmes en-têtes de colonnes — le loader (src/tarifs/gmt.py) les prendra automatiquement, aucune modification de schéma nécessaire tant que la trame ne change pas. Si une colonne est ajoutée/renommée dans le xlsx, le loader lève une erreur explicite listant les en-têtes non reconnus plutôt que de charger silencieusement des données incomplètes.",
+  "columns": [
+    {"name": "feuille_source", "xlsx_header": null, "type": "TEXT", "note": "pas une colonne du xlsx — nom de la feuille d'origine, ajouté par le loader"},
+    {"name": "annee", "xlsx_header": "ANNEE", "type": "INTEGER"},
+    {"name": "sp", "xlsx_header": "SP", "type": "INTEGER", "note": "présent seulement dans Sheet1 ; NULL pour GMT_en_8/GMT_en_7"},
+    {"name": "code_gmt", "xlsx_header": "GMT", "type": "TEXT"},
+    {"name": "code_gme", "xlsx_header": "GME", "type": "TEXT"},
+    {"name": "libelle", "xlsx_header": "LIBELLE", "type": "TEXT"},
+    {"name": "debut_zone_forfaitaire", "xlsx_header": "Debut de zone forfaitaire (DZF)", "type": "REAL"},
+    {"name": "fin_zone_forfaitaire", "xlsx_header": "Fin de zone Forfaitaire (FZF)", "type": "REAL"},
+    {"name": "tarif_zone_basse", "xlsx_header": "Tarif de la zone basse (TZB)", "type": "REAL"},
+    {"name": "supplement_zone_basse", "xlsx_header": "Supplement de la zone basse (SZB)", "type": "REAL"},
+    {"name": "tarif_zone_forfaitaire", "xlsx_header": "Tarif de la zone Forfaitaire (TZF)", "type": "REAL"},
+    {"name": "supplement_zone_haute", "xlsx_header": "Supplement de la Zone Haute (SZH)", "type": "REAL"},
+    {"name": "date_debut", "xlsx_header": "DDEB", "type": "TEXT", "note": "ISO AAAA-MM-JJ, converti depuis le datetime Excel par le loader"},
+    {"name": "date_fin", "xlsx_header": "DFIN", "type": "TEXT", "note": "ISO AAAA-MM-JJ, converti depuis le datetime Excel par le loader"},
+    {"name": "tarif_zone_forfaitaire_p2", "xlsx_header": "Tarif de la Zone Forfaitaire - Période 2 (TZF2)", "type": "REAL"},
+    {"name": "tarif_zone_forfaitaire_p3", "xlsx_header": "Tarif de la Zone Forfaitaire - Période 3 (TZF3)", "type": "REAL"}
+  ]
+}

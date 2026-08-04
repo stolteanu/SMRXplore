@@ -1,0 +1,13 @@
+{
+  "nomenclature": "csar_intervenants",
+  "spec_source": "Guide de codage CSAR (guide_csar_version_n1_2026.pdf), §2.4.1 'Liste des intervenants', Tableau 3 — retranscrit manuellement dans un CSV (absent de tout fichier structuré ATIH)",
+  "table": "nomenclature_csar_intervenants",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "code intervenant à 2 chiffres (ex. '22' = Masseur-kinésithérapeute)"},
+    {"name": "libelle", "type": "TEXT", "note": "profession de l'intervenant ayant réalisé l'acte"}
+  ],
+  "notes": [
+    "Codes 80/81/88 = 'Autre' (facultatifs, cf. guide) : 80 = éducation thérapeutique/prévention, 81 = prises en charge particulières (thérapie psychocorporelle, douleur non médicamenteuse, thérapie familiale), 88 = tout autre cas."
+  ]
+}

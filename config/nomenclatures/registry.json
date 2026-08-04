@@ -1,0 +1,98 @@
+{
+  "diagnostics": {
+    "schema": "diagnostics.schema.json",
+    "input_dir": "input/nomenclatures/diagnostics",
+    "file_glob": "*.zip",
+    "loader": "cim10"
+  },
+  "diagnostics_hierarchie": {
+    "schema": "diagnostics_hierarchie.schema.json",
+    "input_dir": "input/nomenclatures/diagnostics",
+    "file_glob": "*.xml",
+    "loader": "cim10_claml"
+  },
+  "ccam": {
+    "schema": "ccam.schema.json",
+    "input_dir": "input/nomenclatures/ccam",
+    "file_glob": "*.xlsx",
+    "loader": "ccam_flat"
+  },
+  "ccam_hierarchie": {
+    "schema": "ccam_hierarchie.schema.json",
+    "input_dir": "input/nomenclatures/ccam",
+    "file_glob": "*.xlsx",
+    "loader": "ccam_hierarchie"
+  },
+  "csarr": {
+    "schema": "csarr.schema.json",
+    "input_dir": "input/nomenclatures/csarr",
+    "file_glob": "*.xlsx",
+    "loader": "csarr_flat"
+  },
+  "csarr_hierarchie": {
+    "schema": "csarr_hierarchie.schema.json",
+    "input_dir": "input/nomenclatures/csarr",
+    "file_glob": "*.xlsx",
+    "loader": "csarr_hierarchie"
+  },
+  "csar": {
+    "schema": "csar.schema.json",
+    "input_dir": "input/nomenclatures/csar",
+    "file_glob": "*.xlsx",
+    "loader": "csar_flat"
+  },
+  "csar_hierarchie": {
+    "schema": "csar_hierarchie.schema.json",
+    "input_dir": "input/nomenclatures/csar",
+    "file_glob": "*.xlsx",
+    "loader": "csar_hierarchie"
+  },
+  "csar_transcodage_csarr": {
+    "schema": "csar_transcodage_csarr.schema.json",
+    "input_dir": "input/nomenclatures/csar",
+    "file_glob": "*.xlsx",
+    "loader": "csar_transcodage"
+  },
+  "csar_intervenants": {
+    "schema": "csar_intervenants.schema.json",
+    "input_dir": "input/nomenclatures/csar/intervenants",
+    "file_glob": "*.csv",
+    "loader": "csar_intervenants"
+  },
+  "csarr_intervenants": {
+    "schema": "csarr_intervenants.schema.json",
+    "input_dir": "input/nomenclatures/csarr/intervenants",
+    "file_glob": "*.csv",
+    "loader": "csarr_intervenants"
+  },
+  "gme": {
+    "schema": "gme.schema.json",
+    "input_dir": "input/nomenclatures/gme",
+    "file_glob": "*.xlsx",
+    "loader": "gme"
+  },
+  "gme_erreurs": {
+    "schema": "gme_erreurs.schema.json",
+    "input_dir": "input/nomenclatures/gme",
+    "file_glob": "*.TXT",
+    "loader": "gme_erreurs"
+  },
+  "gme_erreurs_actes_concernes": {
+    "schema": "gme_erreurs_actes_concernes.schema.json",
+    "input_dir": "input/nomenclatures/gme",
+    "file_glob": "*.TXT",
+    "loader": "gme_erreurs_actes_concernes"
+  },
+  "ponderation_actes": {
+    "schema": "ponderation_actes.schema.json",
+    "input_dir": "input/ponderation",
+    "file_glob": "*.xlsx",
+    "loader": "ponderation_actes"
+  },
+  "ponderation_modulateurs": {
+    "schema": "ponderation_modulateurs.schema.json",
+    "input_dir": "input/ponderation",
+    "file_glob": "*.xlsx",
+    "loader": "ponderation_modulateurs"
+  }
+}

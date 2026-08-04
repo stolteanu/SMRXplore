@@ -1,0 +1,25 @@
+{
+  "rhs_groupe": {
+    "canonical": "rhs_groupe.schema.json",
+    "version_slice": [
+      11,
+      13
+    ],
+    "variants": {
+      "M1C": "rhs_groupe_m1c.schema.json",
+      "M1D": "rhs_groupe_m1d.schema.json"
+    }
+  },
+  "vid_hosp": {
+    "canonical": "vid_hosp.schema.json",
+    "version_slice": [
+      49,
+      52
+    ],
+    "variants": {
+      "V016": "vid_hosp.schema.json",
+      "V015": "vid_hosp_v015.schema.json",
+      "V014": "vid_hosp_v014.schema.json"
+    }
+  }
+}

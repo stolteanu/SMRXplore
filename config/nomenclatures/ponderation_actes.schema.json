@@ -1,0 +1,28 @@
+{
+  "nomenclature": "ponderation_actes",
+  "spec_source": "Fichier ATIH ACTES_ponderations.xlsx, feuille 'ponderations' (documentation des colonnes reprise de la feuille 'lisez-moi' du classeur)",
+  "table": "nomenclature_ponderation_actes",
+  "natural_key": ["code", "intervenant"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "code CSARR ou CCAM"},
+    {"name": "nomenclature", "type": "TEXT", "modalite": {"CSARR": "acte CSARR", "CCAM": "acte CCAM"}},
+    {"name": "type", "type": "TEXT", "modalite": {"D": "acte dédié", "D/ND": "acte dédié ou non dédié", "C": "acte collectif", "A": "appareillage avec étapes", "PP": "pluriprofessionnel", "CCAM": "acte CCAM"}},
+    {"name": "statut", "type": "TEXT", "modalite": {"Pond_u": "pondération unique pour tous les intervenants", "Diff_inter": "pondération différenciée selon les intervenants", "Pond_0": "pondération à 0 pour certains couples acte/intervenant, identique pour les autres", "Pond_0 / Diff_inter": "combinaison des deux cas précédents", "CCAM": "acte CCAM"}},
+    {"name": "intervenant", "type": "TEXT", "note": "'00' = tous intervenants (une seule ligne pour l'acte) ; sinon code intervenant (cf. nomenclature_csarr_intervenants), une ligne par intervenant si pondération différenciée"},
+    {"name": "lib_pmsi", "type": "TEXT", "note": "libellé de l'intervenant ('tous' si intervenant='00')"},
+    {"name": "hiera", "type": "TEXT", "note": "subdivision CSARR (référence nomenclature_csarr_hierarchie), ou 'suppr' si l'acte a été retiré du catalogue courant (le fichier couvre l'historique depuis 2012)"},
+    {"name": "liblong", "type": "TEXT", "note": "libellé de l'acte CSARR/CCAM"},
+    {"name": "ponderation_patient", "type": "INTEGER", "note": "pondération de l'acte, utilisée dans le calcul du score de groupage (GR)"},
+    {"name": "validite", "type": "TEXT", "note": "'×' si le code est en cours de validité, vide/NULL sinon (couplé à `fin`)"},
+    {"name": "debut", "type": "INTEGER", "note": "première année d'utilisation de cette pondération"},
+    {"name": "fin", "type": "INTEGER", "note": "dernière année d'utilisation, ou NULL si toujours en vigueur"},
+    {"name": "mod_hw", "type": "TEXT", "note": "'x' si l'acte est éligible à une majoration pour le modulateur de lieu HW, sinon NULL"},
+    {"name": "mod_lj", "type": "TEXT", "note": "idem pour le modulateur LJ"},
+    {"name": "mod_xh", "type": "TEXT", "note": "idem pour le modulateur XH"},
+    {"name": "mod_l3", "type": "TEXT", "note": "idem pour le modulateur L3"}
+  ],
+  "notes": [
+    "(code, intervenant) est la clé naturelle vérifiée exacte (2359 lignes, 0 doublon) — `code` seul est dupliqué jusqu'à 32 fois pour les actes à pondération différenciée par intervenant (statut Diff_inter).",
+    "Le détail des majorations associées à mod_hw/mod_lj/mod_xh/mod_l3 (et aux autres modulateurs CSARR) est dans nomenclature_ponderation_modulateurs — les majorations s'appliquent au moment du groupage, pas stockées ici en valeur."
+  ]
+}

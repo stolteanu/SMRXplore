@@ -1,0 +1,16 @@
+{
+  "nomenclature": "diagnostics_hierarchie",
+  "spec_source": "CIM-10-FR au format ClaML (Classification Markup Language) — <Class kind=\"chapter|block|category\"> avec <SuperClass> donnant le code parent explicitement",
+  "table": "nomenclature_diagnostics_hierarchie",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "point retiré pour matcher la notation de nomenclature_diagnostics.code (ex. A00.0 -> A000, chapitres en chiffres romains I-XXII, blocs en plage ex. A00-A09)"},
+    {"name": "kind", "type": "TEXT", "modalite": {"chapter": "chapitre (I-XXII)", "block": "bloc / sous-chapitre, plage de codes (ex. A00-A09)", "category": "catégorie ou sous-catégorie, code diagnostic (3 à 6 caractères)"}},
+    {"name": "parent_code", "type": "TEXT", "note": "code du parent direct dans la hiérarchie (NULL pour un chapitre) ; remonter la chaîne parent_code donne category -> ... -> category-3-car -> block -> chapter"},
+    {"name": "libelle", "type": "TEXT", "note": "libellé préféré (Rubric kind=preferred), français"}
+  ],
+  "notes": [
+    "Un code diagnostic de nomenclature_diagnostics n'a pas forcément d'entrée ici avec exactement le même kind='category' si une nouvelle catégorie a été ajoutée après la version ClaML chargée — dans ce cas remonter au préfixe 3 caractères le plus proche présent dans cette table.",
+    "Dernier-en-vigueur seulement (pas d'historique par année) : un seul fichier ClaML à charger, comme pour diagnostics."
+  ]
+}

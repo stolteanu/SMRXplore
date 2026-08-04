@@ -1,0 +1,14 @@
+{
+  "nomenclature": "gme_erreurs",
+  "spec_source": "Fichier ATIH FG_erreurs.TXT (codes retour de la fonction de groupage SMR), pipe-delimited cp1252 : code|libellé|type",
+  "table": "nomenclature_gme_erreurs",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "correspond à code_retour_groupage du RHS groupé (positions 62-64) ; PAS zéro-paddé dans cette table (ex. '72'), alors que la valeur stockée en RHS peut l'être ('072') — normaliser (retirer les zéros de tête) au moment du lookup, pas au chargement"},
+    {"name": "libelle", "type": "TEXT"},
+    {"name": "type", "type": "TEXT", "modalite": {"Bloquant": "erreur bloquante, séjour non groupé", "Non-bloquant": "avertissement, séjour tout de même groupé"}}
+  ],
+  "notes": [
+    "Le code '0'/'000' observé dans les RHS réels signifie 'groupage réussi, pas d'erreur' — il n'existe pas dans cette table et ne doit pas être traité comme un code manquant."
+  ]
+}

@@ -1,0 +1,2 @@
+# Aucune dépendance externe requise pour le parseur et le stockage (bibliothèque standard uniquement).
+# Les dépendances de la couche de visualisation (étape 4) seront ajoutées ici.
