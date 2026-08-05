@@ -204,59 +204,50 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
     )
     m["valorisation"] = notes.add(
         "warn",
-        "Montant BR PT = valeur de production reconstituée au prorata temporis (jour par jour). "
-        "Montant BR TOT = figure officielle ATIH (arrêté de versement), à titre de comparaison. "
-        "PMCT = Montant BR PT / Nb SSR. PMST = Montant BR PT / Nb RHS. PMJT = Montant BR PT / Nb "
-        "journées de présence.",
-        "<b>Montant BR PT</b> (pro rata temporis, calcul \"maison\") = somme des valeurs journalières "
-        "réparties uniformément sur les jours de présence RHS réels d'un séjour (voir "
-        "<code>src/viz/valorisation.py</code>), agrégées par ANNÉE CIVILE RÉELLE des jours — dont le jour "
-        "tombe dans la période. <b>Montant BR TOT</b> = <code>montant_br_tot</code> officiel ATIH, sommé "
-        "par CAMPAGNE (année de transmission), affiché pour comparaison/vérification. Les deux peuvent "
-        "différer pour les séjours facturés en une fois à la clôture (<90j) alors qu'ils ont démarré "
-        "l'année civile précédente — le montant est alors enregistré sous la campagne de clôture mais le "
-        "prorata temporis l'attribue en majorité à l'année civile réelle de l'activité. <b>Attention à "
-        "l'écart affiché</b> : Montant BR PT est cumulé sur la PÉRIODE affichée (ex. semaines 01 à 17), "
-        "alors que Montant BR TOT est la CAMPAGNE ANNUELLE COMPLÈTE (les 52 semaines) — un grand écart "
-        "en cours d'année est donc normal (l'année n'est pas terminée), pas une anomalie de calcul. Basé sur "
-        "<code>MNT_BR_TOT</code> (valeur de production), pas <code>MNT_AM_TOT</code> (taux de "
-        "remboursement Assurance Maladie, non comparable avant/après le changement de régime de "
-        "financement SMR de juillet 2023).",
+        "Montant BR TOT (fact.) = figure officielle ATIH déjà facturée. Montant BR estimé PRT = "
+        "reconstitution prorata temporis + estimation des séjours en cours. PMCT/PMST/PMJT restent basés "
+        "sur le seul prorata temporis RÉEL (pas l'estimation), pour rester un tarif moyen observé.",
+        "<b>PMCT</b> = Montant BR PRT réel / Nb SSR. <b>PMST</b> = Montant BR PRT réel / Nb RHS. "
+        "<b>PMJT</b> = Montant BR PRT réel / Nb journées de présence — ces 3 ratios utilisent le montant "
+        "PROUVÉ (sans l'estimation des séjours en cours, voir note suivante), pour rester un tarif moyen "
+        "réellement observé plutôt qu'un chiffre qui inclurait sa propre estimation.",
     )
     m["valorisation_non_fact"] = notes.add(
         "warn",
-        "Montant BR TOT (sans filtre) = même montant, tous séjours confondus. Montant BR non fact. = "
-        "recette non perçue à cause de séjours non facturables/en anomalie (différence entre les deux).",
-        "<b>Montant BR TOT (sans filtre)</b> = même somme que Montant BR TOT, mais SANS exclure les "
-        "séjours marqués <code>nv_nonfactam</code> (non facturable à l'Assurance Maladie), "
-        "<code>nv_chain</code> (chaînage) ou <code>nv_attente_dts</code> (en attente de droits) — le "
-        "montant \"brut\", anomalies comprises. <b>Montant BR non fact.</b> = la différence entre ce "
-        "montant brut et Montant BR TOT (officiel, filtré) : ce que ces anomalies représentent comme "
-        "recette non perçue, à titre indicatif. Les 3 exclusions ci-dessus ont été trouvées "
-        "empiriquement (2026-08-05) en reproduisant EXACTEMENT au centime près deux totaux d'un tableau "
-        "ATIH externe fourni par l'utilisateur ([etablissement anonymise] et [etablissement anonymise], campagne 2026) — voir "
-        "<code>EXCLUSION_MONTANT_OFFICIEL</code> dans <code>src/viz/valorisation.py</code>. D'autres "
-        "variables NV_* du fichier VisualValoSejours existent (nv_cm90, nv_nonclos, nv_pie, nv_varano, "
-        "nv_article51, nv_telereadapt, nv_evcepr, nv_gmt9999, nv_horsperiode) mais n'ont montré aucune "
-        "contribution sur ces deux cas de test — non exclues, faute de preuve empirique.",
+        "(fact.) = facturé : figure officielle ATIH (arrêté de versement), qui exclut déjà les séjours "
+        "en anomalie (chaînage, en attente de droits, non facturable à l'AM).",
+        "<b>Montant BR TOT (fact.)</b> = <code>montant_br_tot</code> officiel ATIH, sommé par CAMPAGNE "
+        "(année de transmission), en excluant les séjours marqués <code>nv_chain</code> (chaînage), "
+        "<code>nv_attente_dts</code> (en attente de droits) ou <code>nv_nonfactam</code> (non facturable "
+        "à l'Assurance Maladie) — voir <code>EXCLUSION_MONTANT_OFFICIEL</code> dans "
+        "<code>src/viz/valorisation.py</code>. Ces 3 exclusions ont été trouvées empiriquement (2026-08-05) "
+        "en reproduisant EXACTEMENT au centime près deux totaux d'un tableau ATIH externe fourni par "
+        "l'utilisateur ([etablissement anonymise] et [etablissement anonymise], campagne 2026), puis confirmées sur les 2 autres "
+        "établissements. D'autres variables NV_* du fichier VisualValoSejours existent (nv_cm90, "
+        "nv_nonclos, nv_pie, nv_varano, nv_article51, nv_telereadapt, nv_evcepr, nv_gmt9999, "
+        "nv_horsperiode) mais n'ont montré aucune contribution sur ces cas de test — non exclues, faute "
+        "de preuve empirique.",
     )
     m["estimation_en_cours"] = notes.add(
         "warn",
-        "ESSAI : Montant BR PT + une estimation de la recette des séjours &lt;90j non clos sans anomalie "
-        "connue, au tarif moyen déjà observé (PMJT) — pour comparer d'une année sur l'autre et avec "
-        "Montant BR TOT, à titre indicatif, pas une donnée ATIH.",
-        "Cible les séjours actifs sur la période sans AUCUN <code>montant_br_tot</code> connu (donc "
-        "&lt;90j, pas encore clos — le financement SMR ne se déclenche qu'à la clôture ou au seuil de "
-        "90j, cf. note valorisation) ET sans anomalie <code>nv_chain</code>/<code>nv_attente_dts</code>/"
-        "<code>nv_nonfactam</code> (voir <code>sejours_non_factures_sans_anomalie</code> dans "
-        "<code>src/viz/valorisation.py</code>) — distinction trouvée nécessaire en creusant un écart "
-        "signalé par l'utilisateur : sur [etablissement anonymise]/2026, 18 des 20 séjours \"jamais facturés\" étaient en "
-        "fait marqués <code>nv_chain</code>, pas de simples séjours en attente. Le montant appliqué à "
-        "leurs journées de présence RHS est le PMJT déjà calculé (montant_br_pt / nb journées observées) "
-        "— jamais recalculé à partir de cette estimation, pour éviter toute boucle — puis ADDITIONNÉ à "
-        "Montant BR PT (demande utilisateur 2026-08-05 : comparer le total estimé aux autres années et à "
-        "Montant BR TOT, pas le détail de l'estimation seule). Essai, à évaluer, facilement réversible "
-        "(colonne séparée, ne modifie jamais montant_br_pt lui-même).",
+        "ESSAI : Montant BR PRT (prorata temporis réel) + une estimation de la recette des séjours "
+        "&lt;90j non clos sans anomalie connue, au tarif moyen déjà observé (PMJT) — à titre indicatif, "
+        "pas une donnée ATIH. Écart = Montant BR TOT (fact.) − Montant BR estimé PRT.",
+        "<b>Montant BR PRT</b> (pro rata temporis, calcul \"maison\") = somme des valeurs journalières "
+        "réparties uniformément sur les jours de présence RHS réels d'un séjour déjà facturé (voir "
+        "<code>src/viz/valorisation.py</code>), agrégées par ANNÉE CIVILE RÉELLE des jours dont le jour "
+        "tombe dans la période. <b>+ estimation</b> : pour les séjours actifs sur la période sans AUCUN "
+        "<code>montant_br_tot</code> connu (donc &lt;90j, pas encore clos — le financement SMR ne se "
+        "déclenche qu'à la clôture ou au seuil de 90j) ET sans anomalie <code>nv_chain</code>/"
+        "<code>nv_attente_dts</code>/<code>nv_nonfactam</code> (voir "
+        "<code>sejours_non_factures_sans_anomalie</code>) — distinction trouvée nécessaire en creusant un "
+        "écart signalé par l'utilisateur : sur [etablissement anonymise]/2026, 18 des 20 séjours \"jamais facturés\" "
+        "étaient en fait marqués <code>nv_chain</code>, pas de simples séjours en attente. Le montant "
+        "appliqué à leurs journées de présence RHS est le PMJT déjà calculé (montant_br_pt / nb journées "
+        "observées, voir PMCT/PMST/PMJT) — jamais recalculé à partir de cette estimation, pour éviter "
+        "toute boucle. <b>Écart</b> = Montant BR TOT (fact.) − Montant BR estimé PRT : un grand écart en "
+        "cours d'année est normal (année pas terminée, estimation partielle), pas une anomalie de calcul. "
+        "Essai, décision utilisateur 2026-08-05, à évaluer.",
     )
     m["palmares"] = notes.add(
         "warn",
@@ -594,19 +585,20 @@ def render(data: dict, axis_label: str | None = None) -> str:
     valorisation_rows = ""
     for y in years:
         v = data["valorisation"][y]
-        ecart = v["montant_br_tot"] - v["montant_br_pt"] if v["montant_br_tot"] is not None else None
         estim = v["estimation_en_cours"]
         estim_cell = fmt(v["montant_br_pt_avec_estimation"], 2, " €")
         if estim and estim["nb_sejours"]:
             estim_cell += f" <small>({fmt_int(estim['nb_sejours'])} séj., {fmt_int(estim['nb_journees'])} j)</small>"
+        ecart = (
+            v["montant_br_tot"] - v["montant_br_pt_avec_estimation"]
+            if v["montant_br_tot"] is not None
+            else None
+        )
         valorisation_rows += (
             f"<tr><td>{periods_by_year[y]['label']}</td>"
-            f"<td>{fmt(v['montant_br_pt'], 2, ' €')}</td>"
             f"<td>{fmt(v['montant_br_tot'], 2, ' €')}</td>"
-            f"<td>{fmt(ecart, 2, ' €')}</td>"
-            f"<td>{fmt(v['montant_br_tot_sans_filtre'], 2, ' €')}</td>"
-            f"<td>{fmt(v['montant_br_non_fact'], 2, ' €')}</td>"
             f"<td>{estim_cell}</td>"
+            f"<td>{fmt(ecart, 2, ' €')}</td>"
             f"<td>{fmt(v['pmct'], 2, ' €')}</td>"
             f"<td>{fmt(v['pmst'], 2, ' €')}</td>"
             f"<td>{fmt(v['pmjt'], 2, ' €')}</td></tr>"
@@ -1015,9 +1007,8 @@ HTML_TEMPLATE = """<div class="viz-root">
     <h2>6 · Valorisation{note8}</h2>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Période</th><th>Montant BR PT</th><th>Montant BR TOT</th><th>Écart</th>
-        <th>Montant BR TOT (sans filtre)</th><th>Montant BR non fact.{note11}</th>
-        <th>Montant BR PT + estimation{note_estim}</th>
+        <thead><tr><th>Période</th><th>Montant BR TOT (fact.){note11}</th>
+        <th>Montant BR estimé PRT{note_estim}</th><th>Écart</th>
         <th>PMCT</th><th>PMST</th><th>PMJT</th></tr></thead>
         <tbody>{valorisation_rows}</tbody>
       </table>
