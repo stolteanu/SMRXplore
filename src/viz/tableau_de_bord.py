@@ -81,7 +81,10 @@ def _last_week_of_month(year: int, month: int) -> int:
 
 
 def compute_reporting_periods(
-    conn: sqlite3.Connection, finess: str, years: list[str] | None = None
+    conn: sqlite3.Connection,
+    finess: str,
+    years: list[str] | None = None,
+    mois_fin: int | None = None,
 ) -> list[dict]:
     """Détermine les périodes de reporting COMPARABLES à partir des numero_semaine présents.
 
@@ -102,6 +105,15 @@ def compute_reporting_periods(
     "mois cible" (année la plus récente PARMI `years`) reste la même règle du jeudi
     que sans restriction, juste appliquée à un sous-ensemble d'années plutôt qu'à
     toutes les années présentes en base.
+
+    `mois_fin` (optionnel, 1-12, demande utilisateur 2026-08-05) : impose le mois de
+    fin de période au lieu de le déduire de la dernière semaine transmise — la période
+    reste TOUJOURS cumulative depuis semaine 01 (convention ATIH "M01 à M0N" inchangée,
+    décision utilisateur explicite : pas de vraie fenêtre Mx→My arbitraire, qui aurait
+    cassé l'hypothèse "cumul depuis janvier" sur laquelle reposent plusieurs sections
+    déjà validées, ex. valorisation "campagne comparable"). Si le mois choisi dépasse
+    les données réellement chargées pour une année, cette année affiche simplement
+    moins de semaines de données (pas d'erreur, pas de chiffre inventé).
     """
     rows = conn.execute(
         "SELECT DISTINCT numero_semaine FROM rhs_groupe WHERE numero_semaine IS NOT NULL AND finess_epmsi = ?",
@@ -121,8 +133,11 @@ def compute_reporting_periods(
         return []
 
     target_year = max(weeks_by_year)
-    target_max_week = max(weeks_by_year[target_year])
-    target_month = datetime.date.fromisocalendar(int(target_year), target_max_week, 4).month
+    if mois_fin is not None:
+        target_month = mois_fin
+    else:
+        target_max_week = max(weeks_by_year[target_year])
+        target_month = datetime.date.fromisocalendar(int(target_year), target_max_week, 4).month
 
     periods = []
     for year in sorted(weeks_by_year):
@@ -1179,7 +1194,10 @@ def section_valorisation(
 
 
 def build(
-    finess: str, years: list[str] | None = None, axis_filter: tuple[str, str] | None = None
+    finess: str,
+    years: list[str] | None = None,
+    axis_filter: tuple[str, str] | None = None,
+    mois_fin: int | None = None,
 ) -> dict:
     """`years` (optionnel, ex. ["2025", "2026"], max 3) restreint le TDB aux
     années choisies dans la page "TDB choix" — voir compute_reporting_periods.
@@ -1191,9 +1209,12 @@ def build(
     restreint à cette seule valeur d'UF/type d'hospitalisation — un TDB
     secondaire = un appel à build() par valeur (voir
     src/viz/render_dashboard.py generate_axis_reports()), pas une section en
-    plus du TDB principal."""
+    plus du TDB principal.
+
+    `mois_fin` (optionnel, 1-12, 2026-08-05) : voir compute_reporting_periods —
+    impose le mois de fin de période (toujours cumulatif depuis janvier)."""
     conn = connect()
-    periods = compute_reporting_periods(conn, finess, years)
+    periods = compute_reporting_periods(conn, finess, years, mois_fin)
     years = [p["year"] for p in periods]
     sejours = section_sejours(conn, periods, finess, axis_filter)
     data = {

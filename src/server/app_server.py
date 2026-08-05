@@ -55,15 +55,17 @@ def _load_meta() -> dict:
     return {"finess": finess_list, "years_by_finess": years_by_finess}
 
 
-def _generate(finess_list: list[str], years: list[str], axis: str) -> list[dict]:
+def _generate(finess_list: list[str], years: list[str], axis: str, mois_fin: int | None = None) -> list[dict]:
     from src.viz.render_dashboard import generate_axis_reports, render, render_annexe, render_journal
     from src.viz.tableau_de_bord import build
 
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     suffix = "-".join(years) if years else "toutes"
+    if mois_fin:
+        suffix += f"-M{mois_fin:02d}"
     reports = []
     for finess in finess_list:
-        data = build(finess, years or None)
+        data = build(finess, years or None, mois_fin=mois_fin)
         if not data["years"]:
             raise ValueError(f"Aucune donnée pour le FINESS {finess} sur les années demandées.")
         base = f"{finess}_{suffix}"
@@ -88,7 +90,7 @@ def _generate(finess_list: list[str], years: list[str], axis: str) -> list[dict]
         if axis in ("uf", "type_hospitalisation"):
             # Un TDB complet PAR valeur d'axe (pas une section résumé en
             # plus du TDB principal, cf. generate_axis_reports).
-            report["secondaires"] = generate_axis_reports(finess, years or None, axis)
+            report["secondaires"] = generate_axis_reports(finess, years or None, axis, mois_fin)
 
         reports.append(report)
     return reports
@@ -189,6 +191,7 @@ class Handler(BaseHTTPRequestHandler):
             finess_list = payload.get("finess") or []
             years = payload.get("years") or []
             axis = payload.get("axis") or "none"
+            mois_fin = payload.get("mois_fin")
 
             if not finess_list:
                 raise ValueError("Choisissez au moins un établissement.")
@@ -200,8 +203,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Année invalide.")
             if axis not in ("none", "uf", "type_hospitalisation"):
                 raise ValueError("Axe secondaire invalide.")
+            if mois_fin is not None:
+                if not isinstance(mois_fin, int) or not (1 <= mois_fin <= 12):
+                    raise ValueError("Mois de fin invalide (1 à 12).")
 
-            reports = _generate(finess_list, years, axis)
+            reports = _generate(finess_list, years, axis, mois_fin)
             self._send_json({"reports": reports})
         except Exception as exc:
             self._send_json({"error": str(exc)}, status=400)

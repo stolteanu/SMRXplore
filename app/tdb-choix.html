@@ -55,6 +55,10 @@
   label.chip.disabled { opacity: 0.4; cursor: not-allowed; }
   label.chip input[type="radio"] { accent-color: var(--vid); }
   .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  select#mois-fin {
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; font-size: 13px; background: var(--page); color: var(--ink);
+  }
   button#go {
     background: var(--rhs); color: #fff; border: none; border-radius: 8px;
     padding: 12px 22px; font-size: 14px; font-weight: 600; cursor: pointer;
@@ -101,6 +105,26 @@
       <label class="chip"><input type="radio" name="axis" value="uf"> Par UF</label>
       <label class="chip"><input type="radio" name="axis" value="type_hospitalisation"> Par type d'hospitalisation (HC / HTP)</label>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Mois de fin de période</h2>
+    <select id="mois-fin">
+      <option value="">Auto (dernière transmission)</option>
+      <option value="1">Janvier</option>
+      <option value="2">Février</option>
+      <option value="3">Mars</option>
+      <option value="4">Avril</option>
+      <option value="5">Mai</option>
+      <option value="6">Juin</option>
+      <option value="7">Juillet</option>
+      <option value="8">Août</option>
+      <option value="9">Septembre</option>
+      <option value="10">Octobre</option>
+      <option value="11">Novembre</option>
+      <option value="12">Décembre</option>
+    </select>
+    <p class="hint">La période reste toujours cumulative depuis janvier (semaine 01), convention ATIH — ce choix ne fixe que la fin.</p>
   </div>
 
   <button id="go" disabled>Générer le(s) TDB</button>
@@ -191,6 +215,8 @@
     const years = selectedValues(yearsBox, "year");
     const finess = selectedValues(finessBox, "finess");
     const axis = document.querySelector('input[name="axis"]:checked').value;
+    const moisFinRaw = document.getElementById("mois-fin").value;
+    const mois_fin = moisFinRaw ? parseInt(moisFinRaw, 10) : null;
 
     msgBox.innerHTML = '<p class="spinner">Génération en cours…</p>';
     resultsBox.innerHTML = "";
@@ -199,7 +225,7 @@
     fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ years, finess, axis })
+      body: JSON.stringify({ years, finess, axis, mois_fin })
     })
       .then(r => r.json().then(body => ({ ok: r.ok, body })))
       .then(({ ok, body }) => {

@@ -1107,7 +1107,9 @@ AXIS_TITLE = {
 }
 
 
-def generate_axis_reports(finess: str, years: list[str] | None, axis: str) -> list[dict]:
+def generate_axis_reports(
+    finess: str, years: list[str] | None, axis: str, mois_fin: int | None = None
+) -> list[dict]:
     """TDB secondaire (2026-08-04, décision utilisateur) : PAS une section
     résumé en plus du TDB principal, mais un TDB COMPLET (sections 1-9,
     mêmes gabarits que render()) par valeur de l'axe choisi — un par UF, ou
@@ -1120,7 +1122,9 @@ def generate_axis_reports(finess: str, years: list[str] | None, axis: str) -> li
     `montant_br_tot` (montant officiel ATIH, non ventilable par séjour) est
     absent — seul `montant_br_pt` (notre calcul prorata) est reproraté par
     axe. Rubrique nouvelle, non issue d'un tableau ATIH de référence.
-    """
+
+    `mois_fin` (optionnel, 1-12, 2026-08-05) : voir
+    tableau_de_bord.compute_reporting_periods."""
     from src.viz.tableau_de_bord import build, compute_reporting_periods, connect, valeurs_axe
 
     if axis not in AXIS_CHAMP:
@@ -1128,7 +1132,7 @@ def generate_axis_reports(finess: str, years: list[str] | None, axis: str) -> li
     champ = AXIS_CHAMP[axis]
 
     conn = connect()
-    periods = compute_reporting_periods(conn, finess, years)
+    periods = compute_reporting_periods(conn, finess, years, mois_fin)
     values = valeurs_axe(conn, periods, finess, champ)
     conn.close()
 
@@ -1139,11 +1143,13 @@ def generate_axis_reports(finess: str, years: list[str] | None, axis: str) -> li
     GENERATED_DIR = OUT_DIR / "generated"
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     suffix = "-".join(years) if years else "toutes"
+    if mois_fin:
+        suffix += f"-M{mois_fin:02d}"
 
     reports = []
     for value in values:
         label = labels.get(value, value)
-        data = build(finess, years, axis_filter=(champ, value))
+        data = build(finess, years, axis_filter=(champ, value), mois_fin=mois_fin)
         if not data["years"]:
             continue
         html = render(data, axis_label=f"{AXIS_TITLE[axis]} {label}")
