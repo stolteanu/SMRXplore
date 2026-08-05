@@ -39,9 +39,10 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT))
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from src.util.paths import project_root  # noqa: E402
 from src.parsing.fixed_width import load_schema, parse_file_multi  # noqa: E402
 from src.parsing.valorisation import load_from_csv  # noqa: E402
 from src.storage.sqlite_store import init_db, insert_record  # noqa: E402
@@ -51,6 +52,8 @@ from src.tarifs.gmt import load_from_xlsx as load_tarifs_gmt  # noqa: E402
 from src.storage.tarifs_store import init_table as init_tarifs_table  # noqa: E402
 from src.storage.tarifs_store import insert_rows as insert_tarifs_rows  # noqa: E402
 from src.util.progress import print_progress  # noqa: E402
+
+ROOT = project_root()
 
 DIRS = [
     "input/rhs",

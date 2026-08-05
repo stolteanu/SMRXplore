@@ -1,9 +1,15 @@
 """Serveur local minimal (bibliothèque standard uniquement) pour piloter le
 tableau de bord PMSI-SMR depuis un navigateur : sert app/ en statique et
-expose deux endpoints JSON pour la page "TDB choix" (app/tdb-choix.html) :
+expose des endpoints JSON pour la page "TDB choix" (app/tdb-choix.html) et
+la page d'accueil (app/index.html) :
 
   GET  /api/meta      -> établissements + années disponibles
   POST /api/generate  -> génère le(s) TDB demandé(s), renvoie leurs URLs
+  POST /api/charger    -> parse input/ -> pmsi.db (run.py) puis republie la
+                          copie pour l'explorateur (tools/publier_explorateur.py) ;
+                          déclenché SEULEMENT par un clic utilisateur ("Mettre
+                          à jour les données"), jamais automatiquement au
+                          démarrage (décision utilisateur explicite 2026-08-05)
 
 Aucune dépendance externe (http.server de la bibliothèque standard) : le
 même interpréteur Python que run.py suffit, aucune installation ni droit
@@ -88,6 +94,30 @@ def _generate(finess_list: list[str], years: list[str], axis: str) -> list[dict]
     return reports
 
 
+def _charger_et_publier() -> str:
+    """Enchaîne run.py (parse input/ -> data/processed/pmsi.db) puis
+    tools/publier_explorateur.py (recopie pour l'explorateur, qui lit sa
+    propre copie app/data/pmsi.db plutôt que la base source — voir
+    docstring de publier_explorateur.py). Capture toute la sortie texte des
+    deux étapes (le résumé fichier-par-fichier de run.py, le OK final de la
+    publication) pour l'afficher dans la page d'accueil plutôt que de la
+    perdre dans la console — l'utilisateur qui a lancé le .exe n'a
+    généralement pas de terminal visible."""
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        import run
+
+        run.main()
+
+        from tools.publier_explorateur import main as publier_main
+
+        publier_main()
+    return buf.getvalue()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "PMSI-SMR/1.0"
 
@@ -142,6 +172,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send_file(target)
 
     def do_POST(self) -> None:
+        if self.path == "/api/charger":
+            try:
+                output = _charger_et_publier()
+                self._send_json({"output": output})
+            except Exception as exc:
+                self._send_json({"error": str(exc), "output": str(exc)}, status=500)
+            return
+
         if self.path != "/api/generate":
             self.send_error(404, "Route inconnue")
             return

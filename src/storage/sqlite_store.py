@@ -62,6 +62,18 @@ def build_create_table_statements(schema: dict) -> list[str]:
         stmts.append(
             f"CREATE TABLE IF NOT EXISTS {_quote(child_table)} (\n  " + ",\n  ".join(child_cols) + "\n)"
         )
+        # Indispensable : le natural_key + INSERT OR REPLACE (dernier-gagne,
+        # cf. docstring module) transforme un rechargement de fichier déjà vu
+        # en DELETE+INSERT sur la ligne parente, qui déclenche ON DELETE
+        # CASCADE sur ce bloc enfant — sans index sur parent_id, chaque
+        # cascade fait un scan complet de la table enfant (jusqu'à ~240k
+        # lignes constaté sur rhs_groupe_das), rendant un rechargement complet
+        # O(n²) plutôt que linéaire (bug trouvé 2026-08-05 : ~9 min pour 7/37
+        # fichiers, soit ~45 min extrapolé pour un rechargement complet).
+        stmts.append(
+            f"CREATE INDEX IF NOT EXISTS {_quote('idx_' + child_table + '_parent_id')} "
+            f"ON {_quote(child_table)} (parent_id)"
+        )
     return stmts
 
 

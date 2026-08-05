@@ -6,9 +6,15 @@ rouvrir app/explorateur.html ou de redistribuer le dossier app/ tel quel.
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.util.paths import project_root  # noqa: E402
+
+ROOT = project_root()
 SRC = ROOT / "data/processed/pmsi.db"
 DST = ROOT / "app/data/pmsi.db"
 

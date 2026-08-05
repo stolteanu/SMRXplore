@@ -70,6 +70,30 @@
   footer {
     margin-top: 24px; text-align: center; font-size: 11.5px; color: var(--muted);
   }
+
+  .update-box {
+    margin-top: 22px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 22px;
+  }
+  .update-box .row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  .update-box h2 { font-size: 14px; margin: 0 0 4px; }
+  .update-box p { font-size: 12.5px; color: var(--ink-2); margin: 0; max-width: 48ch; }
+  button#charger {
+    background: var(--rhs); color: #fff; border: none; border-radius: 8px;
+    padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  button#charger:disabled { opacity: 0.5; cursor: not-allowed; }
+  #charger-status { font-size: 12.5px; margin-top: 10px; color: var(--ink-2); }
+  #charger-output {
+    margin-top: 10px; max-height: 260px; overflow: auto; display: none;
+    background: var(--page); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; font-size: 11.5px; white-space: pre-wrap; font-family: ui-monospace, monospace;
+  }
 </style>
 </head>
 <body>
@@ -94,7 +118,50 @@
            export) — 100% dans le navigateur, aucun serveur requis pour cette partie.</p>
       </a>
     </div>
+
+    <div class="update-box">
+      <div class="row">
+        <div>
+          <h2>Mettre à jour les données</h2>
+          <p>Parse les nouveaux fichiers déposés dans <code>input/</code> (RHS, VID-HOSP,
+             valorisation, tarifs) et republie la copie utilisée par l'Explorateur.
+             À lancer après avoir ajouté un nouvel établissement ou une nouvelle
+             transmission — jamais automatique.</p>
+        </div>
+        <button id="charger">Mettre à jour</button>
+      </div>
+      <div id="charger-status"></div>
+      <pre id="charger-output"></pre>
+    </div>
+
     <footer>Base locale : data/processed/pmsi.db</footer>
   </div>
+
+<script>
+(function () {
+  var btn = document.getElementById("charger");
+  var status = document.getElementById("charger-status");
+  var output = document.getElementById("charger-output");
+
+  btn.addEventListener("click", function () {
+    btn.disabled = true;
+    status.textContent = "Mise à jour en cours (parsing des fichiers, peut prendre quelques dizaines de secondes)…";
+    output.style.display = "none";
+
+    fetch("/api/charger", { method: "POST" })
+      .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+      .then(function (res) {
+        btn.disabled = false;
+        status.textContent = res.ok ? "Terminé." : "Erreur pendant la mise à jour.";
+        output.textContent = res.body.output || res.body.error || "";
+        output.style.display = output.textContent ? "block" : "none";
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        status.textContent = "Erreur réseau : " + err;
+      });
+  });
+})();
+</script>
 </body>
 </html>
