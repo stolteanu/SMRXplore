@@ -208,6 +208,29 @@ def _date_entree_par_sejour(
     return out
 
 
+EXCLUSION_MONTANT_OFFICIEL = (
+    "COALESCE(nv_nonfactam, 0) = 0 AND COALESCE(nv_chain, 0) = 0 AND COALESCE(nv_attente_dts, 0) = 0"
+)
+"""Séjours exclus du montant BR officiel (arrêté de versement) partout où
+`valorisation_sejour.montant_br_tot` est sommé pour affichage :
+
+- `nv_nonfactam` ("non facturable Assurance Maladie", exclu 2026-07-31) :
+  vérifié sur [etablissement anonymise]/2026, 1 séjour HC à 37703.63€.
+- `nv_chain` ("chaînage") et `nv_attente_dts` ("en attente de droits", ajoutés
+  2026-08-05) : trouvés empiriquement en reproduisant EXACTEMENT au centime
+  près deux totaux d'un tableau ATIH externe fourni par l'utilisateur —
+  [etablissement anonymise]/2026 (765717.70€ − 2 séjours NV_CHAIN à 40618.11€ = 725099.59€)
+  et [etablissement anonymise]/2026 (630123.81€ − 4 séjours NV_ATTENTE_DTS à 23141.53€ − 1
+  séjour NV_CHAIN à 7117.00€ = 599865.28€).
+
+Toutes les AUTRES variables NV_* du fichier VisualValoSejours (nv_cm90,
+nv_nonclos, nv_pie, nv_varano, nv_article51, nv_telereadapt, nv_evcepr,
+nv_gmt9999, nv_horsperiode) ont été testées sur ces deux mêmes cas et NE
+CONTRIBUENT PAS à reproduire les totaux ATIH (montant associé = 0€ ou déjà
+couvert par une autre exclusion) — ne pas les exclure sans nouvelle preuve
+empirique contre une référence externe."""
+
+
 def _rhs_day_axis(
     conn: sqlite3.Connection, finess: str | None = None
 ) -> dict[tuple[str, int, datetime.date], tuple[str | None, str | None]]:
@@ -295,7 +318,7 @@ def compute_valeur_journaliere(
     # mais ce n'est pas une vraie facturation AM — l'inclure gonflait notre
     # total par rapport à la restitution ATIH de référence (trouvé 2026-07-31
     # sur [etablissement anonymise]/2026 : 1 séjour HC à 37703.63€, marqué nv_nonfactam=1).
-    clause = "WHERE montant_br_tot IS NOT NULL AND montant_br_tot != 0 AND COALESCE(nv_nonfactam, 0) = 0"
+    clause = f"WHERE montant_br_tot IS NOT NULL AND montant_br_tot != 0 AND {EXCLUSION_MONTANT_OFFICIEL}"
     params: list = []
     if finess is not None:
         clause += " AND finess_epmsi = ?"
@@ -404,9 +427,7 @@ def montant_br_tot_campagne(conn: sqlite3.Connection, campagne: int, finess: str
     VisualValoSejours), lui, inclut le transport — sans cette exclusion notre
     total dépassait le leur de 17907.81€, exactement la somme de
     montant_br_trans sur les séjours HC concernés."""
-    clause = (
-        "WHERE campagne = ? AND montant_br_tot IS NOT NULL AND COALESCE(nv_nonfactam, 0) = 0"
-    )
+    clause = f"WHERE campagne = ? AND montant_br_tot IS NOT NULL AND {EXCLUSION_MONTANT_OFFICIEL}"
     params: list = [campagne]
     if finess is not None:
         clause += " AND finess_epmsi = ?"
@@ -443,7 +464,7 @@ def _derniere_semaine_rhs_par_sejour(
 
 
 def montant_br_tot_campagne_comparable(
-    conn: sqlite3.Connection, campagne: int, max_week: int, finess: str | None = None
+    conn: sqlite3.Connection, campagne: int, max_week: int, finess: str | None = None, exclure: bool = True
 ) -> float:
     """montant_br_tot officiel ATIH, mais restreint aux séjours dont TOUTE
     l'activité RHS (de cette campagne) tient dans les semaines 01..max_week —
@@ -462,14 +483,20 @@ def montant_br_tot_campagne_comparable(
     clos avant la semaine limite ⇒ son montant aurait normalement déjà été
     stable/connu à ce moment), pas une reconstruction exacte de ce qu'aurait
     contenu une transmission M04 réelle.
-    """
+
+    `exclure` (2026-08-05, demande utilisateur) : si False, ne filtre PAS
+    sur EXCLUSION_MONTANT_OFFICIEL (nv_nonfactam/nv_chain/nv_attente_dts) —
+    donne le montant BRUT, toutes anomalies comprises. La différence entre
+    l'appel filtré (exclure=True, le montant "officiel" affiché ailleurs) et
+    ce montant brut est la recette non perçue à cause de ces anomalies
+    (montant_br_non_fact, voir section_valorisation)."""
     dernieres_semaines = _derniere_semaine_rhs_par_sejour(conn, campagne, finess)
 
-    # nv_nonfactam=1 ("non facturable Assurance Maladie") exclu, cf. note
-    # dans compute_valeur_journaliere — même raison, même correctif.
-    # montant_br_trans (transport) exclu aussi, cf. docstring de
-    # montant_br_tot_campagne — même correctif, même vérification.
-    clause = "WHERE campagne = ? AND montant_br_tot IS NOT NULL AND COALESCE(nv_nonfactam, 0) = 0"
+    # Exclusions cf. EXCLUSION_MONTANT_OFFICIEL. montant_br_trans (transport)
+    # exclu aussi, cf. docstring de montant_br_tot_campagne — même correctif,
+    # même vérification.
+    condition_exclusion = EXCLUSION_MONTANT_OFFICIEL if exclure else "1 = 1"
+    clause = f"WHERE campagne = ? AND montant_br_tot IS NOT NULL AND {condition_exclusion}"
     params: list = [campagne]
     if finess is not None:
         clause += " AND finess_epmsi = ?"

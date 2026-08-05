@@ -223,6 +223,23 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
         "remboursement Assurance Maladie, non comparable avant/après le changement de régime de "
         "financement SMR de juillet 2023).",
     )
+    m["valorisation_non_fact"] = notes.add(
+        "warn",
+        "Montant BR TOT (sans filtre) = même montant, tous séjours confondus. Montant BR non fact. = "
+        "recette non perçue à cause de séjours non facturables/en anomalie (différence entre les deux).",
+        "<b>Montant BR TOT (sans filtre)</b> = même somme que Montant BR TOT, mais SANS exclure les "
+        "séjours marqués <code>nv_nonfactam</code> (non facturable à l'Assurance Maladie), "
+        "<code>nv_chain</code> (chaînage) ou <code>nv_attente_dts</code> (en attente de droits) — le "
+        "montant \"brut\", anomalies comprises. <b>Montant BR non fact.</b> = la différence entre ce "
+        "montant brut et Montant BR TOT (officiel, filtré) : ce que ces anomalies représentent comme "
+        "recette non perçue, à titre indicatif. Les 3 exclusions ci-dessus ont été trouvées "
+        "empiriquement (2026-08-05) en reproduisant EXACTEMENT au centime près deux totaux d'un tableau "
+        "ATIH externe fourni par l'utilisateur ([etablissement anonymise] et [etablissement anonymise], campagne 2026) — voir "
+        "<code>EXCLUSION_MONTANT_OFFICIEL</code> dans <code>src/viz/valorisation.py</code>. D'autres "
+        "variables NV_* du fichier VisualValoSejours existent (nv_cm90, nv_nonclos, nv_pie, nv_varano, "
+        "nv_article51, nv_telereadapt, nv_evcepr, nv_gmt9999, nv_horsperiode) mais n'ont montré aucune "
+        "contribution sur ces deux cas de test — non exclues, faute de preuve empirique.",
+    )
     m["palmares"] = notes.add(
         "warn",
         "Top 5 classé sur l'effectif cumulé toutes années confondues (mêmes 5 codes pour chaque colonne). "
@@ -565,6 +582,8 @@ def render(data: dict, axis_label: str | None = None) -> str:
             f"<td>{fmt(v['montant_br_pt'], 2, ' €')}</td>"
             f"<td>{fmt(v['montant_br_tot'], 2, ' €')}</td>"
             f"<td>{fmt(ecart, 2, ' €')}</td>"
+            f"<td>{fmt(v['montant_br_tot_sans_filtre'], 2, ' €')}</td>"
+            f"<td>{fmt(v['montant_br_non_fact'], 2, ' €')}</td>"
             f"<td>{fmt(v['pmct'], 2, ' €')}</td>"
             f"<td>{fmt(v['pmst'], 2, ' €')}</td>"
             f"<td>{fmt(v['pmjt'], 2, ' €')}</td></tr>"
@@ -634,6 +653,7 @@ def render(data: dict, axis_label: str | None = None) -> str:
     note3, note4 = nm["indic_ok"], nm["indic_warn"]
     note5, note6, note7 = nm["activite_ok"], nm["activite_choix"], nm["activite_score"]
     note8 = nm["valorisation"]
+    note11 = nm["valorisation_non_fact"]
     note9 = nm["palmares"]
     note10 = nm["structure_gme"]
     notes_section = notes.render(data["finess"])
@@ -675,7 +695,7 @@ def render(data: dict, axis_label: str | None = None) -> str:
         valorisation_rows=valorisation_rows,
         palmares_html=palmares_html,
         note1=note1, note2=note2, note3=note3, note4=note4,
-        note5=note5, note6=note6, note7=note7, note8=note8, note9=note9, note10=note10,
+        note5=note5, note6=note6, note7=note7, note8=note8, note9=note9, note10=note10, note11=note11,
         notes_section=notes_section,
     )
     title = "PMSI-SMR — Tableau de bord"
@@ -970,7 +990,9 @@ HTML_TEMPLATE = """<div class="viz-root">
     <h2>6 · Valorisation{note8}</h2>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Période</th><th>Montant BR PT</th><th>Montant BR TOT</th><th>Écart</th><th>PMCT</th><th>PMST</th><th>PMJT</th></tr></thead>
+        <thead><tr><th>Période</th><th>Montant BR PT</th><th>Montant BR TOT</th><th>Écart</th>
+        <th>Montant BR TOT (sans filtre)</th><th>Montant BR non fact.{note11}</th>
+        <th>PMCT</th><th>PMST</th><th>PMJT</th></tr></thead>
         <tbody>{valorisation_rows}</tbody>
       </table>
     </div>

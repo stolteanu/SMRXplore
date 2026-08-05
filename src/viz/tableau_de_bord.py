@@ -864,7 +864,7 @@ def section_palmares_gme(
     la période (voir _sejour_code_gme_by_period) — cohérent avec le principe
     "classement le plus à jour" déjà utilisé ailleurs dans ce module.
     """
-    from src.viz.valorisation import _derniere_semaine_rhs_par_sejour
+    from src.viz.valorisation import EXCLUSION_MONTANT_OFFICIEL, _derniere_semaine_rhs_par_sejour
 
     length = _GME_CODE_LENGTH[quoi]
     labels = _load_gme_labels(conn, quoi)
@@ -882,7 +882,7 @@ def section_palmares_gme(
         effectifs[y] = eff
 
         derniere_semaines = _derniere_semaine_rhs_par_sejour(conn, int(y), finess)
-        clause = "WHERE campagne = ? AND montant_br_tot IS NOT NULL AND COALESCE(nv_nonfactam, 0) = 0"
+        clause = f"WHERE campagne = ? AND montant_br_tot IS NOT NULL AND {EXCLUSION_MONTANT_OFFICIEL}"
         params: list = [int(y)]
         if finess is not None:
             clause += " AND finess_epmsi = ?"
@@ -982,7 +982,7 @@ def section_structure_gme(
     (dernière semaine RHS connue de la période) et même filtre de
     comparabilité valorisation que la section 6.
     """
-    from src.viz.valorisation import _derniere_semaine_rhs_par_sejour
+    from src.viz.valorisation import EXCLUSION_MONTANT_OFFICIEL, _derniere_semaine_rhs_par_sejour
 
     blocks = ("gr", "gl", "sev")
     effectifs: dict[str, dict[str, dict[str, int]]] = {b: {} for b in blocks}
@@ -1000,7 +1000,7 @@ def section_structure_gme(
             effectifs[block][y] = eff
 
         derniere_semaines = _derniere_semaine_rhs_par_sejour(conn, int(y), finess)
-        clause = "WHERE campagne = ? AND montant_br_tot IS NOT NULL AND COALESCE(nv_nonfactam, 0) = 0"
+        clause = f"WHERE campagne = ? AND montant_br_tot IS NOT NULL AND {EXCLUSION_MONTANT_OFFICIEL}"
         params: list = [int(y)]
         if finess is not None:
             clause += " AND finess_epmsi = ?"
@@ -1120,7 +1120,16 @@ def section_valorisation(
     non ventilable par UF/type d'hospitalisation) devient None dans ce cas :
     pas de valeur inventée pour un montant qui n'est pas attribuable au
     filtre.
-    """
+
+    `montant_br_tot_sans_filtre` / `montant_br_non_fact` (2026-08-05, demande
+    utilisateur) : `montant_br_tot_sans_filtre` reprend le même calcul SANS
+    exclure les séjours nv_nonfactam/nv_chain/nv_attente_dts (exclure=False,
+    voir montant_br_tot_campagne_comparable) ; `montant_br_non_fact` est la
+    différence (montant_br_tot_sans_filtre − montant_br_tot) — la recette
+    "perdue" à cause de ces anomalies (non facturable AM, chaînage, en
+    attente de droits), pour donner une idée du manque à gagner plutôt que
+    de le faire disparaître silencieusement du TDB. Comme montant_br_tot,
+    absent (None) dans un TDB secondaire filtré par axe (non attribuable)."""
     from src.viz.valorisation import valeur_sur_periode, montant_br_tot_campagne_comparable
 
     out = {}
@@ -1128,11 +1137,20 @@ def section_valorisation(
         y = period["year"]
         montant_br_pt = valeur_sur_periode(conn, period["start"], period["end"], finess, axis_filter)
         sej = sejours[y]
+        montant_br_tot = None
+        montant_br_tot_sans_filtre = None
+        montant_br_non_fact = None
+        if not axis_filter:
+            montant_br_tot = montant_br_tot_campagne_comparable(conn, y, period["max_week"], finess)
+            montant_br_tot_sans_filtre = montant_br_tot_campagne_comparable(
+                conn, y, period["max_week"], finess, exclure=False
+            )
+            montant_br_non_fact = montant_br_tot_sans_filtre - montant_br_tot
         out[y] = {
             "montant_br_pt": montant_br_pt,
-            "montant_br_tot": (
-                None if axis_filter else montant_br_tot_campagne_comparable(conn, y, period["max_week"], finess)
-            ),
+            "montant_br_tot": montant_br_tot,
+            "montant_br_tot_sans_filtre": montant_br_tot_sans_filtre,
+            "montant_br_non_fact": montant_br_non_fact,
             "pmct": montant_br_pt / sej["nb_ssr"] if sej["nb_ssr"] else None,
             "pmst": montant_br_pt / sej["nb_rhs"] if sej["nb_rhs"] else None,
             "pmjt": montant_br_pt / sej["nb_journees"] if sej["nb_journees"] else None,
