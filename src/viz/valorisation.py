@@ -538,3 +538,70 @@ def valeur_sur_periode(
     compute_valeur_journaliere (TDB secondaire par UF/type d'hospitalisation)."""
     rows = compute_valeur_journaliere(conn, finess, axis_filter)
     return sum(r["valeur"] for r in rows if date_debut <= r["date"] <= date_fin)
+
+
+def sejours_non_factures_sans_anomalie(conn: sqlite3.Connection, finess: str, campagne: int) -> set[int]:
+    """ESSAI (demande utilisateur 2026-08-05, facile à retirer — voir
+    estimation_recettes_sejours_en_cours). Séjours actifs dans `campagne`
+    (au moins 1 ligne RHS dont l'année du numero_semaine est `campagne`)
+    qui n'ont ENCORE aucun montant_br_tot connu (séjour <90j pas encore
+    clos, GMT=9999 par construction — cf. docstring module) ET qui ne
+    portent AUCUNE des 3 anomalies d'EXCLUSION_MONTANT_OFFICIEL
+    (nv_chain/nv_attente_dts/nv_nonfactam). Distinction importante trouvée
+    empiriquement en creusant un écart signalé par l'utilisateur : sur
+    [etablissement anonymise]/2026, 18 des 20 séjours "jamais facturés" sont en fait
+    marqués nv_chain — pas de simples séjours en attente, mais des
+    anomalies à part. Seuls les séjours vraiment "propres" sont candidats
+    à l'estimation ci-dessous."""
+    actifs = {
+        int(r[0])
+        for r in conn.execute(
+            "SELECT DISTINCT numero_admin_sejour FROM rhs_groupe "
+            "WHERE finess_epmsi = ? AND substr(numero_semaine, 3, 4) = ?",
+            [finess, str(campagne)],
+        ).fetchall()
+    }
+    deja_factures = {
+        int(r[0])
+        for r in conn.execute(
+            "SELECT DISTINCT numero_admin_sejour FROM valorisation_sejour "
+            "WHERE finess_epmsi = ? AND montant_br_tot IS NOT NULL",
+            [finess],
+        ).fetchall()
+    }
+    en_anomalie = {
+        int(r[0])
+        for r in conn.execute(
+            "SELECT DISTINCT numero_admin_sejour FROM valorisation_sejour "
+            "WHERE finess_epmsi = ? AND (COALESCE(nv_chain, 0) != 0 OR COALESCE(nv_attente_dts, 0) != 0 "
+            "OR COALESCE(nv_nonfactam, 0) != 0)",
+            [finess],
+        ).fetchall()
+    }
+    return (actifs - deja_factures) - en_anomalie
+
+
+def estimation_recettes_sejours_en_cours(
+    conn: sqlite3.Connection, period: dict, finess: str, pmjt: float | None
+) -> dict:
+    """ESSAI (demande utilisateur 2026-08-05). Estime la recette non encore
+    facturée des séjours <90j non clos "propres" (voir
+    sejours_non_factures_sans_anomalie) en appliquant le PMJT RÉEL — calculé
+    à partir de montant_br_pt/nb_journées déjà observés, PAS recalculé avec
+    cette estimation — à leurs journées de présence RHS dans la période.
+    Volontairement PAS de boucle : le taux (PMJT) et l'estimation qui
+    l'utilise ne partagent jamais le même calcul. Résultat affiché à part de
+    montant_br_pt, jamais fusionné dedans — nouvelle hypothèse non validable
+    contre une référence externe par construction (ces séjours n'ont encore
+    aucun montant ATIH connu)."""
+    if not pmjt:
+        return {"montant": 0.0, "nb_sejours": 0, "nb_journees": 0}
+    cible = sejours_non_factures_sans_anomalie(conn, finess, int(period["year"]))
+    if not cible:
+        return {"montant": 0.0, "nb_sejours": 0, "nb_journees": 0}
+    presence = _rhs_presence_days_by_sejour(conn, finess)
+    nb_journees = 0
+    for numadmin in cible:
+        jours = presence.get((finess, numadmin), [])
+        nb_journees += sum(1 for j in jours if period["start"] <= j <= period["end"])
+    return {"montant": nb_journees * pmjt, "nb_sejours": len(cible), "nb_journees": nb_journees}

@@ -1129,31 +1129,47 @@ def section_valorisation(
     "perdue" à cause de ces anomalies (non facturable AM, chaînage, en
     attente de droits), pour donner une idée du manque à gagner plutôt que
     de le faire disparaître silencieusement du TDB. Comme montant_br_tot,
-    absent (None) dans un TDB secondaire filtré par axe (non attribuable)."""
-    from src.viz.valorisation import valeur_sur_periode, montant_br_tot_campagne_comparable
+    absent (None) dans un TDB secondaire filtré par axe (non attribuable).
+
+    `estimation_en_cours` (ESSAI, 2026-08-05, demande utilisateur) : pour
+    les séjours <90j non clos "propres" (aucune anomalie nv_chain/
+    nv_attente_dts/nv_nonfactam — voir sejours_non_factures_sans_anomalie),
+    applique le PMJT déjà calculé ci-dessous (donc SANS boucle : le PMJT
+    n'est jamais recalculé à partir de cette estimation) à leurs journées de
+    présence pour estimer la recette qu'ils produiront une fois facturés.
+    Absent dans un TDB secondaire filtré par axe, comme montant_br_tot."""
+    from src.viz.valorisation import (
+        estimation_recettes_sejours_en_cours,
+        montant_br_tot_campagne_comparable,
+        valeur_sur_periode,
+    )
 
     out = {}
     for period in periods:
         y = period["year"]
         montant_br_pt = valeur_sur_periode(conn, period["start"], period["end"], finess, axis_filter)
         sej = sejours[y]
+        pmjt = montant_br_pt / sej["nb_journees"] if sej["nb_journees"] else None
         montant_br_tot = None
         montant_br_tot_sans_filtre = None
         montant_br_non_fact = None
+        estimation_en_cours = None
         if not axis_filter:
             montant_br_tot = montant_br_tot_campagne_comparable(conn, y, period["max_week"], finess)
             montant_br_tot_sans_filtre = montant_br_tot_campagne_comparable(
                 conn, y, period["max_week"], finess, exclure=False
             )
             montant_br_non_fact = montant_br_tot_sans_filtre - montant_br_tot
+            estimation_en_cours = estimation_recettes_sejours_en_cours(conn, period, finess, pmjt)
         out[y] = {
             "montant_br_pt": montant_br_pt,
             "montant_br_tot": montant_br_tot,
             "montant_br_tot_sans_filtre": montant_br_tot_sans_filtre,
             "montant_br_non_fact": montant_br_non_fact,
+            "estimation_en_cours": estimation_en_cours,
             "pmct": montant_br_pt / sej["nb_ssr"] if sej["nb_ssr"] else None,
             "pmst": montant_br_pt / sej["nb_rhs"] if sej["nb_rhs"] else None,
-            "pmjt": montant_br_pt / sej["nb_journees"] if sej["nb_journees"] else None,
+            "pmjt": pmjt,
         }
     return out
 

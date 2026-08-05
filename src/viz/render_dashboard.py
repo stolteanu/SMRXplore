@@ -240,6 +240,22 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
         "nv_article51, nv_telereadapt, nv_evcepr, nv_gmt9999, nv_horsperiode) mais n'ont montré aucune "
         "contribution sur ces deux cas de test — non exclues, faute de preuve empirique.",
     )
+    m["estimation_en_cours"] = notes.add(
+        "warn",
+        "ESSAI : estimation de la recette des séjours &lt;90j non clos sans anomalie connue, au tarif "
+        "moyen déjà observé (PMJT) — à titre indicatif, pas une donnée ATIH.",
+        "Cible les séjours actifs sur la période sans AUCUN <code>montant_br_tot</code> connu (donc "
+        "&lt;90j, pas encore clos — le financement SMR ne se déclenche qu'à la clôture ou au seuil de "
+        "90j, cf. note valorisation) ET sans anomalie <code>nv_chain</code>/<code>nv_attente_dts</code>/"
+        "<code>nv_nonfactam</code> (voir <code>sejours_non_factures_sans_anomalie</code> dans "
+        "<code>src/viz/valorisation.py</code>) — distinction trouvée nécessaire en creusant un écart "
+        "signalé par l'utilisateur : sur [etablissement anonymise]/2026, 18 des 20 séjours \"jamais facturés\" étaient en "
+        "fait marqués <code>nv_chain</code>, pas de simples séjours en attente. Le montant appliqué à "
+        "leurs journées de présence RHS est le PMJT déjà calculé (montant_br_pt / nb journées observées) "
+        "— jamais recalculé à partir de cette estimation, pour éviter toute boucle. Décision utilisateur "
+        "2026-08-05 : essai, à évaluer, facilement réversible (colonne séparée, ne modifie jamais "
+        "montant_br_pt).",
+    )
     m["palmares"] = notes.add(
         "warn",
         "Top 5 classé sur l'effectif cumulé toutes années confondues (mêmes 5 codes pour chaque colonne). "
@@ -577,6 +593,10 @@ def render(data: dict, axis_label: str | None = None) -> str:
     for y in years:
         v = data["valorisation"][y]
         ecart = v["montant_br_tot"] - v["montant_br_pt"] if v["montant_br_tot"] is not None else None
+        estim = v["estimation_en_cours"]
+        estim_cell = fmt(estim["montant"], 2, " €") if estim else "—"
+        if estim and estim["nb_sejours"]:
+            estim_cell += f" <small>({fmt_int(estim['nb_sejours'])} séj., {fmt_int(estim['nb_journees'])} j)</small>"
         valorisation_rows += (
             f"<tr><td>{periods_by_year[y]['label']}</td>"
             f"<td>{fmt(v['montant_br_pt'], 2, ' €')}</td>"
@@ -584,6 +604,7 @@ def render(data: dict, axis_label: str | None = None) -> str:
             f"<td>{fmt(ecart, 2, ' €')}</td>"
             f"<td>{fmt(v['montant_br_tot_sans_filtre'], 2, ' €')}</td>"
             f"<td>{fmt(v['montant_br_non_fact'], 2, ' €')}</td>"
+            f"<td>{estim_cell}</td>"
             f"<td>{fmt(v['pmct'], 2, ' €')}</td>"
             f"<td>{fmt(v['pmst'], 2, ' €')}</td>"
             f"<td>{fmt(v['pmjt'], 2, ' €')}</td></tr>"
@@ -654,6 +675,7 @@ def render(data: dict, axis_label: str | None = None) -> str:
     note5, note6, note7 = nm["activite_ok"], nm["activite_choix"], nm["activite_score"]
     note8 = nm["valorisation"]
     note11 = nm["valorisation_non_fact"]
+    note_estim = nm["estimation_en_cours"]
     note9 = nm["palmares"]
     note10 = nm["structure_gme"]
     notes_section = notes.render(data["finess"])
@@ -696,6 +718,7 @@ def render(data: dict, axis_label: str | None = None) -> str:
         palmares_html=palmares_html,
         note1=note1, note2=note2, note3=note3, note4=note4,
         note5=note5, note6=note6, note7=note7, note8=note8, note9=note9, note10=note10, note11=note11,
+        note_estim=note_estim,
         notes_section=notes_section,
     )
     title = "PMSI-SMR — Tableau de bord"
@@ -992,6 +1015,7 @@ HTML_TEMPLATE = """<div class="viz-root">
       <table>
         <thead><tr><th>Période</th><th>Montant BR PT</th><th>Montant BR TOT</th><th>Écart</th>
         <th>Montant BR TOT (sans filtre)</th><th>Montant BR non fact.{note11}</th>
+        <th>Estimation séjours en cours{note_estim}</th>
         <th>PMCT</th><th>PMST</th><th>PMJT</th></tr></thead>
         <tbody>{valorisation_rows}</tbody>
       </table>
