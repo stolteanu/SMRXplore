@@ -104,6 +104,35 @@ def _rhs_presence_days_by_sejour(
     return out
 
 
+def _dernier_uf_par_sejour(conn: sqlite3.Connection, finess: str | None = None) -> dict[tuple[str, int], str]:
+    """Dernière UF connue (numero_unite_medicale de la dernière semaine RHS)
+    par séjour — filet de sécurité pour la ventilation UF de montant_br_tot
+    (2026-08-05) quand un séjour n'a AUCUNE journée de présence RHS (cas
+    "entrée=sortie le même jour calendaire", cf. docstring module) : pas de
+    jour à répartir en %, donc tout son montant va à cette dernière UF
+    connue plutôt que d'être silencieusement perdu (trouvé en vérifiant que
+    la somme sur toutes les UF reproduit exactement le total établissement —
+    exigence explicite de l'utilisateur — écart de 528.94€ sur [etablissement anonymise]/2026
+    avant ce correctif, exactement les 2 séjours "0 jour" 27086914/27087145)."""
+    clause = "WHERE numero_unite_medicale IS NOT NULL AND numero_unite_medicale != ''"
+    params: list = []
+    if finess is not None:
+        clause += " AND finess_epmsi = ?"
+        params.append(finess)
+    rows = conn.execute(
+        f"SELECT finess_epmsi, numero_admin_sejour, numero_semaine, numero_unite_medicale FROM rhs_groupe {clause}",
+        params,
+    ).fetchall()
+    best: dict[tuple[str, int], tuple[int, str]] = {}
+    for finess_v, numadmin, numero_semaine, uf in rows:
+        key = (finess_v, int(numadmin))
+        week = int(numero_semaine[:2])
+        prev = best.get(key)
+        if prev is None or week >= prev[0]:
+            best[key] = (week, uf)
+    return {k: v[1] for k, v in best.items()}
+
+
 def _rhs_presence_days_by_campagne(
     conn: sqlite3.Connection, finess: str | None = None
 ) -> dict[tuple[str, int, int], list[datetime.date]]:
@@ -231,6 +260,15 @@ couvert par une autre exclusion) — ne pas les exclure sans nouvelle preuve
 empirique contre une référence externe."""
 
 
+TYPE_HOSPITALISATION_GROUPES = {"1": "1", "2": "2", "3": "2"}
+"""Fusionne HTP jour (2) et HTP nuit (3) en un seul groupe "2" — demande
+utilisateur 2026-08-05 : établissement non spécialisé en HTP de nuit, la
+distinction jour/nuit n'a pas de sens ici ("tout est de jour"). Code "1" (HC)
+seul dans son groupe. Appliqué à la source dans _rhs_day_axis pour que TOUT
+le reste du module (day_axis, montant_br_tot_campagne_comparable, TDB
+secondaire par type d'hospitalisation) ne voie plus jamais le code "3" isolé."""
+
+
 def _rhs_day_axis(
     conn: sqlite3.Connection, finess: str | None = None
 ) -> dict[tuple[str, int, datetime.date], tuple[str | None, str | None]]:
@@ -240,7 +278,8 @@ def _rhs_day_axis(
     "par type d'hospitalisation", 2026-08-04) SANS changer le dénominateur
     (nb total de jours du séjour/de la campagne) qui détermine le tarif
     journalier — seule la sélection des jours SOMMÉS dans le résultat change,
-    pas le calcul de valeur_jour lui-même."""
+    pas le calcul de valeur_jour lui-même. Le type d'hospitalisation est
+    normalisé via TYPE_HOSPITALISATION_GROUPES (HTP jour/nuit fusionnés)."""
     clause = "WHERE numero_semaine IS NOT NULL"
     params: list = []
     if finess is not None:
@@ -255,6 +294,7 @@ def _rhs_day_axis(
     out: dict[tuple[str, int, datetime.date], tuple[str | None, str | None]] = {}
     for finess_v, numadmin, numero_semaine, jhw, jwe, uf, type_hosp in rows:
         week, year = int(numero_semaine[:2]), int(numero_semaine[2:6])
+        type_hosp = TYPE_HOSPITALISATION_GROUPES.get(type_hosp, type_hosp)
         flags = (jhw or "") + (jwe or "")
         for weekday, flag in enumerate(flags, start=1):
             if flag != "1":
@@ -511,13 +551,26 @@ def montant_br_tot_campagne_comparable(
     ce montant brut est la recette non perçue à cause de ces anomalies
     (montant_br_non_fact, voir section_valorisation).
 
-    `axis_filter` (2026-08-05, demande utilisateur) : seul
-    `("type_hospitalisation", "1"/"2"/"3")` est supporté ici — traduit via
-    RHS_VERS_VALO_TYPE_HOSPITALISATION vers la colonne native
-    `valorisation_sejour.type_hospitalisation` (C/P). `("numero_unite_medicale",
-    ...)` n'a AUCUNE colonne équivalente dans VisualValoSejours ; l'appeler
-    avec cet axe est une erreur de programmation (ValueError), pas un cas
-    silencieusement ignoré."""
+    `axis_filter` (2026-08-05, demande utilisateur) : deux ventilations
+    supportées, TOUJOURS exactes (la somme sur toutes les valeurs de l'axe
+    reproduit le total établissement — vérifié, demande explicite
+    utilisateur) :
+    - `("type_hospitalisation", "1"/"2"/"3")` : colonne NATIVE
+      `valorisation_sejour.type_hospitalisation` (C/P via
+      RHS_VERS_VALO_TYPE_HOSPITALISATION) — chaque ligne de facturation est
+      déjà typée à la source, filtre SQL direct.
+    - `("numero_unite_medicale", "...")` : AUCUNE colonne équivalente dans
+      VisualValoSejours, donc chaque séjour sélectionné voit son montant
+      OFFICIEL réparti au prorata de ses JOURNÉES DE PRÉSENCE par UF —
+      TOUTES campagnes confondues (pas restreint à la période étudiée : un
+      séjour à cheval reste réparti selon sa présence en UF sur l'ensemble
+      de son séjour, cf. demande utilisateur 2026-08-05 — exemple séjour de
+      100j, 80j en UF A / 20j en UF B ⇒ 80%/20% du montant facturé, quelle
+      que soit la période affichée). Différent de `montant_br_pt` (qui, lui,
+      ne compte que les jours DANS la période étudiée) — cette ventilation-ci
+      reste par construction toujours égale au total établissement une fois
+      sommée sur toutes les UF, contrairement à une simple somme de
+      `montant_br_pt` par UF."""
     dernieres_semaines = _derniere_semaine_rhs_par_sejour(conn, campagne, finess)
 
     # Exclusions cf. EXCLUSION_MONTANT_OFFICIEL. montant_br_trans (transport)
@@ -529,26 +582,57 @@ def montant_br_tot_campagne_comparable(
     if finess is not None:
         clause += " AND finess_epmsi = ?"
         params.append(finess)
+
+    champ = valeur = None
     if axis_filter is not None:
         champ, valeur = axis_filter
-        if champ != "type_hospitalisation":
+        if champ == "type_hospitalisation":
+            # HTP jour/nuit fusionnés (TYPE_HOSPITALISATION_GROUPES) : "2"
+            # est le SEUL code HTP possible en pratique désormais (valeurs_axe
+            # ne renvoie plus jamais "3" isolément), donc un simple filtre SQL
+            # exact sur la colonne native C/P suffit — pas d'ambiguïté à
+            # gérer par jour de présence, contrairement à l'UF.
+            clause += " AND type_hospitalisation = ?"
+            params.append(RHS_VERS_VALO_TYPE_HOSPITALISATION[valeur])
+        elif champ != "numero_unite_medicale":
             raise ValueError(
-                f"montant_br_tot n'est pas ventilable par {champ!r} (aucune colonne équivalente "
-                "dans valorisation_sejour) — seul 'type_hospitalisation' est supporté."
+                f"montant_br_tot n'est pas ventilable par {champ!r} (attendu : 'type_hospitalisation' "
+                "ou 'numero_unite_medicale')."
             )
-        clause += " AND type_hospitalisation = ?"
-        params.append(RHS_VERS_VALO_TYPE_HOSPITALISATION[valeur])
+
     rows = conn.execute(
         "SELECT numero_admin_sejour, montant_br_tot - COALESCE(montant_br_trans, 0) "
         f"FROM valorisation_sejour {clause}",
         params,
     ).fetchall()
 
+    day_axis: dict = {}
+    presence_all: dict = {}
+    dernier_uf: dict = {}
+    if champ == "numero_unite_medicale":
+        day_axis = _rhs_day_axis(conn, finess)
+        presence_all = _rhs_presence_days_by_sejour(conn, finess)
+        dernier_uf = _dernier_uf_par_sejour(conn, finess)
+
     total = 0.0
     for numadmin, montant in rows:
         numadmin = int(numadmin)
         derniere_semaine = dernieres_semaines.get(numadmin)
-        if derniere_semaine is not None and derniere_semaine <= max_week:
+        if derniere_semaine is None or derniere_semaine > max_week:
+            continue
+        if champ == "numero_unite_medicale":
+            jours = presence_all.get((finess, numadmin), [])
+            if not jours:
+                # Séjour "0 jour de présence" (entrée=sortie même jour) : pas
+                # de journée à répartir en % — tout le montant va à sa
+                # dernière UF connue (voir _dernier_uf_par_sejour), sinon il
+                # disparaîtrait de la somme sur toutes les UF.
+                if dernier_uf.get((finess, numadmin)) == valeur:
+                    total += montant
+                continue
+            jours_uf = sum(1 for j in jours if day_axis.get((finess, numadmin, j), (None, None))[0] == valeur)
+            total += montant * (jours_uf / len(jours))
+        else:
             total += montant
     return total
 

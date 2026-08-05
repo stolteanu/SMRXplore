@@ -176,14 +176,25 @@ def _period_filter(
     """`axis_filter` (optionnel, ex. `("numero_unite_medicale", "3001")` ou
     `("type_hospitalisation", "1")`, 2026-08-04) restreint aussi la ligne RHS
     à cette valeur — utilisé pour générer un TDB secondaire complet PAR
-    valeur d'UF ou de type d'hospitalisation (une ligne RHS ne peut avoir
-    qu'une seule valeur, donc pas d'ambiguïté)."""
+    valeur d'UF ou de type d'hospitalisation.
+
+    `type_hospitalisation` : HTP jour (2) et nuit (3) sont fusionnés en un
+    seul groupe "2" (TYPE_HOSPITALISATION_GROUPES dans valorisation.py,
+    2026-08-05, demande utilisateur — établissement non spécialisé en HTP de
+    nuit) — demander "2" matche donc les lignes RHS codées 2 OU 3."""
     clause = "finess_epmsi = ? AND substr(numero_semaine, 3, 4) = ? AND CAST(substr(numero_semaine, 1, 2) AS INTEGER) <= ?"
     params = [finess, period["year"], period["max_week"]]
     if axis_filter:
         champ, valeur = axis_filter
-        clause += f" AND {champ} = ?"
-        params.append(valeur)
+        if champ == "type_hospitalisation":
+            from src.viz.valorisation import TYPE_HOSPITALISATION_GROUPES
+
+            codes = [k for k, v in TYPE_HOSPITALISATION_GROUPES.items() if v == valeur]
+            clause += f" AND {champ} IN ({', '.join('?' for _ in codes)})"
+            params.extend(codes)
+        else:
+            clause += f" AND {champ} = ?"
+            params.append(valeur)
     return clause, params
 
 
@@ -785,16 +796,24 @@ def list_finess(conn: sqlite3.Connection) -> list[str]:
 
 TYPE_HOSPITALISATION_LABELS = {
     "1": "Hospitalisation complète (HC)",
-    "2": "Hospitalisation partielle de jour (HTP)",
-    "3": "Hospitalisation partielle de nuit (HTP)",
+    "2": "Hospitalisation partielle (HTP)",
 }
+"""Pas de distinction jour/nuit (2026-08-05, demande utilisateur —
+établissement non spécialisé en HTP de nuit, "tout est de jour") : le code
+RHS "3" (HTP nuit) est fusionné dans "2" dès valeurs_axe (voir
+TYPE_HOSPITALISATION_GROUPES dans valorisation.py) et n'apparaît donc jamais
+seul comme valeur d'axe."""
 
 
 def valeurs_axe(conn: sqlite3.Connection, periods: list[dict], finess: str, champ: str) -> list[str]:
     """Valeurs distinctes de `champ` (`numero_unite_medicale` ou
     `type_hospitalisation`) réellement présentes sur les périodes demandées —
     sert à énumérer les TDB secondaires à générer (un TDB complet PAR valeur,
-    demande utilisateur 2026-08-04, voir build(..., axis_filter=...))."""
+    demande utilisateur 2026-08-04, voir build(..., axis_filter=...)). Pour
+    `type_hospitalisation`, les codes RHS sont regroupés via
+    TYPE_HOSPITALISATION_GROUPES (HTP jour/nuit fusionnés, 2026-08-05)."""
+    if champ == "type_hospitalisation":
+        from src.viz.valorisation import TYPE_HOSPITALISATION_GROUPES
     values: set[str] = set()
     for period in periods:
         clause, params = _period_filter(period, finess)
@@ -802,7 +821,10 @@ def valeurs_axe(conn: sqlite3.Connection, periods: list[dict], finess: str, cham
             f"SELECT DISTINCT {champ} FROM rhs_groupe WHERE {clause} AND {champ} IS NOT NULL AND {champ} != ''",
             params,
         ).fetchall()
-        values.update(r[0] for r in rows)
+        if champ == "type_hospitalisation":
+            values.update(TYPE_HOSPITALISATION_GROUPES.get(r[0], r[0]) for r in rows)
+        else:
+            values.update(r[0] for r in rows)
     return sorted(values)
 
 
@@ -1132,7 +1154,8 @@ def section_valorisation(
     filtre (voir valeur_sur_periode/compute_valeur_journaliere).
 
     `montant_br_tot` par axe (2026-08-05, précisé après question utilisateur
-    en pratique — "pourquoi rien pour [etablissement anonymise] en HTP ?") :
+    en pratique — "pourquoi rien pour [etablissement anonymise] en HTP ?", puis corrigé après
+    remarque utilisateur sur la méthode UF, voir ci-dessous) :
     - `type_hospitalisation` : ventilation EXACTE, via la colonne NATIVE
       `valorisation_sejour.type_hospitalisation` (C/P — indépendante du champ
       RHS, voir RHS_VERS_VALO_TYPE_HOSPITALISATION). Vérifié sur
@@ -1140,14 +1163,16 @@ def section_valorisation(
       exactement le total établissement déjà validé, et le montant HC seul
       déjà confirmé contre la restitution Ovalide le 2026-07-31.
     - `numero_unite_medicale` : AUCUNE colonne équivalente dans
-      valorisation_sejour — approximé par `montant_br_pt` (prorata temporis
-      déjà reproraté par UF), qui colle de très près au réel car la majorité
-      des séjours restent dans une seule UF (mono-UF, précisé par
-      l'utilisateur) : pour un séjour mono-UF, TOUTES ses journées de
-      présence tombent dans la même UF, donc 100% de son montant_br_pt lui
-      est déjà correctement attribué par le prorata journalier — seuls les
-      séjours multi-UF introduisent une approximation. PAS le montant
-      officiel ATIH dans ce cas (`montant_br_tot_exact=False` le signale).
+      valorisation_sejour. Ventilé au PRORATA DES JOURNÉES DE PRÉSENCE par
+      UF, TOUTES campagnes confondues (pas restreint à la période affichée —
+      demande utilisateur explicite 2026-08-05, ex. séjour de 100j dont 80j
+      en UF A/20j en UF B ⇒ 80%/20% du montant OFFICIEL, même si le séjour
+      est à cheval sur plusieurs périodes/campagnes). Corrige une première
+      version (utilisant `montant_br_pt`, restreint aux jours DANS la
+      période étudiée) dont la somme sur toutes les UF ne reproduisait PAS
+      le total établissement pour un séjour actif au-delà de la période —
+      celle-ci si, par construction (`montant_br_tot_exact=False` reste mis
+      pour signaler que c'est un modèle, pas une colonne source réelle).
     - Sans axe : figure officielle ATIH complète (comme avant).
 
     `montant_br_tot_sans_filtre` / `montant_br_non_fact` (2026-08-05, demande
@@ -1187,7 +1212,7 @@ def section_valorisation(
                 conn, y, period["max_week"], finess, exclure=False
             )
             montant_br_non_fact = montant_br_tot_sans_filtre - montant_br_tot
-        elif axis_filter[0] == "type_hospitalisation":
+        else:
             montant_br_tot = montant_br_tot_campagne_comparable(
                 conn, y, period["max_week"], finess, axis_filter=axis_filter
             )
@@ -1195,9 +1220,7 @@ def section_valorisation(
                 conn, y, period["max_week"], finess, exclure=False, axis_filter=axis_filter
             )
             montant_br_non_fact = montant_br_tot_sans_filtre - montant_br_tot
-        else:
-            montant_br_tot = montant_br_pt
-            montant_br_tot_exact = False
+            montant_br_tot_exact = axis_filter[0] == "type_hospitalisation"
         estimation_en_cours = estimation_recettes_sejours_en_cours(conn, period, finess, pmjt, axis_filter)
         montant_br_pt_avec_estimation = montant_br_pt + estimation_en_cours["montant"]
         out[y] = {

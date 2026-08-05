@@ -605,7 +605,7 @@ def render(data: dict, axis_label: str | None = None) -> str:
         # une vraie ventilation exacte (colonne native C/P), pas de marquage.
         tot_cell = fmt(v["montant_br_tot"], 2, " €")
         if not v["montant_br_tot_exact"]:
-            tot_cell = f"<span title=\"Approximation par prorata temporis (aucune colonne UF dans valorisation_sejour) — fiable pour les séjours mono-UF, majoritaires\">≈ {tot_cell}</span>"
+            tot_cell = f"<span title=\"Montant officiel réparti au prorata des journées de présence par UF (toutes campagnes confondues) — aucune colonne UF dans valorisation_sejour, mais la somme sur toutes les UF reproduit exactement le total établissement\">≈ {tot_cell}</span>"
         valorisation_rows += (
             f"<tr><td>{periods_by_year[y]['label']}</td>"
             f"<td>{tot_cell}</td>"
