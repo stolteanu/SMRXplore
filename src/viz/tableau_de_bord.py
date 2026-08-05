@@ -1161,12 +1161,16 @@ def section_valorisation(
             )
             montant_br_non_fact = montant_br_tot_sans_filtre - montant_br_tot
             estimation_en_cours = estimation_recettes_sejours_en_cours(conn, period, finess, pmjt)
+        montant_br_pt_avec_estimation = (
+            montant_br_pt + estimation_en_cours["montant"] if estimation_en_cours else None
+        )
         out[y] = {
             "montant_br_pt": montant_br_pt,
             "montant_br_tot": montant_br_tot,
             "montant_br_tot_sans_filtre": montant_br_tot_sans_filtre,
             "montant_br_non_fact": montant_br_non_fact,
             "estimation_en_cours": estimation_en_cours,
+            "montant_br_pt_avec_estimation": montant_br_pt_avec_estimation,
             "pmct": montant_br_pt / sej["nb_ssr"] if sej["nb_ssr"] else None,
             "pmst": montant_br_pt / sej["nb_rhs"] if sej["nb_rhs"] else None,
             "pmjt": pmjt,

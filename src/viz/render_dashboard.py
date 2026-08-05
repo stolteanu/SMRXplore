@@ -242,8 +242,9 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
     )
     m["estimation_en_cours"] = notes.add(
         "warn",
-        "ESSAI : estimation de la recette des séjours &lt;90j non clos sans anomalie connue, au tarif "
-        "moyen déjà observé (PMJT) — à titre indicatif, pas une donnée ATIH.",
+        "ESSAI : Montant BR PT + une estimation de la recette des séjours &lt;90j non clos sans anomalie "
+        "connue, au tarif moyen déjà observé (PMJT) — pour comparer d'une année sur l'autre et avec "
+        "Montant BR TOT, à titre indicatif, pas une donnée ATIH.",
         "Cible les séjours actifs sur la période sans AUCUN <code>montant_br_tot</code> connu (donc "
         "&lt;90j, pas encore clos — le financement SMR ne se déclenche qu'à la clôture ou au seuil de "
         "90j, cf. note valorisation) ET sans anomalie <code>nv_chain</code>/<code>nv_attente_dts</code>/"
@@ -252,9 +253,10 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
         "signalé par l'utilisateur : sur [etablissement anonymise]/2026, 18 des 20 séjours \"jamais facturés\" étaient en "
         "fait marqués <code>nv_chain</code>, pas de simples séjours en attente. Le montant appliqué à "
         "leurs journées de présence RHS est le PMJT déjà calculé (montant_br_pt / nb journées observées) "
-        "— jamais recalculé à partir de cette estimation, pour éviter toute boucle. Décision utilisateur "
-        "2026-08-05 : essai, à évaluer, facilement réversible (colonne séparée, ne modifie jamais "
-        "montant_br_pt).",
+        "— jamais recalculé à partir de cette estimation, pour éviter toute boucle — puis ADDITIONNÉ à "
+        "Montant BR PT (demande utilisateur 2026-08-05 : comparer le total estimé aux autres années et à "
+        "Montant BR TOT, pas le détail de l'estimation seule). Essai, à évaluer, facilement réversible "
+        "(colonne séparée, ne modifie jamais montant_br_pt lui-même).",
     )
     m["palmares"] = notes.add(
         "warn",
@@ -594,7 +596,7 @@ def render(data: dict, axis_label: str | None = None) -> str:
         v = data["valorisation"][y]
         ecart = v["montant_br_tot"] - v["montant_br_pt"] if v["montant_br_tot"] is not None else None
         estim = v["estimation_en_cours"]
-        estim_cell = fmt(estim["montant"], 2, " €") if estim else "—"
+        estim_cell = fmt(v["montant_br_pt_avec_estimation"], 2, " €")
         if estim and estim["nb_sejours"]:
             estim_cell += f" <small>({fmt_int(estim['nb_sejours'])} séj., {fmt_int(estim['nb_journees'])} j)</small>"
         valorisation_rows += (
@@ -1015,7 +1017,7 @@ HTML_TEMPLATE = """<div class="viz-root">
       <table>
         <thead><tr><th>Période</th><th>Montant BR PT</th><th>Montant BR TOT</th><th>Écart</th>
         <th>Montant BR TOT (sans filtre)</th><th>Montant BR non fact.{note11}</th>
-        <th>Estimation séjours en cours{note_estim}</th>
+        <th>Montant BR PT + estimation{note_estim}</th>
         <th>PMCT</th><th>PMST</th><th>PMJT</th></tr></thead>
         <tbody>{valorisation_rows}</tbody>
       </table>
