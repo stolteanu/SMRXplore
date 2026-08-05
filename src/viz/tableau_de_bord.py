@@ -807,13 +807,34 @@ seul comme valeur d'axe."""
 
 def valeurs_axe(conn: sqlite3.Connection, periods: list[dict], finess: str, champ: str) -> list[str]:
     """Valeurs distinctes de `champ` (`numero_unite_medicale` ou
-    `type_hospitalisation`) réellement présentes sur les périodes demandées —
-    sert à énumérer les TDB secondaires à générer (un TDB complet PAR valeur,
-    demande utilisateur 2026-08-04, voir build(..., axis_filter=...)). Pour
-    `type_hospitalisation`, les codes RHS sont regroupés via
-    TYPE_HOSPITALISATION_GROUPES (HTP jour/nuit fusionnés, 2026-08-05)."""
-    if champ == "type_hospitalisation":
-        from src.viz.valorisation import TYPE_HOSPITALISATION_GROUPES
+    `type_hospitalisation`) — sert à énumérer les TDB secondaires à générer
+    (un TDB complet PAR valeur, demande utilisateur 2026-08-04, voir
+    build(..., axis_filter=...)). Pour `type_hospitalisation`, les codes RHS
+    sont regroupés via TYPE_HOSPITALISATION_GROUPES (HTP jour/nuit fusionnés,
+    2026-08-05).
+
+    `numero_unite_medicale` : énumérée SUR TOUTE LA BASE de ce FINESS, PAS
+    restreinte aux périodes demandées (2026-08-05, bug trouvé en vérifiant
+    que la somme des UF reproduit le total établissement) — la ventilation
+    UF de montant_br_tot répartit chaque séjour sur TOUTES ses journées de
+    présence, toutes années confondues (séjours à cheval), donc un séjour
+    facturé sur la campagne 2025 mais ayant fréquenté une UF UNIQUEMENT en
+    2024 ou 2026 doit quand même voir cette UF proposée, sous peine de faire
+    disparaître sa part du total (23365.31€ manquants constatés sur
+    [etablissement anonymise]/2025 avant ce correctif, 5 séjours ayant visité l'UF 6002 hors
+    de la fenêtre 2025). `type_hospitalisation` reste restreinte aux périodes
+    demandées : sa ventilation est scopée par CAMPAGNE (colonne SQL exacte,
+    pas de présence multi-année à couvrir), donc pas concernée par ce bug."""
+    if champ == "numero_unite_medicale":
+        rows = conn.execute(
+            "SELECT DISTINCT numero_unite_medicale FROM rhs_groupe "
+            "WHERE finess_epmsi = ? AND numero_unite_medicale IS NOT NULL AND numero_unite_medicale != ''",
+            [finess],
+        ).fetchall()
+        return sorted(r[0] for r in rows)
+
+    from src.viz.valorisation import TYPE_HOSPITALISATION_GROUPES
+
     values: set[str] = set()
     for period in periods:
         clause, params = _period_filter(period, finess)
@@ -821,10 +842,7 @@ def valeurs_axe(conn: sqlite3.Connection, periods: list[dict], finess: str, cham
             f"SELECT DISTINCT {champ} FROM rhs_groupe WHERE {clause} AND {champ} IS NOT NULL AND {champ} != ''",
             params,
         ).fetchall()
-        if champ == "type_hospitalisation":
-            values.update(TYPE_HOSPITALISATION_GROUPES.get(r[0], r[0]) for r in rows)
-        else:
-            values.update(r[0] for r in rows)
+        values.update(TYPE_HOSPITALISATION_GROUPES.get(r[0], r[0]) for r in rows)
     return sorted(values)
 
 
