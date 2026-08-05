@@ -1129,30 +1129,43 @@ def section_valorisation(
     `axis_filter` (optionnel, TDB secondaire "par UF"/"par type
     d'hospitalisation", 2026-08-04, décision utilisateur) : `montant_br_pt`
     est reproraté sur les seuls jours de présence RHS qui tombent dans le
-    filtre (voir valeur_sur_periode/compute_valeur_journaliere) — nouvelle
-    hypothèse de calcul, non validée contre une référence externe.
-    `montant_br_tot` (figure OFFICIELLE ATIH, attachée au séjour ENTIER, donc
-    non ventilable par UF/type d'hospitalisation) devient None dans ce cas :
-    pas de valeur inventée pour un montant qui n'est pas attribuable au
-    filtre.
+    filtre (voir valeur_sur_periode/compute_valeur_journaliere).
+
+    `montant_br_tot` par axe (2026-08-05, précisé après question utilisateur
+    en pratique — "pourquoi rien pour [etablissement anonymise] en HTP ?") :
+    - `type_hospitalisation` : ventilation EXACTE, via la colonne NATIVE
+      `valorisation_sejour.type_hospitalisation` (C/P — indépendante du champ
+      RHS, voir RHS_VERS_VALO_TYPE_HOSPITALISATION). Vérifié sur
+      [etablissement anonymise]/2026 : HC (847380.16€) + HTP (130354.22€) = 977734.38€,
+      exactement le total établissement déjà validé, et le montant HC seul
+      déjà confirmé contre la restitution Ovalide le 2026-07-31.
+    - `numero_unite_medicale` : AUCUNE colonne équivalente dans
+      valorisation_sejour — approximé par `montant_br_pt` (prorata temporis
+      déjà reproraté par UF), qui colle de très près au réel car la majorité
+      des séjours restent dans une seule UF (mono-UF, précisé par
+      l'utilisateur) : pour un séjour mono-UF, TOUTES ses journées de
+      présence tombent dans la même UF, donc 100% de son montant_br_pt lui
+      est déjà correctement attribué par le prorata journalier — seuls les
+      séjours multi-UF introduisent une approximation. PAS le montant
+      officiel ATIH dans ce cas (`montant_br_tot_exact=False` le signale).
+    - Sans axe : figure officielle ATIH complète (comme avant).
 
     `montant_br_tot_sans_filtre` / `montant_br_non_fact` (2026-08-05, demande
     utilisateur) : `montant_br_tot_sans_filtre` reprend le même calcul SANS
     exclure les séjours nv_nonfactam/nv_chain/nv_attente_dts (exclure=False,
     voir montant_br_tot_campagne_comparable) ; `montant_br_non_fact` est la
     différence (montant_br_tot_sans_filtre − montant_br_tot) — la recette
-    "perdue" à cause de ces anomalies (non facturable AM, chaînage, en
-    attente de droits), pour donner une idée du manque à gagner plutôt que
-    de le faire disparaître silencieusement du TDB. Comme montant_br_tot,
-    absent (None) dans un TDB secondaire filtré par axe (non attribuable).
+    "perdue" à cause de ces anomalies. Calculé pour le TDB principal et l'axe
+    type_hospitalisation (même colonne exacte) ; absent (None) pour l'axe UF
+    (montant_br_tot y est déjà une approximation, pas la vraie base ATIH).
 
     `estimation_en_cours` (ESSAI, 2026-08-05, demande utilisateur) : pour
     les séjours <90j non clos "propres" (aucune anomalie nv_chain/
     nv_attente_dts/nv_nonfactam — voir sejours_non_factures_sans_anomalie),
     applique le PMJT déjà calculé ci-dessous (donc SANS boucle : le PMJT
     n'est jamais recalculé à partir de cette estimation) à leurs journées de
-    présence pour estimer la recette qu'ils produiront une fois facturés.
-    Absent dans un TDB secondaire filtré par axe, comme montant_br_tot."""
+    présence — filtrées par le même axe le cas échéant — pour estimer la
+    recette qu'ils produiront une fois facturés."""
     from src.viz.valorisation import (
         estimation_recettes_sejours_en_cours,
         montant_br_tot_campagne_comparable,
@@ -1165,23 +1178,32 @@ def section_valorisation(
         montant_br_pt = valeur_sur_periode(conn, period["start"], period["end"], finess, axis_filter)
         sej = sejours[y]
         pmjt = montant_br_pt / sej["nb_journees"] if sej["nb_journees"] else None
-        montant_br_tot = None
         montant_br_tot_sans_filtre = None
         montant_br_non_fact = None
-        estimation_en_cours = None
+        montant_br_tot_exact = True
         if not axis_filter:
             montant_br_tot = montant_br_tot_campagne_comparable(conn, y, period["max_week"], finess)
             montant_br_tot_sans_filtre = montant_br_tot_campagne_comparable(
                 conn, y, period["max_week"], finess, exclure=False
             )
             montant_br_non_fact = montant_br_tot_sans_filtre - montant_br_tot
-            estimation_en_cours = estimation_recettes_sejours_en_cours(conn, period, finess, pmjt)
-        montant_br_pt_avec_estimation = (
-            montant_br_pt + estimation_en_cours["montant"] if estimation_en_cours else None
-        )
+        elif axis_filter[0] == "type_hospitalisation":
+            montant_br_tot = montant_br_tot_campagne_comparable(
+                conn, y, period["max_week"], finess, axis_filter=axis_filter
+            )
+            montant_br_tot_sans_filtre = montant_br_tot_campagne_comparable(
+                conn, y, period["max_week"], finess, exclure=False, axis_filter=axis_filter
+            )
+            montant_br_non_fact = montant_br_tot_sans_filtre - montant_br_tot
+        else:
+            montant_br_tot = montant_br_pt
+            montant_br_tot_exact = False
+        estimation_en_cours = estimation_recettes_sejours_en_cours(conn, period, finess, pmjt, axis_filter)
+        montant_br_pt_avec_estimation = montant_br_pt + estimation_en_cours["montant"]
         out[y] = {
             "montant_br_pt": montant_br_pt,
             "montant_br_tot": montant_br_tot,
+            "montant_br_tot_exact": montant_br_tot_exact,
             "montant_br_tot_sans_filtre": montant_br_tot_sans_filtre,
             "montant_br_non_fact": montant_br_non_fact,
             "estimation_en_cours": estimation_en_cours,

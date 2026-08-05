@@ -463,8 +463,28 @@ def _derniere_semaine_rhs_par_sejour(
     return out
 
 
+RHS_VERS_VALO_TYPE_HOSPITALISATION = {"1": "C", "2": "P", "3": "P"}
+"""Traduit les codes `type_hospitalisation` du RHS groupé (1=HC, 2=HTP jour,
+3=HTP nuit) vers ceux, DIFFÉRENTS, de `valorisation_sejour.type_hospitalisation`
+(C=Complète, P=Partielle — pas de distinction jour/nuit côté valorisation).
+Utilisé pour ventiler montant_br_tot par type d'hospitalisation (2026-08-05,
+demande utilisateur) : contrairement à l'UF (aucune colonne équivalente dans
+VisualValoSejours), le type d'hospitalisation EST une colonne native du
+fichier de valorisation — chaque ligne y est déjà typée à la source, pas
+besoin de la déduire du RHS. Vérifié sur [etablissement anonymise]/2026 : la somme HC+HTP
+(847380.16€ + 130354.22€ = 977734.38€) reproduit EXACTEMENT le total
+établissement déjà validé, et le montant HC seul (847380.16€) est le même
+chiffre déjà confirmé le 2026-07-31 contre la restitution Ovalide "Casemix
+par GME/GMT" (voir docstring montant_br_tot_campagne)."""
+
+
 def montant_br_tot_campagne_comparable(
-    conn: sqlite3.Connection, campagne: int, max_week: int, finess: str | None = None, exclure: bool = True
+    conn: sqlite3.Connection,
+    campagne: int,
+    max_week: int,
+    finess: str | None = None,
+    exclure: bool = True,
+    axis_filter: tuple[str, str] | None = None,
 ) -> float:
     """montant_br_tot officiel ATIH, mais restreint aux séjours dont TOUTE
     l'activité RHS (de cette campagne) tient dans les semaines 01..max_week —
@@ -489,7 +509,15 @@ def montant_br_tot_campagne_comparable(
     donne le montant BRUT, toutes anomalies comprises. La différence entre
     l'appel filtré (exclure=True, le montant "officiel" affiché ailleurs) et
     ce montant brut est la recette non perçue à cause de ces anomalies
-    (montant_br_non_fact, voir section_valorisation)."""
+    (montant_br_non_fact, voir section_valorisation).
+
+    `axis_filter` (2026-08-05, demande utilisateur) : seul
+    `("type_hospitalisation", "1"/"2"/"3")` est supporté ici — traduit via
+    RHS_VERS_VALO_TYPE_HOSPITALISATION vers la colonne native
+    `valorisation_sejour.type_hospitalisation` (C/P). `("numero_unite_medicale",
+    ...)` n'a AUCUNE colonne équivalente dans VisualValoSejours ; l'appeler
+    avec cet axe est une erreur de programmation (ValueError), pas un cas
+    silencieusement ignoré."""
     dernieres_semaines = _derniere_semaine_rhs_par_sejour(conn, campagne, finess)
 
     # Exclusions cf. EXCLUSION_MONTANT_OFFICIEL. montant_br_trans (transport)
@@ -501,6 +529,15 @@ def montant_br_tot_campagne_comparable(
     if finess is not None:
         clause += " AND finess_epmsi = ?"
         params.append(finess)
+    if axis_filter is not None:
+        champ, valeur = axis_filter
+        if champ != "type_hospitalisation":
+            raise ValueError(
+                f"montant_br_tot n'est pas ventilable par {champ!r} (aucune colonne équivalente "
+                "dans valorisation_sejour) — seul 'type_hospitalisation' est supporté."
+            )
+        clause += " AND type_hospitalisation = ?"
+        params.append(RHS_VERS_VALO_TYPE_HOSPITALISATION[valeur])
     rows = conn.execute(
         "SELECT numero_admin_sejour, montant_br_tot - COALESCE(montant_br_trans, 0) "
         f"FROM valorisation_sejour {clause}",
@@ -582,7 +619,11 @@ def sejours_non_factures_sans_anomalie(conn: sqlite3.Connection, finess: str, ca
 
 
 def estimation_recettes_sejours_en_cours(
-    conn: sqlite3.Connection, period: dict, finess: str, pmjt: float | None
+    conn: sqlite3.Connection,
+    period: dict,
+    finess: str,
+    pmjt: float | None,
+    axis_filter: tuple[str, str] | None = None,
 ) -> dict:
     """ESSAI (demande utilisateur 2026-08-05). Estime la recette non encore
     facturée des séjours <90j non clos "propres" (voir
@@ -593,15 +634,28 @@ def estimation_recettes_sejours_en_cours(
     l'utilise ne partagent jamais le même calcul. Résultat affiché à part de
     montant_br_pt, jamais fusionné dedans — nouvelle hypothèse non validable
     contre une référence externe par construction (ces séjours n'ont encore
-    aucun montant ATIH connu)."""
+    aucun montant ATIH connu).
+
+    `axis_filter` (2026-08-05) : mêmes clés que compute_valeur_journaliere
+    (`numero_unite_medicale` ou `type_hospitalisation`) — ne compte que les
+    journées de présence dont la ligne RHS d'origine correspond au filtre,
+    via le même day_axis que le reste du module."""
     if not pmjt:
         return {"montant": 0.0, "nb_sejours": 0, "nb_journees": 0}
     cible = sejours_non_factures_sans_anomalie(conn, finess, int(period["year"]))
     if not cible:
         return {"montant": 0.0, "nb_sejours": 0, "nb_journees": 0}
     presence = _rhs_presence_days_by_sejour(conn, finess)
+    day_axis = _rhs_day_axis(conn, finess) if axis_filter else {}
     nb_journees = 0
+    sejours_concernes = 0
     for numadmin in cible:
-        jours = presence.get((finess, numadmin), [])
-        nb_journees += sum(1 for j in jours if period["start"] <= j <= period["end"])
-    return {"montant": nb_journees * pmjt, "nb_sejours": len(cible), "nb_journees": nb_journees}
+        jours = [
+            j
+            for j in presence.get((finess, numadmin), [])
+            if period["start"] <= j <= period["end"] and _matches_axis(day_axis, axis_filter, finess, numadmin, j)
+        ]
+        if jours:
+            sejours_concernes += 1
+            nb_journees += len(jours)
+    return {"montant": nb_journees * pmjt, "nb_sejours": sejours_concernes, "nb_journees": nb_journees}

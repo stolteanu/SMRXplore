@@ -226,7 +226,14 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
         "établissements. D'autres variables NV_* du fichier VisualValoSejours existent (nv_cm90, "
         "nv_nonclos, nv_pie, nv_varano, nv_article51, nv_telereadapt, nv_evcepr, nv_gmt9999, "
         "nv_horsperiode) mais n'ont montré aucune contribution sur ces cas de test — non exclues, faute "
-        "de preuve empirique.",
+        "de preuve empirique. <b>Dans un TDB secondaire par type d'hospitalisation</b> (HC/HTP), ce "
+        "montant est ventilé EXACTEMENT via la colonne native <code>valorisation_sejour."
+        "type_hospitalisation</code> (C/P — indépendante du champ RHS) : vérifié sur [etablissement anonymise]/2026, "
+        "HC (847380.16€) + HTP (130354.22€) = 977734.38€, le total établissement, et le HC seul déjà "
+        "confirmé contre la restitution Ovalide le 2026-07-31. <b>Dans un TDB secondaire par UF</b>, "
+        "aucune colonne équivalente n'existe : ce montant devient une APPROXIMATION (marquée \"≈\") "
+        "égale à Montant BR PRT reproraté par jour de présence — fiable pour les séjours mono-UF "
+        "(majoritaires), approximative pour les séjours multi-UF.",
     )
     m["estimation_en_cours"] = notes.add(
         "warn",
@@ -589,14 +596,19 @@ def render(data: dict, axis_label: str | None = None) -> str:
         estim_cell = fmt(v["montant_br_pt_avec_estimation"], 2, " €")
         if estim and estim["nb_sejours"]:
             estim_cell += f" <small>({fmt_int(estim['nb_sejours'])} séj., {fmt_int(estim['nb_journees'])} j)</small>"
-        ecart = (
-            v["montant_br_tot"] - v["montant_br_pt_avec_estimation"]
-            if v["montant_br_tot"] is not None
-            else None
-        )
+        ecart = v["montant_br_tot"] - v["montant_br_pt_avec_estimation"]
+        # Par axe UF (2026-08-05, demande utilisateur) : pas de colonne
+        # équivalente dans valorisation_sejour, donc montant_br_tot y est une
+        # APPROXIMATION (= montant_br_pt reproraté par jour de présence, bon
+        # proxy car la majorité des séjours restent mono-UF) — marquée "≈" au
+        # lieu du montant officiel exact. Par type d'hospitalisation, c'est
+        # une vraie ventilation exacte (colonne native C/P), pas de marquage.
+        tot_cell = fmt(v["montant_br_tot"], 2, " €")
+        if not v["montant_br_tot_exact"]:
+            tot_cell = f"<span title=\"Approximation par prorata temporis (aucune colonne UF dans valorisation_sejour) — fiable pour les séjours mono-UF, majoritaires\">≈ {tot_cell}</span>"
         valorisation_rows += (
             f"<tr><td>{periods_by_year[y]['label']}</td>"
-            f"<td>{fmt(v['montant_br_tot'], 2, ' €')}</td>"
+            f"<td>{tot_cell}</td>"
             f"<td>{estim_cell}</td>"
             f"<td>{fmt(ecart, 2, ' €')}</td>"
             f"<td>{fmt(v['pmct'], 2, ' €')}</td>"
