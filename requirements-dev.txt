@@ -1,0 +1,8 @@
+# Outil de BUILD uniquement (empaqueter launch.py en .exe autonome pour
+# déploiement sur une machine sans Python) — jamais requis pour faire
+# tourner le projet depuis les sources (run.py, launch.py restent
+# bibliothèque standard uniquement, voir requirements.txt).
+#
+# python -m pip install -r requirements-dev.txt
+# python -m PyInstaller --onefile --name launch --distpath . --workpath build --specpath build launch.py
+pyinstaller

@@ -24,5 +24,11 @@ temp/
 __pycache__/
 *.pyc
 
+# Build PyInstaller (launch.exe autonome, voir README de build) — binaire
+# régénérable via `python -m PyInstaller --onefile --name launch --distpath . --workpath build --specpath build launch.py`,
+# spécifique à la machine/architecture qui l'a produit : pas dans git.
+build/
+launch.exe
+
 # Config Claude Code locale à cette machine (permissions), pas du projet.
 .claude/settings.local.json

@@ -20,9 +20,16 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+if not getattr(sys, "frozen", False):
+    # Nécessaire uniquement en exécution depuis les sources (`python
+    # launch.py`) pour que `from src...` résolve quel que soit le cwd — une
+    # fois empaqueté (PyInstaller), les modules src.* sont déjà accessibles
+    # via le mécanisme d'import interne au .exe, pas besoin de sys.path.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.util.paths import project_root  # noqa: E402
+
+ROOT = project_root()
 APP_DIR = (ROOT / "app").resolve()
 GENERATED_DIR = APP_DIR / "generated"
 

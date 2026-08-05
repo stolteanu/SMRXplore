@@ -20,11 +20,11 @@ la conception (choix utilisateur 2026-07-30). La section "Erreurs groupage"
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
+from src.util.paths import project_root
 from src.viz.tableau_de_bord import build
 
-OUT_DIR = Path(__file__).resolve().parents[2] / "app"
+OUT_DIR = project_root() / "app"
 
 MOIS_FR = [
     "", "janvier", "février", "mars", "avril", "mai", "juin",

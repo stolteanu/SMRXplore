@@ -28,9 +28,10 @@ from __future__ import annotations
 
 import datetime
 import sqlite3
-from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parents[2] / "data/processed/pmsi.db"
+from src.util.paths import project_root
+
+DB_PATH = project_root() / "data/processed/pmsi.db"
 
 def _load_intervenant_labels(conn: sqlite3.Connection) -> dict[str, str]:
     """Nomenclature complète (32 codes) issue de `nomenclature_csarr_intervenants`
