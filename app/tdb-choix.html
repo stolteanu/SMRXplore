@@ -80,6 +80,35 @@
   }
   .report a:hover { text-decoration: underline; }
   .spinner { font-size: 13px; color: var(--ink-2); }
+  .fin-block { border-top: 1px solid var(--grid); padding-top: 12px; margin-top: 12px; }
+  .fin-block:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+  .fin-block h3 { font-size: 12.5px; margin: 0 0 8px; color: var(--ink); }
+  .uf-chip-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  label.chip.small { padding: 4px 10px; font-size: 12px; }
+  label.chip.small.grouped { opacity: 0.35; }
+  .new-groupe { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .new-groupe input[type="text"] {
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+    font-size: 13px; background: var(--page); color: var(--ink); min-width: 180px;
+  }
+  .new-groupe button {
+    border: 1px solid var(--border); background: var(--page); color: var(--ink);
+    border-radius: 8px; padding: 7px 12px; font-size: 12.5px; cursor: pointer;
+  }
+  .new-groupe button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .groupe-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .groupe-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: color-mix(in srgb, var(--vid) 14%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--vid) 40%, var(--border));
+    border-radius: 999px; padding: 6px 8px 6px 12px; font-size: 12.5px;
+  }
+  .groupe-tag .remove {
+    cursor: pointer; color: var(--ink-2); font-weight: 700; line-height: 1;
+    border-radius: 999px; width: 16px; height: 16px; display: inline-flex;
+    align-items: center; justify-content: center;
+  }
+  .groupe-tag .remove:hover { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -105,6 +134,12 @@
       <label class="chip"><input type="radio" name="axis" value="uf"> Par UF</label>
       <label class="chip"><input type="radio" name="axis" value="type_hospitalisation"> Par type d'hospitalisation (HC / HTP)</label>
     </div>
+  </div>
+
+  <div class="card" id="groupes-uf-card" style="display:none;">
+    <h2>Regroupement d'UF en services (optionnel)</h2>
+    <p class="hint" style="margin-top:0;">Les services n'existent pas dans le PMSI : définissez ici vos propres regroupements d'UF. Cochez des UF, donnez un nom, ajoutez le groupe. Un TDB complet sera généré par groupe (les UF non regroupées restent générées individuellement). Ce paramétrage est mémorisé sur cet ordinateur, par établissement.</p>
+    <div id="groupes-uf-body"><span class="hint">Sélectionnez au moins un établissement.</span></div>
   </div>
 
   <div class="card">
@@ -145,6 +180,111 @@
 
   function selectedValues(container, name) {
     return Array.from(container.querySelectorAll(`input[name="${name}"]:checked`)).map(i => i.value);
+  }
+
+  // --- Regroupement d'UF en "services" (2026-08-06) -------------------
+  // Notion absente du PMSI : purement définie par l'utilisateur, jamais
+  // codée en dur ici. Persistée en localStorage, PAR ÉTABLISSEMENT
+  // (clé `pmsi_uf_groupes_<finess>`), pour ne pas avoir à la resaisir à
+  // chaque génération.
+  const groupesUfCard = document.getElementById("groupes-uf-card");
+  const groupesUfBody = document.getElementById("groupes-uf-body");
+  const ufListCache = {}; // finess -> Promise<string[]>
+
+  function lsKey(finess) { return `pmsi_uf_groupes_${finess}`; }
+
+  function loadGroupes(finess) {
+    try {
+      return JSON.parse(localStorage.getItem(lsKey(finess)) || "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  function saveGroupes(finess, groupes) {
+    localStorage.setItem(lsKey(finess), JSON.stringify(groupes));
+  }
+
+  function fetchUfList(finess) {
+    if (!ufListCache[finess]) {
+      ufListCache[finess] = fetch(`/api/uf-list?finess=${encodeURIComponent(finess)}`)
+        .then(r => r.json())
+        .then(body => body.uf || []);
+    }
+    return ufListCache[finess];
+  }
+
+  function currentAxis() {
+    const el = document.querySelector('input[name="axis"]:checked');
+    return el ? el.value : "none";
+  }
+
+  function refreshGroupesUfCard() {
+    const finessList = selectedValues(finessBox, "finess");
+    if (currentAxis() !== "uf" || finessList.length === 0) {
+      groupesUfCard.style.display = "none";
+      return;
+    }
+    groupesUfCard.style.display = "";
+    groupesUfBody.innerHTML = "";
+    finessList.forEach(finess => renderFinessGroupBlock(finess));
+  }
+
+  function renderFinessGroupBlock(finess) {
+    const block = document.createElement("div");
+    block.className = "fin-block";
+    block.innerHTML = `<h3>${finess}</h3><div class="uf-chip-grid"><span class="hint">Chargement des UF…</span></div>
+      <div class="new-groupe"></div><div class="groupe-list"></div>`;
+    groupesUfBody.appendChild(block);
+
+    fetchUfList(finess).then(ufs => {
+      const groupes = loadGroupes(finess);
+      const grouped = new Set(Object.values(groupes).flat());
+      const chipGrid = block.querySelector(".uf-chip-grid");
+      chipGrid.innerHTML = ufs.length
+        ? ufs.map(uf => `<label class="chip small${grouped.has(uf) ? " grouped" : ""}">
+            <input type="checkbox" value="${uf}" ${grouped.has(uf) ? "disabled" : ""}> ${uf}</label>`).join("")
+        : '<span class="hint">Aucune UF trouvée.</span>';
+
+      const newGroupe = block.querySelector(".new-groupe");
+      newGroupe.innerHTML = `
+        <input type="text" placeholder="Nom du service (ex. Cardiologie)">
+        <button type="button">+ Créer le groupe</button>`;
+      const nameInput = newGroupe.querySelector("input");
+      const addBtn = newGroupe.querySelector("button");
+      addBtn.addEventListener("click", () => {
+        const nom = nameInput.value.trim();
+        const chosen = Array.from(chipGrid.querySelectorAll("input:checked")).map(i => i.value);
+        if (!nom || chosen.length === 0) return;
+        const g = loadGroupes(finess);
+        g[nom] = chosen;
+        saveGroupes(finess, g);
+        block.remove();
+        renderFinessGroupBlock(finess);
+      });
+
+      renderGroupeList(block, finess, ufs);
+    });
+  }
+
+  function renderGroupeList(block, finess, ufs) {
+    const list = block.querySelector(".groupe-list");
+    const groupes = loadGroupes(finess);
+    const noms = Object.keys(groupes);
+    list.innerHTML = noms.length ? "" : "";
+    noms.forEach(nom => {
+      const tag = document.createElement("span");
+      tag.className = "groupe-tag";
+      tag.innerHTML = `${nom} (${groupes[nom].join(", ")}) <span class="remove" title="Supprimer">✕</span>`;
+      tag.querySelector(".remove").addEventListener("click", () => {
+        const g = loadGroupes(finess);
+        delete g[nom];
+        saveGroupes(finess, g);
+        block.remove();
+        renderFinessGroupBlock(finess);
+      });
+      list.appendChild(tag);
+    });
   }
 
   function refreshYearAvailability() {
@@ -204,12 +344,14 @@
     ).join("") || '<span class="hint">Aucun établissement en base.</span>';
 
     yearsBox.addEventListener("change", enforceYearLimit);
-    finessBox.addEventListener("change", refreshYearAvailability);
+    finessBox.addEventListener("change", () => { refreshYearAvailability(); refreshGroupesUfCard(); });
     refreshYearAvailability();
   }).catch(err => {
     yearsBox.innerHTML = finessBox.innerHTML = '<span class="hint">Erreur de chargement.</span>';
     console.error(err);
   });
+
+  document.querySelectorAll('input[name="axis"]').forEach(r => r.addEventListener("change", refreshGroupesUfCard));
 
   goBtn.addEventListener("click", () => {
     const years = selectedValues(yearsBox, "year");
@@ -217,6 +359,13 @@
     const axis = document.querySelector('input[name="axis"]:checked').value;
     const moisFinRaw = document.getElementById("mois-fin").value;
     const mois_fin = moisFinRaw ? parseInt(moisFinRaw, 10) : null;
+    const groupes_uf = {};
+    if (axis === "uf") {
+      finess.forEach(f => {
+        const g = loadGroupes(f);
+        if (Object.keys(g).length) groupes_uf[f] = g;
+      });
+    }
 
     msgBox.innerHTML = '<p class="spinner">Génération en cours…</p>';
     resultsBox.innerHTML = "";
@@ -225,7 +374,7 @@
     fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ years, finess, axis, mois_fin })
+      body: JSON.stringify({ years, finess, axis, mois_fin, groupes_uf })
     })
       .then(r => r.json().then(body => ({ ok: r.ok, body })))
       .then(({ ok, body }) => {

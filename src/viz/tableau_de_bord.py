@@ -192,6 +192,12 @@ def _period_filter(
             codes = [k for k, v in TYPE_HOSPITALISATION_GROUPES.items() if v == valeur]
             clause += f" AND {champ} IN ({', '.join('?' for _ in codes)})"
             params.extend(codes)
+        elif isinstance(valeur, (list, tuple, set)):
+            # Regroupement de plusieurs UF en un "service" défini par
+            # l'utilisateur (2026-08-06) : liste de valeurs -> IN (...).
+            valeurs = sorted(valeur)
+            clause += f" AND {champ} IN ({', '.join('?' for _ in valeurs)})"
+            params.extend(valeurs)
         else:
             clause += f" AND {champ} = ?"
             params.append(valeur)

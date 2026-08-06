@@ -1120,13 +1120,27 @@ AXIS_TITLE = {
 
 
 def generate_axis_reports(
-    finess: str, years: list[str] | None, axis: str, mois_fin: int | None = None
+    finess: str,
+    years: list[str] | None,
+    axis: str,
+    mois_fin: int | None = None,
+    groupes: dict[str, list[str]] | None = None,
 ) -> list[dict]:
     """TDB secondaire (2026-08-04, décision utilisateur) : PAS une section
     résumé en plus du TDB principal, mais un TDB COMPLET (sections 1-9,
     mêmes gabarits que render()) par valeur de l'axe choisi — un par UF, ou
     un par type d'hospitalisation (HC/HTP). `axis` = "uf" ou
     "type_hospitalisation" (clés d'AXIS_CHAMP).
+
+    `groupes` (optionnel, uniquement pour axis == "uf", 2026-08-06) :
+    regroupement de plusieurs UF en un "service" défini par l'UTILISATEUR
+    (nom de groupe -> liste de codes UF), saisi côté page tdb-choix.html et
+    persisté en localStorage — jamais codé en dur ici, la notion de
+    "service" n'existe pas dans le PMSI. Pour chaque groupe, un seul TDB
+    complet est généré (axis_filter sur la liste d'UF, IN (...) — voir
+    tableau_de_bord._period_filter) avec le nom du groupe comme libellé. Les
+    UF non affectées à un groupe continuent de générer chacune leur propre
+    TDB individuel, comme avant.
 
     Limites assumées (voir docstrings de tableau_de_bord.section_patients et
     section_valorisation) : la section Patients restreint aux séjours ayant
@@ -1158,17 +1172,31 @@ def generate_axis_reports(
     if mois_fin:
         suffix += f"-M{mois_fin:02d}"
 
-    reports = []
+    entries: list[tuple[str, str, str | list[str]]] = []  # (slug_base, libelle, valeur_filtre)
+    groupees: set[str] = set()
+    if axis == "uf" and groupes:
+        for nom_groupe, ufs in groupes.items():
+            ufs_valides = [u for u in ufs if u in values]
+            if not ufs_valides:
+                continue
+            groupees.update(ufs_valides)
+            entries.append((nom_groupe, nom_groupe, ufs_valides))
     for value in values:
+        if value in groupees:
+            continue
         label = labels.get(value, value)
-        data = build(finess, years, axis_filter=(champ, value), mois_fin=mois_fin)
+        entries.append((value, label, value))
+
+    reports = []
+    for slug_base, label, valeur_filtre in entries:
+        data = build(finess, years, axis_filter=(champ, valeur_filtre), mois_fin=mois_fin)
         if not data["years"]:
             continue
         html = render(data, axis_label=f"{AXIS_TITLE[axis]} {label}")
-        slug = re.sub(r"[^A-Za-z0-9_-]+", "_", value)
+        slug = re.sub(r"[^A-Za-z0-9_-]+", "_", slug_base)
         path = GENERATED_DIR / f"tableau_de_bord_{finess}_{suffix}_{axis}-{slug}.html"
         path.write_text(html, encoding="utf-8")
-        reports.append({"value": value, "libelle": label, "url": f"/generated/{path.name}"})
+        reports.append({"value": slug_base, "libelle": label, "url": f"/generated/{path.name}"})
     return reports
 
 

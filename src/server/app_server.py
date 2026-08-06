@@ -55,7 +55,13 @@ def _load_meta() -> dict:
     return {"finess": finess_list, "years_by_finess": years_by_finess}
 
 
-def _generate(finess_list: list[str], years: list[str], axis: str, mois_fin: int | None = None) -> list[dict]:
+def _generate(
+    finess_list: list[str],
+    years: list[str],
+    axis: str,
+    mois_fin: int | None = None,
+    groupes_uf: dict[str, dict[str, list[str]]] | None = None,
+) -> list[dict]:
     from src.viz.render_dashboard import generate_axis_reports, render, render_annexe, render_journal
     from src.viz.tableau_de_bord import build
 
@@ -89,8 +95,11 @@ def _generate(finess_list: list[str], years: list[str], axis: str, mois_fin: int
 
         if axis in ("uf", "type_hospitalisation"):
             # Un TDB complet PAR valeur d'axe (pas une section résumé en
-            # plus du TDB principal, cf. generate_axis_reports).
-            report["secondaires"] = generate_axis_reports(finess, years or None, axis, mois_fin)
+            # plus du TDB principal, cf. generate_axis_reports). Pour "uf",
+            # `groupes_uf[finess]` (optionnel) regroupe plusieurs UF en
+            # "service" défini par l'utilisateur — voir generate_axis_reports.
+            groupes = (groupes_uf or {}).get(finess) if axis == "uf" else None
+            report["secondaires"] = generate_axis_reports(finess, years or None, axis, mois_fin, groupes)
 
         reports.append(report)
     return reports
@@ -160,14 +169,33 @@ class Handler(BaseHTTPRequestHandler):
         return target
 
     def do_GET(self) -> None:
-        if self.path.split("?", 1)[0] == "/api/meta":
+        from urllib.parse import parse_qs, urlsplit
+
+        parsed = urlsplit(self.path)
+        if parsed.path == "/api/meta":
             try:
                 self._send_json(_load_meta())
             except Exception as exc:
                 self._send_json({"error": str(exc)}, status=500)
             return
 
-        target = self._resolve_static(self.path.split("?", 1)[0])
+        if parsed.path == "/api/uf-list":
+            try:
+                qs = parse_qs(parsed.query)
+                finess = (qs.get("finess") or [""])[0]
+                if not _FINESS_RE.match(finess):
+                    raise ValueError("FINESS invalide.")
+                from src.viz.tableau_de_bord import connect, valeurs_axe
+
+                conn = connect()
+                values = valeurs_axe(conn, [], finess, "numero_unite_medicale")
+                conn.close()
+                self._send_json({"uf": values})
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
+        target = self._resolve_static(parsed.path)
         if target is None:
             self.send_error(403, "Interdit")
             return
@@ -192,6 +220,7 @@ class Handler(BaseHTTPRequestHandler):
             years = payload.get("years") or []
             axis = payload.get("axis") or "none"
             mois_fin = payload.get("mois_fin")
+            groupes_uf = payload.get("groupes_uf") or {}
 
             if not finess_list:
                 raise ValueError("Choisissez au moins un établissement.")
@@ -206,8 +235,16 @@ class Handler(BaseHTTPRequestHandler):
             if mois_fin is not None:
                 if not isinstance(mois_fin, int) or not (1 <= mois_fin <= 12):
                     raise ValueError("Mois de fin invalide (1 à 12).")
+            if not isinstance(groupes_uf, dict):
+                raise ValueError("groupes_uf invalide.")
+            for f, groupes in groupes_uf.items():
+                if f not in finess_list or not isinstance(groupes, dict):
+                    raise ValueError("groupes_uf invalide.")
+                for nom, ufs in groupes.items():
+                    if not isinstance(nom, str) or not isinstance(ufs, list) or not all(isinstance(u, str) for u in ufs):
+                        raise ValueError("groupes_uf invalide.")
 
-            reports = _generate(finess_list, years, axis, mois_fin)
+            reports = _generate(finess_list, years, axis, mois_fin, groupes_uf)
             self._send_json({"reports": reports})
         except Exception as exc:
             self._send_json({"error": str(exc)}, status=400)
