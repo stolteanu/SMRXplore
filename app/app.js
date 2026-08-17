@@ -1324,16 +1324,88 @@ function genererListe() {
 // "lignes" et "colonnes" du pivot. Les vignettes (petits multiples) sont obtenues en scindant les
 // lignes source par valeur(s) de facette puis en recalculant un pivot indépendant par vignette.
 
-const CHART_PALETTE = ["#1a5276", "#c0392b", "#1e8449", "#b9770e", "#7d3c98", "#117864", "#a04000", "#2874a6", "#943126", "#196f3d", "#5d6d7e", "#0e6655"];
+// Palette catégorielle validée (8 teintes, ordre fixe) : chaque teinte reste distinguable des
+// autres pour un daltonien (deutéranopie/protanopie) ET en vision normale, dans cet ordre précis —
+// ne JAMAIS cycler au-delà de 8 (une 9e teinte générée redevient indiscernable d'une teinte
+// existante). Au-delà de CHART_CAT_CAP séries/catégories colorées, on replie le surplus dans
+// "Autres" (voir foldSeriesList/foldTopN) plutôt que de générer une teinte de plus.
+const CHART_PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
+const CHART_CAT_CAP = CHART_PALETTE.length;
+const CHART_OTHER_COLOR = "#9a9990"; // gris neutre partagé par tout ce qui est replié dans "Autres"
 const CHART_TYPE_LABELS = {
-  barres: "Barres", barres_empilees: "Barres empilées", lignes: "Lignes", aires: "Aires",
-  camembert: "Camembert", nuage: "Nuage de points", carte_chaleur: "Carte de chaleur",
-  boxplot: "Boîte à moustaches", histogramme: "Histogramme", treemap: "Treemap",
+  barres: "Barres", barres_horiz: "Barres horizontales", barres_empilees: "Barres empilées",
+  lignes: "Lignes", aires: "Aires",
+  camembert: "Camembert", sunburst: "Sunburst", nuage: "Nuage de points", bulles: "Bulles (bubble chart)",
+  carte_chaleur: "Carte de chaleur", boxplot: "Boîte à moustaches", histogramme: "Histogramme",
+  treemap: "Treemap", sankey: "Diagramme de Sankey (flux)",
 };
 // Dimensions "temporelles" au sens large (année/semaine/campagne) : un axe X sur l'une d'elles
 // suggère un graphique en lignes plutôt qu'en barres.
 const TEMPORAL_DIM_IDS = new Set(["annee_periode", "semaine", "campagne"]);
 const GRAPH_FACET_CAP = 12; // nombre max de vignettes générées (évite l'explosion combinatoire)
+
+// ---- Typographie & mise en page communes à tous les rendus SVG ----
+// Tailles un cran au-dessus du minimum lisible (9-10px de base plutôt que 8-8.5px) et encre plus
+// contrastée que le gris clair d'origine, pour que les libellés restent nets même réduits dans
+// une vignette. Toutes les fonctions de rendu ci-dessous utilisent ces constantes plutôt que des
+// tailles/couleurs codées en dur, pour rester cohérentes entre elles.
+const CH_FONT = "font-family:'Segoe UI',Arial,sans-serif;";
+const CH_INK = "#1b2631";      // libellés de catégorie, valeurs directes
+const CH_MUTED = "#5d6d7e";    // graduations d'axe, texte secondaire
+const CH_GRID = "#e5e9ea";     // grille (hairline)
+const CH_AXIS = "#aab0b8";     // ligne d'axe
+const CH_FS_AXIS = 10.5;
+const CH_FS_CAT = 10.5;
+const CH_FS_VAL = 10.5;
+
+// Replie une liste de catégories/valeurs au-delà de `maxN` entrées dans une entrée "Autres" (somme
+// des valeurs repliées) — préserve l'ordre d'origine des entrées conservées. Utilisé partout où une
+// dimension catégorielle pourrait produire plus de couleurs que la palette n'en distingue de façon
+// fiable (camembert, sunburst, treemap, sankey) : on ne génère jamais de 9e teinte, on replie.
+function foldTopN(labels, values, maxN) {
+  if (labels.length <= maxN) return { labels, values };
+  const idx = labels.map((_, i) => i).sort((a, b) => (values[b] || 0) - (values[a] || 0));
+  const keepSet = new Set(idx.slice(0, maxN - 1));
+  const restIdx = idx.slice(maxN - 1);
+  const outLabels = [], outValues = [];
+  labels.forEach((lbl, i) => { if (keepSet.has(i)) { outLabels.push(lbl); outValues.push(values[i]); } });
+  const restSum = restIdx.reduce((s, i) => s + (values[i] || 0), 0);
+  outLabels.push(`Autres (${restIdx.length})`);
+  outValues.push(restSum);
+  return { labels: outLabels, values: outValues };
+}
+// Même principe pour une liste de séries déjà construite (chacune avec son tableau `values`
+// aligné sur les mêmes catégories) : replie les séries les plus faibles (somme totale) dans une
+// série "Autres" dont chaque valeur est la somme des séries repliées à cette catégorie.
+function foldSeriesList(series, maxN) {
+  if (series.length <= maxN) return series;
+  const totals = series.map(s => s.values.reduce((a, b) => a + (b || 0), 0));
+  const idx = series.map((_, i) => i).sort((a, b) => totals[b] - totals[a]);
+  const keep = idx.slice(0, maxN - 1).sort((a, b) => a - b);
+  const rest = idx.slice(maxN - 1);
+  const kept = keep.map(i => series[i]);
+  const n = series[0].values.length;
+  const restVals = new Array(n).fill(0);
+  rest.forEach(i => series[i].values.forEach((v, k) => { restVals[k] += (v || 0); }));
+  kept.push({ label: `Autres (${rest.length})`, color: CHART_OTHER_COLOR, values: restVals });
+  return kept;
+}
+
+// Largeur SVG (en px CSS) adaptée au nombre de catégories : les graphiques simples (peu de
+// catégories) restent compacts et donc bien centrés dans leur vignette ; les graphiques touffus
+// gagnent en largeur réelle (pas juste en zoom arrière, qui rétrécirait aussi le texte) jusqu'à un
+// plafond, au-delà duquel on bascule en défilement horizontal (voir svgScrollWrap) plutôt que de
+// continuer à tasser les catégories jusqu'à l'illisible.
+function chartWidthPx(n, perCat, min, max) {
+  return Math.max(min, Math.min(max, Math.round(n * perCat)));
+}
+// Encapsule un <svg> dans un conteneur centré ; si `scrollable` (graphique large), le SVG garde sa
+// largeur réelle en px (texte à taille constante) et le conteneur défile horizontalement plutôt que
+// de tout réduire — sinon le SVG est limité à `pxWidth` et centré, sans jamais dépasser le parent.
+function svgScrollWrap(svgMarkup, pxWidth, scrollable) {
+  if (!scrollable) return `<div style="display:flex;justify-content:center;">${svgMarkup}</div>`;
+  return `<div style="overflow-x:auto;width:100%;"><div style="width:${pxWidth}px;max-width:none;">${svgMarkup}</div></div>`;
+}
 
 // ---- Couleurs par anneau (camembert imbriqué) : une teinte de base par anneau (personnalisable
 // via un sélecteur couleur), déclinée en dégradé de luminosité pour les valeurs de cet anneau —
@@ -1383,7 +1455,7 @@ function renderRingColorsUI() {
   const field = document.getElementById("ringColorsField");
   const container = document.getElementById("ringColorsList");
   if (!field || !container) return;
-  field.style.display = (activeChartType === "camembert" || activeChartType === "treemap") ? "flex" : "none";
+  field.style.display = (activeChartType === "camembert" || activeChartType === "sunburst" || activeChartType === "treemap") ? "flex" : "none";
   syncGraphRingColors();
   const ringNames = ["Axe X", ...graphSeriesDimRows.map((r, i) => `Série ${i + 1} (${labelForDimRow(r)})`)];
   container.innerHTML = "";
@@ -1479,9 +1551,14 @@ function chartSeriesData(pivot, seriesDimsCfg, exprsUsed) {
 }
 
 function renderBarSvg(categories, series, stacked) {
-  const W = 560, H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
-  const plotW = W - ML - MR, plotH = H - MT - MB;
+  series = foldSeriesList(series, CHART_CAT_CAP);
   const n = categories.length;
+  const H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
+  // Largeur adaptée au nombre de catégories : compacte (donc bien centrée) si peu nombreuses,
+  // élargie jusqu'à un plafond sinon — au-delà, défilement horizontal plutôt que des barres tassées.
+  const W = chartWidthPx(n, stacked ? 46 : 34 * Math.max(1, series.length), 480, 1400);
+  const scrollable = W >= 1400;
+  const plotW = W - ML - MR, plotH = H - MT - MB;
   let maxV = 0;
   if (stacked) {
     for (let i = 0; i < n; i++) {
@@ -1498,16 +1575,17 @@ function renderBarSvg(categories, series, stacked) {
   const barGap = groupW * 0.15;
   const barsAreaW = groupW - barGap;
   const barW = stacked ? barsAreaW : barsAreaW / Math.max(1, series.length);
+  const showValueLabels = series.length === 1 && n <= 24; // une seule série, pas trop de barres : étiquette directe à la pointe
 
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:'Segoe UI',Arial,sans-serif;">`;
+  let svg = "";
   const ticks = 4;
   for (let t = 0; t <= ticks; t++) {
     const v = niceMax * t / ticks, yy = y(v);
-    svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="#e5e9ea" stroke-width="1"/>`;
-    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="9" fill="#7f8c8d" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
+    svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="${CH_GRID}" stroke-width="1"/>`;
+    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
   }
-  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="#aab" stroke-width="1"/>`;
-  svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="#aab" stroke-width="1"/>`;
+  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+  svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
 
   categories.forEach((cat, i) => {
     const gx = ML + i * groupW + barGap / 2;
@@ -1527,38 +1605,95 @@ function renderBarSvg(categories, series, stacked) {
         const y0 = MT + plotH, y1 = y(v);
         const bx = gx + si * barW;
         svg += `<rect x="${bx.toFixed(1)}" y="${y1.toFixed(1)}" width="${(barW * 0.9).toFixed(1)}" height="${(y0 - y1).toFixed(1)}" fill="${ser.color}"><title>${esc(cat)} — ${esc(ser.label)} : ${esc(fmtVal(v, false))}</title></rect>`;
+        if (showValueLabels && v > 0) {
+          svg += `<text x="${(bx + barW * 0.45).toFixed(1)}" y="${(y1 - 4).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="middle">${esc(fmtAxisNum(v))}</text>`;
+        }
       });
     }
     const lx = ML + i * groupW + groupW / 2;
-    svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="9" fill="#212f3c" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
+    svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
   });
 
-  svg += "</svg>";
-  return svg + legendHtml(series);
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};max-width:${scrollable ? "none" : W + "px"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series);
+}
+
+// ---- Barres horizontales : même principe que renderBarSvg, mais catégories en ordonnée (texte
+// horizontal, pas de rotation) et valeurs en abscisse — nettement plus lisible dès que les libellés
+// de catégorie sont longs (codes GME, libellés d'actes...) ou nombreux, cf. recommandation
+// "part-to-whole : passer en horizontal pour de nombreuses catégories / libellés longs".
+function renderBarSvgH(categories, series) {
+  series = foldSeriesList(series, CHART_CAT_CAP);
+  const n = categories.length;
+  const W = 620, ML = 168, MR = 46, MT = 10, MB = 34;
+  const rowH = chartWidthPx(1, 30 * Math.max(1, series.length), 30, 60); // hauteur par groupe de catégorie
+  const H = MT + MB + n * rowH;
+  const plotW = W - ML - MR, plotH = H - MT - MB;
+  let maxV = 0;
+  for (const ser of series) for (const v of ser.values) maxV = Math.max(maxV, v || 0);
+  const niceMax = niceCeil(maxV || 1);
+  const x = v => ML + (v / niceMax) * plotW;
+  const barGap = rowH * 0.18;
+  const barsAreaH = rowH - barGap;
+  const barH = barsAreaH / Math.max(1, series.length);
+  const showValueLabels = series.length === 1 && n <= 30;
+
+  let svg = "";
+  const ticks = 4;
+  for (let t = 0; t <= ticks; t++) {
+    const v = niceMax * t / ticks, xx = x(v);
+    svg += `<line x1="${xx.toFixed(1)}" y1="${MT}" x2="${xx.toFixed(1)}" y2="${MT + plotH}" stroke="${CH_GRID}" stroke-width="1"/>`;
+    svg += `<text x="${xx.toFixed(1)}" y="${MT + plotH + 16}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="middle">${esc(fmtAxisNum(v))}</text>`;
+  }
+  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+
+  categories.forEach((cat, i) => {
+    const gy = MT + i * rowH + barGap / 2;
+    svg += `<text x="${ML - 8}" y="${(gy + barsAreaH / 2 + 3.5).toFixed(1)}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end">${esc(truncLabel(cat, 24))}</text>`;
+    series.forEach((ser, si) => {
+      const v = ser.values[i];
+      if (v === null || v === undefined) return;
+      const by = gy + si * barH;
+      const x0 = ML, x1 = x(v);
+      svg += `<rect x="${x0.toFixed(1)}" y="${by.toFixed(1)}" width="${Math.max(0, x1 - x0).toFixed(1)}" height="${(barH * 0.86).toFixed(1)}" fill="${ser.color}"><title>${esc(cat)} — ${esc(ser.label)} : ${esc(fmtVal(v, false))}</title></rect>`;
+      if (showValueLabels && v > 0) {
+        svg += `<text x="${(x1 + 5).toFixed(1)}" y="${(by + barH * 0.43 + 3.5).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="start">${esc(fmtAxisNum(v))}</text>`;
+      }
+    });
+  });
+
+  const scrollable = H > 900;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  return (scrollable
+    ? `<div style="max-height:900px;overflow-y:auto;display:flex;justify-content:center;">${svgTag}</div>`
+    : `<div style="display:flex;justify-content:center;">${svgTag}</div>`) + legendHtml(series);
 }
 
 function renderLineAreaSvg(categories, series, filled) {
-  const W = 560, H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
-  const plotW = W - ML - MR, plotH = H - MT - MB;
+  series = foldSeriesList(series, CHART_CAT_CAP);
   const n = categories.length;
+  const H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
+  const W = chartWidthPx(n, 30, 480, 1400);
+  const scrollable = W >= 1400;
+  const plotW = W - ML - MR, plotH = H - MT - MB;
   let maxV = 0, minV = 0;
   for (const ser of series) for (const v of ser.values) { if (v !== null && v !== undefined) { maxV = Math.max(maxV, v); minV = Math.min(minV, v); } }
   const niceMax = niceCeil(maxV || 1);
   const x = i => n <= 1 ? ML + plotW / 2 : ML + (i / (n - 1)) * plotW;
   const y = v => MT + plotH - ((v - minV) / ((niceMax - minV) || 1)) * plotH;
 
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:'Segoe UI',Arial,sans-serif;">`;
+  let svg = "";
   const ticks = 4;
   for (let t = 0; t <= ticks; t++) {
     const v = niceMax * t / ticks, yy = y(v);
-    svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="#e5e9ea" stroke-width="1"/>`;
-    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="9" fill="#7f8c8d" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
+    svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="${CH_GRID}" stroke-width="1"/>`;
+    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
   }
-  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="#aab" stroke-width="1"/>`;
-  svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="#aab" stroke-width="1"/>`;
+  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+  svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
   categories.forEach((cat, i) => {
     const lx = x(i);
-    svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="9" fill="#212f3c" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
+    svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
   });
   series.forEach(ser => {
     const pts = ser.values.map((v, i) => (v === null || v === undefined) ? null : [x(i), y(v)]).filter(Boolean);
@@ -1567,26 +1702,43 @@ function renderLineAreaSvg(categories, series, filled) {
     if (filled && pts.length > 1) {
       const baseY = y(Math.max(minV, 0));
       const areaD = pathD + ` L${pts[pts.length - 1][0].toFixed(1)},${baseY.toFixed(1)} L${pts[0][0].toFixed(1)},${baseY.toFixed(1)} Z`;
-      svg += `<path d="${areaD}" fill="${ser.color}" fill-opacity="0.25" stroke="none"/>`;
+      svg += `<path d="${areaD}" fill="${ser.color}" fill-opacity="0.12" stroke="none"/>`;
     }
     if (pts.length > 1) svg += `<path d="${pathD}" fill="none" stroke="${ser.color}" stroke-width="2"/>`;
     pts.forEach((p, i) => {
-      svg += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${ser.color}"><title>${esc(categories[i])} — ${esc(ser.label)} : ${esc(fmtVal(ser.values[i], false))}</title></circle>`;
+      svg += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.5" fill="${ser.color}" stroke="#fff" stroke-width="1.5"><title>${esc(categories[i])} — ${esc(ser.label)} : ${esc(fmtVal(ser.values[i], false))}</title></circle>`;
     });
+    // Étiquette directe au dernier point de la série (l'extrémité) — repère la ligne sans
+    // surcharger le graphique d'une valeur à chaque point.
+    const last = pts[pts.length - 1];
+    if (last && series.length <= 6) {
+      const lastV = ser.values[ser.values.map((v,i)=>v!==null&&v!==undefined?i:-1).filter(i=>i>=0).pop()];
+      svg += `<text x="${(last[0] + 5).toFixed(1)}" y="${(last[1] - 5).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="start">${esc(fmtAxisNum(lastV))}</text>`;
+    }
   });
-  svg += "</svg>";
-  return svg + legendHtml(series);
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};max-width:${scrollable ? "none" : W + "px"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series);
+}
+
+// Couleur de texte (blanc ou encre) à poser sur un aplat `hex` donné, choisie par luminance
+// relative — un libellé posé DANS un remplissage coloré est la seule exception à "le texte ne
+// porte jamais la couleur de la donnée" : il doit rester lisible quelle que soit la teinte.
+function textColorForBg(hex) {
+  hex = (hex || "#888888").replace("#", "");
+  const r = parseInt(hex.substr(0, 2), 16), g = parseInt(hex.substr(2, 2), 16), b = parseInt(hex.substr(4, 2), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.6 ? "#1b2631" : "#ffffff";
 }
 
 function renderPieSvg(categories, values, baseColor) {
+  ({ labels: categories, values } = foldTopN(categories, values, CHART_CAT_CAP));
   const W = 320, H = 320, cx = W / 2, cy = H / 2 - 10, r = Math.min(W, H) / 2 - 40;
   const total = values.reduce((a, b) => a + (b || 0), 0);
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:320px;height:auto;font-family:'Segoe UI',Arial,sans-serif;">`;
   if (!total) {
-    svg += `<text x="${cx}" y="${cy}" text-anchor="middle" font-size="12" fill="#7f8c8d">Aucune donnée</text></svg>`;
-    return svg;
+    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;${CH_FONT}"><text x="${cx}" y="${cy}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg>`;
   }
   const colorFor = i => shadeForRing(baseColor || CHART_PALETTE[0], i, categories.length);
+  let svg = "";
   let angle = -Math.PI / 2;
   categories.forEach((cat, i) => {
     const v = values[i] || 0;
@@ -1596,12 +1748,18 @@ function renderPieSvg(categories, values, baseColor) {
     const x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
     const x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2);
     const large = frac > 0.5 ? 1 : 0;
-    svg += `<path d="M${cx},${cy} L${x1.toFixed(1)},${y1.toFixed(1)} A${r},${r} 0 ${large} 1 ${x2.toFixed(1)},${y2.toFixed(1)} Z" fill="${colorFor(i)}"><title>${esc(cat)} : ${esc(fmtVal(v, false))} (${(frac * 100).toFixed(1)} %)</title></path>`;
+    const color = colorFor(i);
+    svg += `<path d="M${cx},${cy} L${x1.toFixed(1)},${y1.toFixed(1)} A${r},${r} 0 ${large} 1 ${x2.toFixed(1)},${y2.toFixed(1)} Z" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(cat)} : ${esc(fmtVal(v, false))} (${(frac * 100).toFixed(1)} %)</title></path>`;
+    if (frac >= 0.08) { // étiquette directe (%) seulement sur les parts assez grandes pour l'accueillir
+      const mid = angle + (a2 - angle) / 2, lr = r * 0.66;
+      const lx = cx + lr * Math.cos(mid), ly = cy + lr * Math.sin(mid);
+      svg += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="${CH_FS_VAL}" font-weight="600" fill="${textColorForBg(color)}" text-anchor="middle" dominant-baseline="middle">${(frac * 100).toFixed(0)}%</text>`;
+    }
     angle = a2;
   });
-  svg += "</svg>";
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   const legendSeries = categories.map((c, i) => ({ label: `${c} (${fmtVal(values[i] || 0, false)})`, color: colorFor(i) }));
-  return svg + legendHtml(legendSeries);
+  return `<div style="display:flex;justify-content:center;">${svgTag}</div>` + legendHtml(legendSeries);
 }
 
 // Chemin SVG d'un secteur en couronne (anneau) entre rIn et rOut — dégénère en secteur plein
@@ -1637,10 +1795,21 @@ function buildPieHierarchy(rows, levelKeyFns, measure, aggId) {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(row);
     }
-    const children = [...groups.keys()].sort().map(label => {
+    let children = [...groups.keys()].sort().map(label => {
       const sub = group(groups.get(label), levelIdx + 1);
       return { label, value: sub.value, children: sub.children };
     });
+    // Plafonne le nombre d'enfants d'un même nœud : au-delà de CHART_CAT_CAP, les plus petits sont
+    // repliés dans un nœud "Autres" (feuille, sans détail) — un anneau/secteur à 30 branches est
+    // illisible, et générer une 9e+ teinte casserait la sécurité daltonisme de la palette.
+    if (children.length > CHART_CAT_CAP) {
+      const sorted = [...children].sort((a, b) => (b.value || 0) - (a.value || 0));
+      const kept = sorted.slice(0, CHART_CAT_CAP - 1);
+      const rest = sorted.slice(CHART_CAT_CAP - 1);
+      const keptLabels = new Set(kept.map(c => c.label));
+      children = children.filter(c => keptLabels.has(c.label));
+      children.push({ label: `Autres (${rest.length})`, value: rest.reduce((s, c) => s + (c.value || 0), 0), children: null });
+    }
     return { value, children };
   }
   return group(rows, 0);
@@ -1668,17 +1837,17 @@ function renderHierPieSvg(root, nRings, ringNames, ringColors) {
   const W = 360, H = 360, cx = W / 2, cy = H / 2 - 6;
   const rOuter = Math.min(W, H) / 2 - 26;
   const rStep = rOuter / nRings;
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:360px;height:auto;font-family:'Segoe UI',Arial,sans-serif;">`;
   if (!root.value) {
-    svg += `<text x="${cx}" y="${cy}" text-anchor="middle" font-size="12" fill="#7f8c8d">Aucune donnée</text></svg>`;
-    return svg;
+    return `<div style="display:flex;justify-content:center;"><svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;${CH_FONT}"><text x="${cx}" y="${cy}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg></div>`;
   }
   const levelLabels = collectAllLevelLabels(root, nRings);
   function colorFor(ringIdx, label) {
+    if (/^Autres /.test(label)) return CHART_OTHER_COLOR;
     const labels = levelLabels[ringIdx];
     const base = ringColors[ringIdx] || CHART_PALETTE[ringIdx % CHART_PALETTE.length];
     return shadeForRing(base, labels.indexOf(label), labels.length);
   }
+  let svg = "";
   function draw(children, ringIdx, a1, a2) {
     const total = children.reduce((s, c) => s + (c.value || 0), 0) || 1;
     let a = a1;
@@ -1687,21 +1856,26 @@ function renderHierPieSvg(root, nRings, ringNames, ringColors) {
       if (!frac) return;
       const a2c = a + frac * (a2 - a1);
       const rIn = rStep * ringIdx, rOut = rStep * (ringIdx + 1);
-      svg += `<path d="${annulusPath(cx, cy, rIn, rOut, a, a2c)}" fill="${colorFor(ringIdx, child.label)}"><title>${esc(ringNames[ringIdx])} — ${esc(child.label)} : ${esc(fmtVal(child.value, false))}</title></path>`;
+      const color = colorFor(ringIdx, child.label);
+      svg += `<path d="${annulusPath(cx, cy, rIn, rOut, a, a2c)}" fill="${color}" stroke="#fff" stroke-width="1"><title>${esc(ringNames[ringIdx])} — ${esc(child.label)} : ${esc(fmtVal(child.value, false))} (${(frac * 100).toFixed(1)} %)</title></path>`;
+      if (frac >= 0.09 && (a2c - a) * ((rIn + rOut) / 2) > 14) { // secteur assez grand pour accueillir un %
+        const mid = a + (a2c - a) / 2, lr = (rIn + rOut) / 2;
+        svg += `<text x="${(cx + lr * Math.cos(mid)).toFixed(1)}" y="${(cy + lr * Math.sin(mid)).toFixed(1)}" font-size="${CH_FS_VAL - 1}" font-weight="600" fill="${textColorForBg(color)}" text-anchor="middle" dominant-baseline="middle">${(frac * 100).toFixed(0)}%</text>`;
+      }
       if (child.children) draw(child.children, ringIdx + 1, a, a2c);
       a = a2c;
     });
   }
   draw(root.children, 0, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI);
-  svg += "</svg>";
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   let extraLegend = "";
   for (let ringIdx = 0; ringIdx < nRings; ringIdx++) {
     const labels = levelLabels[ringIdx];
-    if (!labels.length || (ringIdx === 0 && labels.length > 8)) continue; // axe X trop nombreux : infobulle seule
+    if (!labels.length || (ringIdx === 0 && labels.length > CHART_CAT_CAP)) continue; // axe X trop nombreux : infobulle seule
     const series = labels.map(lbl => ({ label: lbl, color: colorFor(ringIdx, lbl) }));
-    extraLegend += `<div style="font-size:0.78em;color:var(--gris);margin-top:4px;">${esc(ringNames[ringIdx])}</div>` + legendHtml(series);
+    extraLegend += `<div style="font-size:0.82em;color:var(--gris);margin-top:4px;text-align:center;">${esc(ringNames[ringIdx])}</div>` + legendHtml(series);
   }
-  return svg + extraLegend;
+  return `<div style="display:flex;justify-content:center;">${svgTag}</div>` + extraLegend;
 }
 
 // Point d'entrée du camembert imbriqué depuis genererGraphique : construit les fonctions de clé
@@ -1718,48 +1892,94 @@ function renderNestedPieFromRows(rows, foreignIdx, expr, measures) {
   return renderHierPieSvg(root, levelKeyFns.length, ringNames, graphRingColors);
 }
 
-function renderScatterSvg(pivot, seriesDimsCfg, exprsUsed) {
-  const exX = exprsUsed[0], exY = exprsUsed[1];
+// Nuage de points / bulles : `exSize` optionnel — absent pour un nuage simple, fourni pour un
+// bubble chart (3e mesure encodée en surface, jamais en rayon direct : la surface d'un disque
+// perçue est proportionnelle à r², donc un rayon linéaire en la valeur exagère visuellement les
+// écarts — on met à l'échelle par racine carrée pour que la SURFACE reste proportionnelle à la
+// valeur, seule mise à l'échelle honnête pour une mesure de taille).
+function renderPointsSvg(pivot, seriesDimsCfg, exX, exY, exSize) {
   const prX = pivot.perExpr[exX.uid], prY = pivot.perExpr[exY.uid];
+  const prSize = exSize ? pivot.perExpr[exSize.uid] : null;
   const points = [];
   pivot.rowKeys.forEach(rk => {
     pivot.colKeys.forEach(ck => {
       const vx = prX.grid[rk][ck], vy = prY.grid[rk][ck];
       if (vx !== null && vx !== undefined && vy !== null && vy !== undefined) {
-        points.push({ x: vx, y: vy, label: pivot.rowPartsByKey.get(rk).join(" / "), group: seriesDimsCfg.length ? ck : null });
+        const sz = prSize ? prSize.grid[rk][ck] : null;
+        points.push({ x: vx, y: vy, size: sz, label: pivot.rowPartsByKey.get(rk).join(" / "), group: seriesDimsCfg.length ? ck : null });
       }
     });
   });
-  const W = 560, H = 320, ML = 54, MR = 16, MT = 16, MB = 46;
+  const W = 560, H = exSize ? 350 : 320, ML = 58, MR = 16, MT = 16, MB = exSize ? 66 : 46;
   const plotW = W - ML - MR, plotH = H - MT - MB;
-  if (!points.length) return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" fill="#7f8c8d">Aucune donnée</text></svg>`;
+  if (!points.length) return `<div style="display:flex;justify-content:center;"><svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="${CH_FONT}"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg></div>`;
   const xs = points.map(p => p.x), ys = points.map(p => p.y);
   const xMin = Math.min(0, ...xs), xMax = niceCeil(Math.max(...xs) || 1);
   const yMin = Math.min(0, ...ys), yMax = niceCeil(Math.max(...ys) || 1);
   const px = v => ML + ((v - xMin) / ((xMax - xMin) || 1)) * plotW;
   const py = v => MT + plotH - ((v - yMin) / ((yMax - yMin) || 1)) * plotH;
-  const groups = [...new Set(points.map(p => p.group))];
-  const colorFor = g => g === null ? CHART_PALETTE[0] : CHART_PALETTE[groups.indexOf(g) % CHART_PALETTE.length];
+  const groupsAll = [...new Set(points.map(p => p.group))];
+  const groups = groupsAll.slice(0, CHART_CAT_CAP);
+  const colorFor = g => {
+    if (g === null) return CHART_PALETTE[0];
+    const i = groups.indexOf(g);
+    return i >= 0 ? CHART_PALETTE[i % CHART_PALETTE.length] : CHART_OTHER_COLOR;
+  };
+  const RMIN = 4.5, RMAX = 22;
+  let sizeMin = 0, sizeMax = 1;
+  if (exSize) {
+    const sizes = points.map(p => p.size).filter(v => v !== null && v !== undefined);
+    sizeMin = Math.min(0, ...sizes); sizeMax = Math.max(...sizes) || 1;
+  }
+  const radiusFor = sz => {
+    if (!exSize) return RMIN + 1.5;
+    if (sz === null || sz === undefined) return RMIN;
+    const frac = Math.max(0, (sz - sizeMin) / ((sizeMax - sizeMin) || 1));
+    return RMIN + Math.sqrt(frac) * (RMAX - RMIN); // surface ∝ valeur
+  };
 
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:'Segoe UI',Arial,sans-serif;">`;
+  let svg = "";
   const ticks = 4;
   for (let t = 0; t <= ticks; t++) {
     const vy = yMin + (yMax - yMin) * t / ticks, yy = py(vy);
-    svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="#e5e9ea" stroke-width="1"/>`;
-    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="9" fill="#7f8c8d" text-anchor="end">${esc(fmtAxisNum(vy))}</text>`;
+    svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="${CH_GRID}" stroke-width="1"/>`;
+    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="end">${esc(fmtAxisNum(vy))}</text>`;
     const vx = xMin + (xMax - xMin) * t / ticks, xx = px(vx);
-    svg += `<text x="${xx.toFixed(1)}" y="${MT + plotH + 14}" font-size="9" fill="#7f8c8d" text-anchor="middle">${esc(fmtAxisNum(vx))}</text>`;
+    svg += `<text x="${xx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="middle">${esc(fmtAxisNum(vx))}</text>`;
   }
-  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="#aab" stroke-width="1"/>`;
-  svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="#aab" stroke-width="1"/>`;
-  svg += `<text x="${(ML + plotW / 2).toFixed(1)}" y="${H - 6}" font-size="10" fill="#212f3c" text-anchor="middle">${esc(exprLabelFor(exX, activeSourceGraph))}</text>`;
-  svg += `<text x="12" y="${(MT + plotH / 2).toFixed(1)}" font-size="10" fill="#212f3c" text-anchor="middle" transform="rotate(-90 12 ${(MT + plotH / 2).toFixed(1)})">${esc(exprLabelFor(exY, activeSourceGraph))}</text>`;
-  points.forEach(p => {
-    svg += `<circle cx="${px(p.x).toFixed(1)}" cy="${py(p.y).toFixed(1)}" r="4" fill="${colorFor(p.group)}" fill-opacity="0.75" stroke="#fff" stroke-width="0.5"><title>${esc(p.label)}${p.group ? ` — ${esc(p.group)}` : ""} : (${esc(fmtVal(p.x, false))}, ${esc(fmtVal(p.y, false))})</title></circle>`;
+  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+  svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+  svg += `<text x="${(ML + plotW / 2).toFixed(1)}" y="${H - (exSize ? 30 : 6)}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle">${esc(exprLabelFor(exX, activeSourceGraph))}</text>`;
+  svg += `<text x="14" y="${(MT + plotH / 2).toFixed(1)}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle" transform="rotate(-90 14 ${(MT + plotH / 2).toFixed(1)})">${esc(exprLabelFor(exY, activeSourceGraph))}</text>`;
+  // Points triés du plus grand au plus petit : les petites bulles restent visibles par-dessus les grandes.
+  const ordered = [...points].sort((a, b) => radiusFor(b.size) - radiusFor(a.size));
+  ordered.forEach(p => {
+    const cx = px(p.x).toFixed(1), cy = py(p.y).toFixed(1), r = radiusFor(p.size);
+    const title = `<title>${esc(p.label)}${p.group ? ` — ${esc(p.group)}` : ""} : (${esc(fmtVal(p.x, false))}, ${esc(fmtVal(p.y, false))})${exSize ? `, ${esc(exprLabelFor(exSize, activeSourceGraph))} ${esc(fmtVal(p.size, false))}` : ""}</title>`;
+    svg += `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="${colorFor(p.group)}" fill-opacity="0.72" stroke="#fff" stroke-width="1">${title}</circle>`;
+    if (r < 10) svg += `<circle cx="${cx}" cy="${cy}" r="10" fill="transparent">${title}</circle>`; // agrandit la zone de survol sans changer le rendu
   });
-  svg += "</svg>";
-  const legendSeries = groups.length > 1 ? groups.map((g, i) => ({ label: g, color: CHART_PALETTE[i % CHART_PALETTE.length] })) : [];
-  return svg + legendHtml(legendSeries);
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  const legendSeries = groups.length > 1
+    ? groups.map((g, i) => ({ label: g, color: CHART_PALETTE[i % CHART_PALETTE.length] })).concat(
+        groupsAll.length > groups.length ? [{ label: `Autres (${groupsAll.length - groups.length})`, color: CHART_OTHER_COLOR }] : [])
+    : [];
+  let sizeLegend = "";
+  if (exSize) {
+    const refVals = [sizeMin + (sizeMax - sizeMin) * 0.25, sizeMin + (sizeMax - sizeMin) * 0.6, sizeMax];
+    const items = refVals.map(v => {
+      const r = radiusFor(v);
+      return `<span style="display:inline-flex;align-items:center;gap:4px;"><svg width="${(RMAX * 2 + 4)}" height="${(RMAX * 2 + 4)}" viewBox="0 0 ${RMAX * 2 + 4} ${RMAX * 2 + 4}"><circle cx="${RMAX + 2}" cy="${RMAX + 2}" r="${r.toFixed(1)}" fill="none" stroke="${CH_MUTED}" stroke-width="1.2"/></svg>${esc(fmtAxisNum(v))}</span>`;
+    }).join("");
+    sizeLegend = `<div style="font-size:0.82em;color:var(--gris);margin-top:6px;display:flex;align-items:center;justify-content:center;gap:14px;"><span style="font-weight:600;">${esc(exprLabelFor(exSize, activeSourceGraph))} :</span>${items}</div>`;
+  }
+  return `<div style="display:flex;justify-content:center;">${svgTag}</div>` + legendHtml(legendSeries) + sizeLegend;
+}
+function renderScatterSvg(pivot, seriesDimsCfg, exprsUsed) {
+  return renderPointsSvg(pivot, seriesDimsCfg, exprsUsed[0], exprsUsed[1], null);
+}
+function renderBubbleSvg(pivot, seriesDimsCfg, exprsUsed) {
+  return renderPointsSvg(pivot, seriesDimsCfg, exprsUsed[0], exprsUsed[1], exprsUsed[2]);
 }
 
 // ---- Carte de chaleur : Axe X en lignes, Série en colonnes, couleur = intensité de la mesure.
@@ -1771,29 +1991,35 @@ function renderHeatmapSvg(pivot, expr) {
   let vmin = Infinity, vmax = -Infinity;
   rowsK.forEach(rk => cols.forEach(ck => { const v = pr.grid[rk][ck]; if (v !== null && v !== undefined) { vmin = Math.min(vmin, v); vmax = Math.max(vmax, v); } }));
   if (!isFinite(vmin)) { vmin = 0; vmax = 1; }
-  const ML = 150, MT = 46, cellW = 56, cellH = 26, MR = 16, MB = 10;
+  const ML = 160, MT = 50, cellW = 58, cellH = 28, MR = 16, MB = 10;
   const W = ML + Math.max(1, cols.length) * cellW + MR, H = MT + Math.max(1, rowsK.length) * cellH + MB;
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:'Segoe UI',Arial,sans-serif;">`;
+  const scrollable = W > 1100 || H > 900;
+  let svg = "";
   cols.forEach((ck, ci) => {
     const cx = ML + ci * cellW + cellW / 2;
-    svg += `<text x="${cx}" y="${MT - 8}" font-size="9" fill="#212f3c" text-anchor="start" transform="rotate(-35 ${cx} ${MT - 8})">${esc(truncLabel(ck, 16))}</text>`;
+    svg += `<text x="${cx}" y="${MT - 8}" font-size="${CH_FS_AXIS}" fill="${CH_INK}" text-anchor="start" transform="rotate(-35 ${cx} ${MT - 8})">${esc(truncLabel(ck, 16))}</text>`;
   });
   rowsK.forEach((rk, ri) => {
     const ry = MT + ri * cellH;
-    svg += `<text x="${ML - 6}" y="${ry + cellH / 2 + 3}" font-size="9" fill="#212f3c" text-anchor="end">${esc(truncLabel(rowLabels[ri], 20))}</text>`;
+    svg += `<text x="${ML - 8}" y="${ry + cellH / 2 + 3}" font-size="${CH_FS_AXIS}" fill="${CH_INK}" text-anchor="end">${esc(truncLabel(rowLabels[ri], 22))}</text>`;
     cols.forEach((ck, ci) => {
       const v = pr.grid[rk][ck];
       const frac = (v === null || v === undefined) ? null : (vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5);
-      const color = frac === null ? "#f4f6f7" : hslToHex(210, 65, 90 - frac * 60);
+      const color = frac === null ? "#f4f6f7" : hslToHex(211, 65, 92 - frac * 62); // rampe séquentielle 1 teinte (bleu), clair→foncé
       const cx2 = ML + ci * cellW;
       svg += `<rect x="${cx2}" y="${ry}" width="${cellW - 2}" height="${cellH - 2}" fill="${color}"><title>${esc(rowLabels[ri])} — ${esc(ck)} : ${esc(fmtVal(v, false))}</title></rect>`;
       if (v !== null && v !== undefined) {
-        svg += `<text x="${cx2 + (cellW - 2) / 2}" y="${ry + cellH / 2 + 3}" font-size="8.5" fill="${frac > 0.55 ? "#fff" : "#212f3c"}" text-anchor="middle">${esc(fmtAxisNum(v))}</text>`;
+        svg += `<text x="${cx2 + (cellW - 2) / 2}" y="${ry + cellH / 2 + 3}" font-size="${CH_FS_VAL - 1}" fill="${frac > 0.55 ? "#fff" : CH_INK}" text-anchor="middle">${esc(fmtAxisNum(v))}</text>`;
       }
     });
   });
-  svg += "</svg>";
-  return svg;
+  const style = scrollable
+    ? `width:${W}px;height:auto;display:block;${CH_FONT}`
+    : `width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}`;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="${style}">${svg}</svg>`;
+  return scrollable
+    ? `<div style="overflow:auto;max-width:100%;max-height:900px;"><div style="width:${W}px;">${svgTag}</div></div>`
+    : `<div style="display:flex;justify-content:center;">${svgTag}</div>`;
 }
 
 // ---- Boîte à moustaches : quartiles/médiane/min-max d'une mesure numérique par catégorie
@@ -1817,7 +2043,9 @@ function buildBoxplotGroups(rows, xDimsCfg, serieDimCfg, measure, foreignIdx, ba
     sub.get(sKey).push(row);
   }
   const categories = [...groups.keys()].sort();
-  const serieKeys = serieDimCfg ? [...new Set(categories.flatMap(xk => [...groups.get(xk).keys()]))].sort() : ["Total"];
+  // Une boîte à moustaches n'est pas sommable (médiane/quartiles) : au-delà de CHART_CAT_CAP
+  // séries, on tronque plutôt que de replier dans une "Autres" statistiquement dénuée de sens.
+  const serieKeys = (serieDimCfg ? [...new Set(categories.flatMap(xk => [...groups.get(xk).keys()]))].sort() : ["Total"]).slice(0, CHART_CAT_CAP);
   const series = serieKeys.map((sk, i) => ({
     label: sk,
     color: CHART_PALETTE[i % CHART_PALETTE.length],
@@ -1826,9 +2054,11 @@ function buildBoxplotGroups(rows, xDimsCfg, serieDimCfg, measure, foreignIdx, ba
   return { categories, series };
 }
 function renderBoxplotSvg(categories, series) {
-  const W = 560, H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
-  const plotW = W - ML - MR, plotH = H - MT - MB;
   const n = categories.length;
+  const H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
+  const W = chartWidthPx(n, 40 * Math.max(1, series.length), 480, 1400);
+  const scrollable = W >= 1400;
+  const plotW = W - ML - MR, plotH = H - MT - MB;
   let maxV = -Infinity, minV = Infinity;
   series.forEach(ser => ser.boxes.forEach(b => { if (b) { maxV = Math.max(maxV, b.max); minV = Math.min(minV, b.min); } }));
   if (!isFinite(maxV)) { maxV = 1; minV = 0; }
@@ -1839,15 +2069,15 @@ function renderBoxplotSvg(categories, series) {
   const boxGap = groupW * 0.15, boxAreaW = groupW - boxGap;
   const slotW = boxAreaW / Math.max(1, series.length), boxW = slotW * 0.62;
 
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:'Segoe UI',Arial,sans-serif;">`;
+  let svg = "";
   const ticks = 4;
   for (let t = 0; t <= ticks; t++) {
     const v = yMin + (yMax - yMin) * t / ticks, yy = y(v);
-    svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="#e5e9ea" stroke-width="1"/>`;
-    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="9" fill="#7f8c8d" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
+    svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="${CH_GRID}" stroke-width="1"/>`;
+    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
   }
-  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="#aab" stroke-width="1"/>`;
-  svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="#aab" stroke-width="1"/>`;
+  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+  svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
 
   categories.forEach((cat, i) => {
     const gx = ML + i * groupW + boxGap / 2;
@@ -1862,10 +2092,10 @@ function renderBoxplotSvg(categories, series) {
       svg += `<line x1="${bx.toFixed(1)}" y1="${y(b.median).toFixed(1)}" x2="${(bx + boxW).toFixed(1)}" y2="${y(b.median).toFixed(1)}" stroke="${ser.color}" stroke-width="2.4"/>`;
     });
     const lx = ML + i * groupW + groupW / 2;
-    svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="9" fill="#212f3c" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
+    svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
   });
-  svg += "</svg>";
-  return svg + legendHtml(series.length > 1 ? series : []);
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};max-width:${scrollable ? "none" : W + "px"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series.length > 1 ? series : []);
 }
 
 // ---- Histogramme : distribution d'une mesure numérique en classes de même largeur (règle de
@@ -1893,7 +2123,7 @@ function buildHistogramSeries(rows, serieDimCfg, measure, foreignIdx, baseSrcKey
     if (!groups.has(sKey)) groups.set(sKey, []);
     groups.get(sKey).push(row);
   }
-  const serieKeys = [...groups.keys()].sort();
+  const serieKeys = [...groups.keys()].sort().slice(0, CHART_CAT_CAP); // comptages non additifs entre classes : on tronque plutôt que replier
   const series = serieKeys.map((sk, i) => {
     const vals = extractValues(groups.get(sk), measure);
     const counts = new Array(bins.k).fill(0);
@@ -1903,24 +2133,26 @@ function buildHistogramSeries(rows, serieDimCfg, measure, foreignIdx, baseSrcKey
   return { bins, series };
 }
 function renderHistogramSvg(bins, series) {
-  const W = 560, H = 320, ML = 54, MR = 16, MT = 16, MB = 46;
-  const plotW = W - ML - MR, plotH = H - MT - MB;
   const k = bins.k || 0;
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:'Segoe UI',Arial,sans-serif;">`;
-  if (!k) { svg += `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" fill="#7f8c8d">Aucune donnée</text></svg>`; return svg; }
+  const H = 320, ML = 54, MR = 16, MT = 16, MB = 46;
+  const W = chartWidthPx(k, 26 * Math.max(1, series.length), 480, 1400);
+  const scrollable = W >= 1400;
+  const plotW = W - ML - MR, plotH = H - MT - MB;
+  if (!k) return `<div style="display:flex;justify-content:center;"><svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="${CH_FONT}"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg></div>`;
   let maxCount = 0;
   series.forEach(ser => ser.counts.forEach(c => maxCount = Math.max(maxCount, c)));
   const niceMax = niceCeil(maxCount || 1);
   const y = v => MT + plotH - (v / niceMax) * plotH;
   const binW = plotW / k;
+  let svg = "";
   const ticks = 4;
   for (let t = 0; t <= ticks; t++) {
     const v = niceMax * t / ticks, yy = y(v);
-    svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="#e5e9ea" stroke-width="1"/>`;
-    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="9" fill="#7f8c8d" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
+    svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="${CH_GRID}" stroke-width="1"/>`;
+    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
   }
-  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="#aab" stroke-width="1"/>`;
-  svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="#aab" stroke-width="1"/>`;
+  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+  svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
   for (let i = 0; i < k; i++) {
     const x0 = ML + i * binW;
     const slotW = binW / series.length;
@@ -1930,12 +2162,12 @@ function renderHistogramSvg(bins, series) {
       svg += `<rect x="${bx.toFixed(1)}" y="${y1.toFixed(1)}" width="${(slotW * 0.92).toFixed(1)}" height="${(y0 - y1).toFixed(1)}" fill="${ser.color}"><title>[${esc(fmtAxisNum(bins.min + i * bins.width))} – ${esc(fmtAxisNum(bins.min + (i + 1) * bins.width))}[ — ${esc(ser.label)} : ${c}</title></rect>`;
     });
     if (k <= 10 || i % Math.ceil(k / 8) === 0) {
-      svg += `<text x="${x0.toFixed(1)}" y="${MT + plotH + 14}" font-size="8.5" fill="#7f8c8d" text-anchor="middle">${esc(fmtAxisNum(bins.min + i * bins.width))}</text>`;
+      svg += `<text x="${x0.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_AXIS - 0.5}" fill="${CH_MUTED}" text-anchor="middle">${esc(fmtAxisNum(bins.min + i * bins.width))}</text>`;
     }
   }
-  svg += `<text x="${(ML + plotW).toFixed(1)}" y="${MT + plotH + 14}" font-size="8.5" fill="#7f8c8d" text-anchor="middle">${esc(fmtAxisNum(bins.max))}</text>`;
-  svg += "</svg>";
-  return svg + legendHtml(series.length > 1 ? series : []);
+  svg += `<text x="${(ML + plotW).toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_AXIS - 0.5}" fill="${CH_MUTED}" text-anchor="middle">${esc(fmtAxisNum(bins.max))}</text>`;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};max-width:${scrollable ? "none" : W + "px"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series.length > 1 ? series : []);
 }
 
 // ---- Treemap : mêmes niveaux hiérarchiques que le camembert imbriqué (axe X + une variable de
@@ -1943,18 +2175,18 @@ function renderHistogramSvg(bins, series) {
 // chaque profondeur) plutôt qu'en anneaux — même arbre (buildPieHierarchy), même logique de
 // couleur par anneau (graphRingColors + shadeForRing) pour rester cohérent avec le camembert.
 function renderTreemapSvg(root, ringNames, ringColors) {
-  const W = 560, H = 360;
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:'Segoe UI',Arial,sans-serif;">`;
+  const W = 640, H = 400;
   if (!root.value) {
-    svg += `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" fill="#7f8c8d">Aucune donnée</text></svg>`;
-    return svg;
+    return `<div style="display:flex;justify-content:center;"><svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="${CH_FONT}"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg></div>`;
   }
   const levelLabels = collectAllLevelLabels(root, ringNames.length);
   function colorFor(depth, label) {
+    if (/^Autres /.test(label)) return CHART_OTHER_COLOR;
     const labels = levelLabels[depth];
     const base = ringColors[depth] || CHART_PALETTE[depth % CHART_PALETTE.length];
     return shadeForRing(base, labels.indexOf(label), labels.length);
   }
+  let svg = "";
   function layout(node, x, y, w, h, depth) {
     if (!node.children || !node.children.length) return;
     const horiz = depth % 2 === 0;
@@ -1965,16 +2197,18 @@ function renderTreemapSvg(root, ringNames, ringColors) {
       const frac = (child.value || 0) / total;
       if (horiz) { cw = w * frac; cx = pos; pos += cw; } else { ch = h * frac; cy = pos; pos += ch; }
       const color = colorFor(depth, child.label);
-      svg += `<rect x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" width="${Math.max(0, cw - 1.5).toFixed(1)}" height="${Math.max(0, ch - 1.5).toFixed(1)}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(ringNames[depth])} — ${esc(child.label)} : ${esc(fmtVal(child.value, false))}</title></rect>`;
-      if (cw > 38 && ch > 15) {
-        svg += `<text x="${(cx + 4).toFixed(1)}" y="${(cy + 13).toFixed(1)}" font-size="9" fill="#fff" style="pointer-events:none;">${esc(truncLabel(child.label, Math.max(3, Math.floor(cw / 6))))}</text>`;
+      svg += `<rect x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" width="${Math.max(0, cw - 2).toFixed(1)}" height="${Math.max(0, ch - 2).toFixed(1)}" fill="${color}"><title>${esc(ringNames[depth])} — ${esc(child.label)} : ${esc(fmtVal(child.value, false))} (${(frac * 100).toFixed(1)} %)</title></rect>`;
+      if (cw > 46 && ch > 20) { // libellé posé seulement s'il tient avec un peu d'air, jamais rogné
+        const txt = truncLabel(child.label, Math.max(3, Math.floor((cw - 8) / 6.2)));
+        svg += `<text x="${(cx + 5).toFixed(1)}" y="${(cy + 14).toFixed(1)}" font-size="${CH_FS_VAL}" font-weight="600" fill="${textColorForBg(color)}" style="pointer-events:none;">${esc(txt)}</text>`;
+        if (ch > 34) svg += `<text x="${(cx + 5).toFixed(1)}" y="${(cy + 27).toFixed(1)}" font-size="${CH_FS_VAL - 1}" fill="${textColorForBg(color)}" opacity="0.9" style="pointer-events:none;">${esc(fmtAxisNum(child.value))}</text>`;
       }
       layout(child, cx, cy, cw, ch, depth + 1);
     });
   }
   layout(root, 0, 0, W, H, 0);
-  svg += "</svg>";
-  return svg;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  return `<div style="display:flex;justify-content:center;">${svgTag}</div>`;
 }
 function renderTreemapFromRows(rows, foreignIdx, expr, measures) {
   const measure = measures.find(m => m.id === expr.measureId);
@@ -1986,6 +2220,116 @@ function renderTreemapFromRows(rows, foreignIdx, expr, measures) {
   const root = buildPieHierarchy(rows, levelKeyFns, measure, expr.aggId);
   syncGraphRingColors();
   return renderTreemapSvg(root, ringNames, graphRingColors);
+}
+
+// ---- Diagramme de Sankey : flux Axe X (source, colonne gauche) → Série (cible, colonne droite),
+// épaisseur = mesure. Réutilise directement le pivot déjà calculé (rowKeys = sources, colKeys =
+// cibles, grid = valeur du flux) — aucun calcul de flux dédié nécessaire. Sources ET cibles sont
+// chacune plafonnées à CHART_CAT_CAP nœuds (repli "Autres") pour rester lisible et daltonien-sûr :
+// la couleur d'un flux suit sa source (l'entité), jamais un rang.
+function renderSankeySvg(pivot, expr) {
+  const pr = pivot.perExpr[expr.uid];
+  let sources = pivot.rowKeys.map(rk => ({ key: rk, label: pivot.rowPartsByKey.get(rk).join(" / ") }));
+  let targets = pivot.colKeys.map(ck => ({ key: ck, label: (pivot.colPartsByKey.get(ck) || [ck]).join(" / ") }));
+  let flows = [];
+  for (const s of sources) for (const t of targets) {
+    const v = pr.grid[s.key][t.key];
+    if (v) flows.push({ s: s.key, t: t.key, v });
+  }
+  const W = 680, H = 380, MT = 26, MB = 26, nodeW = 16, ML = 118, MR = 118;
+  if (!flows.length) {
+    return `<div style="display:flex;justify-content:center;"><svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="${CH_FONT}"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg></div>`;
+  }
+  // Plafonne sources et cibles séparément : replie les plus petites (par total de flux) dans
+  // un nœud "Autres", en reconstruisant les flux vers/depuis ce nœud replié.
+  function capNodes(nodes, sumFn) {
+    if (nodes.length <= CHART_CAT_CAP) return nodes;
+    const totals = nodes.map(n => sumFn(n.key));
+    const order = nodes.map((_, i) => i).sort((a, b) => totals[b] - totals[a]);
+    const keep = new Set(order.slice(0, CHART_CAT_CAP - 1).map(i => nodes[i].key));
+    const rest = nodes.filter(n => !keep.has(n.key));
+    const kept = nodes.filter(n => keep.has(n.key));
+    kept.push({ key: "__autres__", label: `Autres (${rest.length})`, folded: new Set(rest.map(n => n.key)) });
+    return kept;
+  }
+  const sTotal = k => flows.filter(f => f.s === k).reduce((a, f) => a + f.v, 0);
+  const tTotal = k => flows.filter(f => f.t === k).reduce((a, f) => a + f.v, 0);
+  sources = capNodes(sources, sTotal);
+  targets = capNodes(targets, tTotal);
+  const remapKey = (k, nodes) => nodes.find(n => n.folded && n.folded.has(k)) ? "__autres__" : k;
+  const foldedFlows = new Map();
+  flows.forEach(f => {
+    const sk = remapKey(f.s, sources), tk = remapKey(f.t, targets);
+    const key = sk + "␟" + tk;
+    foldedFlows.set(key, (foldedFlows.get(key) || 0) + f.v);
+  });
+  flows = [...foldedFlows.entries()].map(([key, v]) => { const [s, t] = key.split("␟"); return { s, t, v }; });
+
+  const sIdx = new Map(sources.map((n, i) => [n.key, i]));
+  const tIdx = new Map(targets.map((n, i) => [n.key, i]));
+  const grandTotal = flows.reduce((a, f) => a + f.v, 0) || 1;
+  const plotH = H - MT - MB;
+  const gap = 6;
+  // Une SEULE échelle valeur→hauteur pour tout le diagramme (nœuds des deux colonnes ET épaisseur
+  // des rubans) : c'est ce qui garantit que la somme des rubans entrant dans un nœud remplit
+  // exactement sa hauteur, des deux côtés à la fois. Le plafond d'espace disponible est calculé
+  // sur la colonne la plus dense (le plus de nœuds) ; l'autre colonne, mécaniquement plus courte,
+  // est centrée verticalement plutôt qu'étirée (ce qui casserait la proportionnalité des hauteurs).
+  const maxNodes = Math.max(sources.length, targets.length, 1);
+  const scale = Math.max(10, plotH - gap * (maxNodes - 1)) / grandTotal;
+  function layoutCol(nodes, totalFn) {
+    const totals = nodes.map(n => totalFn(n.key));
+    const heights = totals.map(t => Math.max(3, t * scale));
+    const colH = heights.reduce((a, b) => a + b, 0) + gap * Math.max(0, nodes.length - 1);
+    let y = MT + Math.max(0, (plotH - colH) / 2);
+    return nodes.map((n, i) => {
+      const h = heights[i];
+      const seg = { key: n.key, label: n.label, y0: y, y1: y + h, total: totals[i] };
+      y += h + gap;
+      return seg;
+    });
+  }
+  // sTotal/tTotal ferment sur `flows`, réaffecté juste au-dessus (repli) : ces appels portent donc
+  // déjà sur les flux repliés, pas sur les flux bruts utilisés plus haut pour choisir qui replier.
+  const sSeg = layoutCol(sources, sTotal);
+  const tSeg = layoutCol(targets, tTotal);
+  const sSegByKey = new Map(sSeg.map(s => [s.key, s]));
+  const tSegByKey = new Map(tSeg.map(s => [s.key, s]));
+
+  // Empile les flux de chaque nœud dans l'ordre de l'autre colonne (source triée par ordre des
+  // cibles, cible par ordre des sources) : limite les croisements de rubans sans algorithme complet.
+  const sCursor = new Map(sources.map(n => [n.key, sSegByKey.get(n.key).y0]));
+  const tCursor = new Map(targets.map(n => [n.key, tSegByKey.get(n.key).y0]));
+  const flowsOrdered = [...flows].sort((a, b) => (sIdx.get(a.s) - sIdx.get(b.s)) || (tIdx.get(a.t) - tIdx.get(b.t)));
+
+  const colorForSource = key => {
+    const i = sources.findIndex(n => n.key === key);
+    return key === "__autres__" ? CHART_OTHER_COLOR : CHART_PALETTE[i % CHART_PALETTE.length];
+  };
+  let svg = "";
+  const x0 = ML, x1 = W - MR - nodeW;
+  const midX = (x0 + nodeW + x1) / 2;
+  flowsOrdered.forEach(f => {
+    const h = f.v * scale; // même échelle que layoutCol : le ruban remplit exactement sa part de chaque nœud
+    const sy0 = sCursor.get(f.s), sy1 = sy0 + h;
+    const ty0 = tCursor.get(f.t), ty1 = ty0 + h;
+    sCursor.set(f.s, sy1); tCursor.set(f.t, ty1);
+    const xL = x0 + nodeW, xR = x1;
+    const d = `M${xL},${sy0.toFixed(1)} C${midX.toFixed(1)},${sy0.toFixed(1)} ${midX.toFixed(1)},${ty0.toFixed(1)} ${xR.toFixed(1)},${ty0.toFixed(1)} ` +
+      `L${xR.toFixed(1)},${ty1.toFixed(1)} C${midX.toFixed(1)},${ty1.toFixed(1)} ${midX.toFixed(1)},${sy1.toFixed(1)} ${xL},${sy1.toFixed(1)} Z`;
+    const sLabel = (sSegByKey.get(f.s) || {}).label || f.s, tLabel = (tSegByKey.get(f.t) || {}).label || f.t;
+    svg += `<path d="${d}" fill="${colorForSource(f.s)}" fill-opacity="0.42"><title>${esc(sLabel)} → ${esc(tLabel)} : ${esc(fmtVal(f.v, false))}</title></path>`;
+  });
+  sSeg.forEach(seg => {
+    svg += `<rect x="${x0}" y="${seg.y0.toFixed(1)}" width="${nodeW}" height="${Math.max(1, seg.y1 - seg.y0).toFixed(1)}" fill="${colorForSource(seg.key)}"><title>${esc(seg.label)} : ${esc(fmtVal(seg.total, false))}</title></rect>`;
+    svg += `<text x="${x0 - 8}" y="${((seg.y0 + seg.y1) / 2 + 3.5).toFixed(1)}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end">${esc(truncLabel(seg.label, 20))} (${esc(fmtAxisNum(seg.total))})</text>`;
+  });
+  tSeg.forEach(seg => {
+    svg += `<rect x="${x1}" y="${seg.y0.toFixed(1)}" width="${nodeW}" height="${Math.max(1, seg.y1 - seg.y0).toFixed(1)}" fill="${CH_MUTED}"><title>${esc(seg.label)} : ${esc(fmtVal(seg.total, false))}</title></rect>`;
+    svg += `<text x="${x1 + nodeW + 8}" y="${((seg.y0 + seg.y1) / 2 + 3.5).toFixed(1)}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="start">${esc(truncLabel(seg.label, 20))} (${esc(fmtAxisNum(seg.total))})</text>`;
+  });
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  return `<div style="display:flex;justify-content:center;">${svgTag}</div>`;
 }
 
 function renderChartFragment(chartType, pivot, seriesDimsCfg, exprsUsed) {
@@ -2003,7 +2347,14 @@ function renderChartFragment(chartType, pivot, seriesDimsCfg, exprsUsed) {
   if (chartType === "nuage") {
     return renderScatterSvg(pivot, seriesDimsCfg, exprsUsed);
   }
+  if (chartType === "bulles") {
+    return renderBubbleSvg(pivot, seriesDimsCfg, exprsUsed);
+  }
+  if (chartType === "sankey") {
+    return renderSankeySvg(pivot, exprsUsed[0]);
+  }
   const { categories, series } = chartSeriesData(pivot, seriesDimsCfg, exprsUsed);
+  if (chartType === "barres_horiz") return renderBarSvgH(categories, series);
   if (chartType === "barres_empilees") return renderBarSvg(categories, series, true);
   if (chartType === "lignes") return renderLineAreaSvg(categories, series, false);
   if (chartType === "aires") return renderLineAreaSvg(categories, series, true);
@@ -2034,6 +2385,14 @@ function genererGraphique() {
       setSt("Le nuage de points nécessite 2 expressions (mesure représentée en X, puis en Y).", true);
       return;
     }
+    if (chartType === "bulles" && graphExprRows.length < 3) {
+      setSt("Le bubble chart nécessite 3 expressions (mesure en X, en Y, puis la taille des bulles).", true);
+      return;
+    }
+    if (chartType === "sankey" && !graphSeriesDimRows.length) {
+      setSt("Le diagramme de Sankey nécessite une variable de Série (la cible des flux, en plus de l'axe X qui en est la source).", true);
+      return;
+    }
     if (chartType === "boxplot" || chartType === "histogramme") {
       const m = src.measures.find(m => m.id === graphExprRows[0].measureId);
       if (m && m.distinctKey) {
@@ -2058,8 +2417,9 @@ function genererGraphique() {
 
     rows = applyGlobalFilters(rows, activeSourceGraph, foreignIdx);
 
-    const exprsUsed = (chartType === "camembert" || chartType === "boxplot" || chartType === "histogramme") ? graphExprRows.slice(0, 1)
+    const exprsUsed = (chartType === "camembert" || chartType === "sunburst" || chartType === "boxplot" || chartType === "histogramme" || chartType === "sankey") ? graphExprRows.slice(0, 1)
       : chartType === "nuage" ? graphExprRows.slice(0, 2)
+      : chartType === "bulles" ? graphExprRows.slice(0, 3)
       : graphExprRows;
 
     const facetGroups = splitByFacets(rows, graphFacetDimRows, foreignIdx, activeSourceGraph);
@@ -2067,7 +2427,7 @@ function genererGraphique() {
 
     const panels = facetsShown.map(g => {
       let fragment;
-      if (chartType === "camembert" && graphSeriesDimRows.length) {
+      if (chartType === "sunburst" || (chartType === "camembert" && graphSeriesDimRows.length)) {
         fragment = renderNestedPieFromRows(g.rows, foreignIdx, exprsUsed[0], src.measures);
       } else if (chartType === "treemap") {
         fragment = renderTreemapFromRows(g.rows, foreignIdx, exprsUsed[0], src.measures);
