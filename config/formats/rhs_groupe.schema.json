@@ -2,7 +2,8 @@
   "format": "RHS_groupe",
   "spec_source": "RHS_groupe.csv (PMSI-SMR, DAF/ex-OQN, 2026)",
   "record_length_formula": "190 + 8*n1 + 35*n2 + 30*n3 + 23*n4",
-  "natural_key": ["finess_epmsi", "numero_admin_sejour", "numero_semaine"],
+  "natural_key": ["finess_epmsi", "numero_admin_sejour", "numero_semaine", "numero_unite_medicale"],
+  "natural_key_note": "Corrigé le 2026-08-13 : une clé sans numero_unite_medicale fusionne silencieusement deux RHS distincts quand le patient change d'UM par mutation interne au sein d'une même semaine calendaire (mode_entree_um='6') — confirmé sur des fichiers réels (95 cas où (finess, numero_admin_sejour, numero_semaine) apparaît deux fois avec un numero_unite_medicale différent). La table a dû être recréée et tous les fichiers input/ rechargés pour récupérer les RHS perdus par l'ancienne clé.",
   "version_field": {"start": 11, "end": 13, "values": ["M1D"], "note": "voir rhs_groupe_m1c.schema.json pour le format M1C (avant M3 2025)"},
   "required_codes": {"O": "obligatoire", "C": "conditionnel", "F": "filler/non exploité", "N": "non renseigné habituellement"},
   "fixed_block": [
