@@ -2384,69 +2384,90 @@ function renderChartFragment(chartType, pivot, seriesDimsCfg, exprsUsed) {
   return renderBarSvg(categories, series, false);
 }
 
+// Étape commune à la vignette SVG intégrée (genererGraphique) et à l'ouverture interactive
+// Plotly (ouvrirGraphiquePlotly) : validation, requête, jointures inter-sources, répartition en
+// vignettes. Retourne null (après avoir déjà affiché le message d'erreur via setSt) si la
+// configuration actuelle ne permet pas de générer quoi que ce soit.
+function prepareGraphData(setSt) {
+  const src = SOURCES[activeSourceGraph];
+  const finessList = selectedFiness();
+  const periods = computeSelectedPeriods();
+  if (!finessList.length) { setSt("Sélectionnez au moins un établissement.", true); return null; }
+  if (!periods.length) { setSt("Sélectionnez au moins une année valide pour le mois choisi.", true); return null; }
+  if (!graphXDimRows.length) { setSt("Ajoutez au moins une variable en axe X.", true); return null; }
+  if (!graphExprRows.length) { setSt("Ajoutez au moins une expression (mesure).", true); return null; }
+
+  let chartType = activeChartType;
+  if (!chartType) {
+    chartType = suggestChartType(graphXDimRows, graphSeriesDimRows, graphExprRows);
+    activeChartType = chartType;
+    document.querySelectorAll("#chartTypeTabs button").forEach(b => b.classList.toggle("active", b.dataset.type === chartType));
+    renderRingColorsUI();
+  }
+  syncGraphRingColors();
+  if (chartType === "nuage" && graphExprRows.length < 2) {
+    setSt("Le nuage de points nécessite 2 expressions (mesure représentée en X, puis en Y).", true);
+    return null;
+  }
+  if (chartType === "bulles" && graphExprRows.length < 3) {
+    setSt("Le bubble chart nécessite 3 expressions (mesure en X, en Y, puis la taille des bulles).", true);
+    return null;
+  }
+  if (chartType === "sankey" && !graphSeriesDimRows.length) {
+    setSt("Le diagramme de Sankey nécessite une variable de Série (la cible des flux, en plus de l'axe X qui en est la source).", true);
+    return null;
+  }
+  if (chartType === "boxplot" || chartType === "histogramme") {
+    const m = src.measures.find(m => m.id === graphExprRows[0].measureId);
+    if (m && m.distinctKey) {
+      setSt("Boîte à moustaches / histogramme nécessitent une mesure numérique (pas un comptage de distincts).", true);
+      return null;
+    }
+  }
+
+  setSt("Interrogation de la base…");
+  const { sql, params } = buildQuery(activeSourceGraph, finessList, periods);
+  let rows = queryAll(sql, params);
+  tagPeriod(rows, activeSourceGraph, periods);
+
+  const activeGF = activeGlobalFilters();
+  const foreignSrcKeys = new Set(
+    [...graphXDimRows, ...graphSeriesDimRows, ...graphFacetDimRows].map(r => r.srcKey)
+      .concat(activeGF.map(f => f.srcKey))
+      .filter(k => k !== activeSourceGraph)
+  );
+  const foreignIdx = {};
+  for (const srcKey of foreignSrcKeys) foreignIdx[srcKey] = buildForeignIndex(srcKey, finessList, periods);
+
+  rows = applyGlobalFilters(rows, activeSourceGraph, foreignIdx);
+
+  const exprsUsed = (chartType === "camembert" || chartType === "sunburst" || chartType === "boxplot" || chartType === "histogramme" || chartType === "sankey") ? graphExprRows.slice(0, 1)
+    : chartType === "nuage" ? graphExprRows.slice(0, 2)
+    : chartType === "bulles" ? graphExprRows.slice(0, 3)
+    : graphExprRows;
+
+  const facetGroups = splitByFacets(rows, graphFacetDimRows, foreignIdx, activeSourceGraph);
+  const facetsShown = facetGroups.slice(0, GRAPH_FACET_CAP);
+
+  return { chartType, src, exprsUsed, facetGroups, facetsShown, foreignIdx, activeGF };
+}
+
+function graphResultMetaText(chartType, exprsUsed, facetGroups, facetsShown, activeGF) {
+  const xLabel = graphXDimRows.map(r => labelForDimRow(r)).join(" / ");
+  const serieLabel = graphSeriesDimRows.length ? graphSeriesDimRows.map(r => labelForDimRow(r)).join(" / ") : "(aucune)";
+  const facetLabel = graphFacetDimRows.length ? graphFacetDimRows.map(r => labelForDimRow(r)).join(" / ") : "(aucune)";
+  return `Type : ${CHART_TYPE_LABELS[chartType]} · Axe X : ${xLabel} · Série : ${serieLabel} · ` +
+    `Vignettes : ${facetLabel}${facetGroups.length > 1 ? ` (${facetsShown.length}${facetGroups.length > GRAPH_FACET_CAP ? ` sur ${facetGroups.length}` : ""})` : ""} · ` +
+    `Mesure(s) : ${exprsUsed.map(e => exprLabelFor(e, activeSourceGraph)).join(", ")} · Filtres globaux : ${activeGF.length}`;
+}
+
 function genererGraphique() {
   const statusEl = document.getElementById("statusGraph");
   const setSt = (msg, err) => { statusEl.textContent = msg || ""; statusEl.style.color = err ? "#c0392b" : ""; };
   try {
-    const src = SOURCES[activeSourceGraph];
-    const finessList = selectedFiness();
-    const periods = computeSelectedPeriods();
-    if (!finessList.length) { setSt("Sélectionnez au moins un établissement.", true); return; }
-    if (!periods.length) { setSt("Sélectionnez au moins une année valide pour le mois choisi.", true); return; }
-    if (!graphXDimRows.length) { setSt("Ajoutez au moins une variable en axe X.", true); return; }
-    if (!graphExprRows.length) { setSt("Ajoutez au moins une expression (mesure).", true); return; }
-
-    let chartType = activeChartType;
-    if (!chartType) {
-      chartType = suggestChartType(graphXDimRows, graphSeriesDimRows, graphExprRows);
-      activeChartType = chartType;
-      document.querySelectorAll("#chartTypeTabs button").forEach(b => b.classList.toggle("active", b.dataset.type === chartType));
-      renderRingColorsUI();
-    }
-    syncGraphRingColors();
-    if (chartType === "nuage" && graphExprRows.length < 2) {
-      setSt("Le nuage de points nécessite 2 expressions (mesure représentée en X, puis en Y).", true);
-      return;
-    }
-    if (chartType === "bulles" && graphExprRows.length < 3) {
-      setSt("Le bubble chart nécessite 3 expressions (mesure en X, en Y, puis la taille des bulles).", true);
-      return;
-    }
-    if (chartType === "sankey" && !graphSeriesDimRows.length) {
-      setSt("Le diagramme de Sankey nécessite une variable de Série (la cible des flux, en plus de l'axe X qui en est la source).", true);
-      return;
-    }
-    if (chartType === "boxplot" || chartType === "histogramme") {
-      const m = src.measures.find(m => m.id === graphExprRows[0].measureId);
-      if (m && m.distinctKey) {
-        setSt("Boîte à moustaches / histogramme nécessitent une mesure numérique (pas un comptage de distincts).", true);
-        return;
-      }
-    }
-
-    setSt("Interrogation de la base…");
-    const { sql, params } = buildQuery(activeSourceGraph, finessList, periods);
-    let rows = queryAll(sql, params);
-    tagPeriod(rows, activeSourceGraph, periods);
-
-    const activeGF = activeGlobalFilters();
-    const foreignSrcKeys = new Set(
-      [...graphXDimRows, ...graphSeriesDimRows, ...graphFacetDimRows].map(r => r.srcKey)
-        .concat(activeGF.map(f => f.srcKey))
-        .filter(k => k !== activeSourceGraph)
-    );
-    const foreignIdx = {};
-    for (const srcKey of foreignSrcKeys) foreignIdx[srcKey] = buildForeignIndex(srcKey, finessList, periods);
-
-    rows = applyGlobalFilters(rows, activeSourceGraph, foreignIdx);
-
-    const exprsUsed = (chartType === "camembert" || chartType === "sunburst" || chartType === "boxplot" || chartType === "histogramme" || chartType === "sankey") ? graphExprRows.slice(0, 1)
-      : chartType === "nuage" ? graphExprRows.slice(0, 2)
-      : chartType === "bulles" ? graphExprRows.slice(0, 3)
-      : graphExprRows;
-
-    const facetGroups = splitByFacets(rows, graphFacetDimRows, foreignIdx, activeSourceGraph);
-    const facetsShown = facetGroups.slice(0, GRAPH_FACET_CAP);
+    const d = prepareGraphData(setSt);
+    if (!d) return;
+    const { chartType, src, exprsUsed, facetGroups, facetsShown, foreignIdx, activeGF } = d;
 
     const panels = facetsShown.map(g => {
       let fragment;
@@ -2470,15 +2491,220 @@ function genererGraphique() {
     });
 
     document.getElementById("panelGraphResult").style.display = "block";
-    const xLabel = graphXDimRows.map(r => labelForDimRow(r)).join(" / ");
-    const serieLabel = graphSeriesDimRows.length ? graphSeriesDimRows.map(r => labelForDimRow(r)).join(" / ") : "(aucune)";
-    const facetLabel = graphFacetDimRows.length ? graphFacetDimRows.map(r => labelForDimRow(r)).join(" / ") : "(aucune)";
-    const metaText = `Type : ${CHART_TYPE_LABELS[chartType]} · Axe X : ${xLabel} · Série : ${serieLabel} · ` +
-      `Vignettes : ${facetLabel}${facetGroups.length > 1 ? ` (${facetsShown.length}${facetGroups.length > GRAPH_FACET_CAP ? ` sur ${facetGroups.length}` : ""})` : ""} · ` +
-      `Mesure(s) : ${exprsUsed.map(e => exprLabelFor(e, activeSourceGraph)).join(", ")} · Filtres globaux : ${activeGF.length}`;
-    document.getElementById("graphResultMeta").textContent = metaText;
+    document.getElementById("graphResultMeta").textContent = graphResultMetaText(chartType, exprsUsed, facetGroups, facetsShown, activeGF);
     document.getElementById("graphResultWrap").innerHTML = panels.join("");
     setSt(`Graphique généré (${facetsShown.length} vignette(s)).`);
+  } catch (e) {
+    setSt("Erreur : " + e.message, true);
+    console.error(e);
+  }
+}
+
+// ---------- Ouverture en graphique interactif (Plotly.js, nouvelle fenêtre) ----------
+// Réutilise prepareGraphData (même validation/requête/jointures que l'aperçu SVG intégré) mais
+// construit des traces Plotly au lieu de dessiner du SVG à la main : Plotly gère lui-même le zoom,
+// le survol, la légende cliquable et l'export PNG, ce que le rendu maison ne fait pas. Les données
+// sont passées à plotly_viewer.html (page statique, lib/plotly.min.js embarquée localement, aucun
+// accès réseau) via sessionStorage, puis la page s'ouvre dans un nouvel onglet/fenêtre — pas sous
+// les panneaux de configuration de la page courante, comme demandé.
+
+// Aplati l'arbre hiérarchique (buildPieHierarchy) en tableaux ids/labels/parents/values au format
+// attendu par les traces Plotly "sunburst" et "treemap" (même arbre, même API chez Plotly). Un id
+// unique par nœud (chemin complet depuis la racine) est nécessaire même si deux branches
+// différentes partagent un même libellé à un niveau donné.
+function flattenHierarchyForPlotly(root) {
+  const ids = [], labels = [], parents = [], values = [], colors = [];
+  let topIdx = -1;
+  function addNode(node, parentId, top) {
+    const id = parentId ? parentId + " ␟ " + node.label : node.label;
+    ids.push(id); labels.push(node.label); parents.push(parentId); values.push(node.value || 0);
+    colors.push(/^Autres /.test(node.label) && !parentId ? CHART_OTHER_COLOR : CHART_PALETTE[top % CHART_PALETTE.length]);
+    (node.children || []).forEach(child => addNode(child, id, top));
+  }
+  (root.children || []).forEach(child => { topIdx++; addNode(child, "", topIdx); });
+  return { ids, labels, parents, values, colors };
+}
+
+// Construit la figure Plotly ({data, layout}) d'une vignette pour le type de graphique choisi —
+// couvre les 14 types disponibles côté rendu maison, avec la même sémantique (mêmes dimensions,
+// mêmes mesures, même repli "Autres" au-delà de CHART_CAT_CAP). Contrairement au rendu SVG, la
+// géométrie (échelles, ticks, positionnement) est laissée à Plotly : on ne fournit que les données.
+function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
+  const label = g.label || null;
+  const baseLayout = {
+    font: { family: "'Segoe UI', Arial, sans-serif", size: 13, color: "#1b2631" },
+    margin: { t: 30, r: 30, b: 70, l: 70 },
+    legend: { orientation: "h", y: -0.22 },
+    colorway: CHART_PALETTE,
+    paper_bgcolor: "#fff", plot_bgcolor: "#fff",
+    hovermode: "closest",
+  };
+
+  if (chartType === "sunburst" || chartType === "treemap" || (chartType === "camembert" && graphSeriesDimRows.length)) {
+    const measure = src.measures.find(m => m.id === exprsUsed[0].measureId);
+    const xKeyFn = row => graphXDimRows.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))).join(" / ");
+    const levelKeyFns = [xKeyFn, ...graphSeriesDimRows.map(cfg =>
+      row => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))
+    )];
+    const root = buildPieHierarchy(g.rows, levelKeyFns, measure, exprsUsed[0].aggId);
+    const { ids, labels, parents, values, colors } = flattenHierarchyForPlotly(root);
+    const type = chartType === "treemap" ? "treemap" : "sunburst";
+    return { label, data: [{ type, ids, labels, parents, values, branchvalues: "total", marker: { colors }, textinfo: "label+percent parent" }], layout: baseLayout };
+  }
+
+  if (chartType === "camembert") {
+    const pivot = computeMultiPivot(g.rows, graphXDimRows, [], exprsUsed, src.measures, foreignIdx, activeSourceGraph);
+    const rawLabels = pivot.rowKeys.map(rk => pivot.rowPartsByKey.get(rk).join(" / "));
+    const rawValues = pivot.rowKeys.map(rk => pivot.perExpr[exprsUsed[0].uid].rowTotal[rk] || 0);
+    const { labels: pieLabels, values: pieValues } = foldTopN(rawLabels, rawValues, CHART_CAT_CAP);
+    return { label, data: [{ type: "pie", labels: pieLabels, values: pieValues, marker: { colors: CHART_PALETTE }, textinfo: "label+percent" }], layout: baseLayout };
+  }
+
+  if (chartType === "boxplot" || chartType === "histogramme") {
+    const measure = src.measures.find(m => m.id === exprsUsed[0].measureId);
+    const serieDimCfg = graphSeriesDimRows[0] || null;
+    const xLabelOf = row => graphXDimRows.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))).join(" / ");
+    const traces = [];
+    if (serieDimCfg) {
+      const groups = new Map();
+      for (const row of g.rows) {
+        const sKey = dimValue(dimDefOf(serieDimCfg), serieDimCfg.mode, sourceRowFor(serieDimCfg, row, foreignIdx, activeSourceGraph));
+        if (!groups.has(sKey)) groups.set(sKey, []);
+        groups.get(sKey).push(row);
+      }
+      [...groups.keys()].sort().slice(0, CHART_CAT_CAP).forEach((sKey, i) => {
+        const rowsSub = groups.get(sKey);
+        const color = CHART_PALETTE[i % CHART_PALETTE.length];
+        if (chartType === "boxplot") {
+          traces.push({ type: "box", x: rowsSub.map(xLabelOf), y: extractValues(rowsSub, measure), name: sKey, marker: { color } });
+        } else {
+          traces.push({ type: "histogram", x: extractValues(rowsSub, measure), name: sKey, opacity: 0.65, marker: { color } });
+        }
+      });
+    } else if (chartType === "boxplot") {
+      traces.push({ type: "box", x: g.rows.map(xLabelOf), y: extractValues(g.rows, measure), marker: { color: CHART_PALETTE[0] } });
+    } else {
+      traces.push({ type: "histogram", x: extractValues(g.rows, measure), marker: { color: CHART_PALETTE[0] } });
+    }
+    const layout = { ...baseLayout };
+    if (chartType === "boxplot") { layout.boxmode = "group"; layout.yaxis = { title: exprLabelFor(exprsUsed[0], activeSourceGraph) }; }
+    else { layout.barmode = "overlay"; layout.xaxis = { title: exprLabelFor(exprsUsed[0], activeSourceGraph) }; }
+    return { label, data: traces, layout };
+  }
+
+  if (chartType === "sankey") {
+    const pivot = computeMultiPivot(g.rows, graphXDimRows, graphSeriesDimRows, exprsUsed, src.measures, foreignIdx, activeSourceGraph);
+    const pr = pivot.perExpr[exprsUsed[0].uid];
+    let sources = pivot.rowKeys.map(rk => ({ key: rk, label: pivot.rowPartsByKey.get(rk).join(" / ") }));
+    let targets = pivot.colKeys.map(ck => ({ key: ck, label: (pivot.colPartsByKey.get(ck) || [ck]).join(" / ") }));
+    let flows = [];
+    for (const s of sources) for (const t of targets) {
+      const v = pr.grid[s.key][t.key];
+      if (v) flows.push({ s: s.key, t: t.key, v });
+    }
+    function capNodes(nodes, sumFn) {
+      if (nodes.length <= CHART_CAT_CAP) return nodes;
+      const totals = nodes.map(n => sumFn(n.key));
+      const order = nodes.map((_, i) => i).sort((a, b) => totals[b] - totals[a]);
+      const keep = new Set(order.slice(0, CHART_CAT_CAP - 1).map(i => nodes[i].key));
+      const rest = nodes.filter(n => !keep.has(n.key));
+      const kept = nodes.filter(n => keep.has(n.key));
+      kept.push({ key: "__autres__", label: `Autres (${rest.length})`, folded: new Set(rest.map(n => n.key)) });
+      return kept;
+    }
+    const sTotalRaw = k => flows.filter(f => f.s === k).reduce((a, f) => a + f.v, 0);
+    const tTotalRaw = k => flows.filter(f => f.t === k).reduce((a, f) => a + f.v, 0);
+    sources = capNodes(sources, sTotalRaw);
+    targets = capNodes(targets, tTotalRaw);
+    const remapKey = (k, nodes) => (nodes.find(n => n.folded && n.folded.has(k)) ? "__autres__" : k);
+    const foldedFlows = new Map();
+    flows.forEach(f => {
+      const sk = remapKey(f.s, sources), tk = remapKey(f.t, targets);
+      const key = sk + "␟" + tk;
+      foldedFlows.set(key, (foldedFlows.get(key) || 0) + f.v);
+    });
+    flows = [...foldedFlows.entries()].map(([key, v]) => { const [s, t] = key.split("␟"); return { s, t, v }; });
+    const sTotal = k => flows.filter(f => f.s === k).reduce((a, f) => a + f.v, 0);
+    const tTotal = k => flows.filter(f => f.t === k).reduce((a, f) => a + f.v, 0);
+    const colorForSource = key => (key === "__autres__" ? CHART_OTHER_COLOR : CHART_PALETTE[sources.findIndex(n => n.key === key) % CHART_PALETTE.length]);
+    const nodeLabels = [...sources.map(n => `${n.label} (${fmtVal(sTotal(n.key), false)})`), ...targets.map(n => `${n.label} (${fmtVal(tTotal(n.key), false)})`)];
+    const nodeColors = [...sources.map(n => colorForSource(n.key)), ...targets.map(() => CH_MUTED)];
+    const sIdx = new Map(sources.map((n, i) => [n.key, i]));
+    const tIdx = new Map(targets.map((n, i) => [n.key, sources.length + i]));
+    const link = {
+      source: flows.map(f => sIdx.get(f.s)), target: flows.map(f => tIdx.get(f.t)), value: flows.map(f => f.v),
+      color: flows.map(f => colorForSource(f.s)),
+    };
+    return { label, data: [{ type: "sankey", orientation: "h", node: { label: nodeLabels, color: nodeColors, pad: 12, thickness: 16 }, link }], layout: baseLayout };
+  }
+
+  const pivot = computeMultiPivot(g.rows, graphXDimRows, graphSeriesDimRows, exprsUsed, src.measures, foreignIdx, activeSourceGraph);
+
+  if (chartType === "carte_chaleur") {
+    const pr = pivot.perExpr[exprsUsed[0].uid];
+    const z = pivot.rowKeys.map(rk => pivot.colKeys.map(ck => pr.grid[rk][ck]));
+    const y = pivot.rowKeys.map(rk => pivot.rowPartsByKey.get(rk).join(" / "));
+    return { label, data: [{ type: "heatmap", x: pivot.colKeys, y, z, colorscale: "Blues", hoverongaps: false }], layout: baseLayout };
+  }
+
+  if (chartType === "nuage" || chartType === "bulles") {
+    const exX = exprsUsed[0], exY = exprsUsed[1], exSize = exprsUsed[2];
+    const prX = pivot.perExpr[exX.uid], prY = pivot.perExpr[exY.uid], prSize = exSize ? pivot.perExpr[exSize.uid] : null;
+    const groups = graphSeriesDimRows.length ? pivot.colKeys : ["Total"];
+    const traces = groups.slice(0, CHART_CAT_CAP).map((ck, i) => {
+      const rks = pivot.rowKeys.filter(rk => { const v = prX.grid[rk][ck]; return v !== null && v !== undefined; });
+      const xs = rks.map(rk => prX.grid[rk][ck]);
+      const ys = rks.map(rk => prY.grid[rk][ck]);
+      const text = rks.map(rk => pivot.rowPartsByKey.get(rk).join(" / "));
+      const marker = { color: CHART_PALETTE[i % CHART_PALETTE.length], size: 10, line: { color: "#fff", width: 1 } };
+      if (exSize) {
+        const sizes = rks.map(rk => prSize.grid[rk][ck] || 0);
+        const sizeMax = Math.max(1, ...sizes);
+        marker.size = sizes; marker.sizemode = "area"; marker.sizeref = (2 * sizeMax) / (40 ** 2); marker.sizemin = 4;
+      }
+      return { type: "scatter", mode: "markers", x: xs, y: ys, text, name: graphSeriesDimRows.length ? ck : undefined, marker };
+    });
+    return { label, data: traces, layout: { ...baseLayout, xaxis: { title: exprLabelFor(exX, activeSourceGraph) }, yaxis: { title: exprLabelFor(exY, activeSourceGraph) } } };
+  }
+
+  const { categories, series } = chartSeriesData(pivot, graphSeriesDimRows, exprsUsed);
+
+  if (chartType === "barres" || chartType === "barres_empilees" || chartType === "barres_horiz") {
+    const horiz = chartType === "barres_horiz";
+    const traces = series.map(s => horiz
+      ? { type: "bar", orientation: "h", y: categories, x: s.values, name: s.label, marker: { color: s.color } }
+      : { type: "bar", x: categories, y: s.values, name: s.label, marker: { color: s.color } });
+    const layout = { ...baseLayout, barmode: chartType === "barres_empilees" ? "stack" : "group" };
+    if (horiz) layout.yaxis = { automargin: true }; else layout.xaxis = { tickangle: -40, automargin: true };
+    return { label, data: traces, layout };
+  }
+
+  // lignes / aires
+  const traces = series.map(s => ({
+    type: "scatter", mode: "lines+markers", x: categories, y: s.values, name: s.label,
+    line: { color: s.color, width: 2 }, marker: { color: s.color },
+    fill: chartType === "aires" ? "tozeroy" : undefined,
+  }));
+  return { label, data: traces, layout: { ...baseLayout, xaxis: { tickangle: -40, automargin: true } } };
+}
+
+function ouvrirGraphiquePlotly() {
+  const statusEl = document.getElementById("statusGraph");
+  const setSt = (msg, err) => { statusEl.textContent = msg || ""; statusEl.style.color = err ? "#c0392b" : ""; };
+  try {
+    const d = prepareGraphData(setSt);
+    if (!d) return;
+    const { chartType, src, exprsUsed, facetGroups, facetsShown, foreignIdx, activeGF } = d;
+
+    const figures = facetsShown.map(g => buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx));
+    const spec = {
+      title: `${CHART_TYPE_LABELS[chartType]} — ${graphXDimRows.map(r => labelForDimRow(r)).join(" / ")}`,
+      meta: graphResultMetaText(chartType, exprsUsed, facetGroups, facetsShown, activeGF),
+      figures,
+    };
+    sessionStorage.setItem("pmsiPlotlySpec", JSON.stringify(spec));
+    window.open("plotly_viewer.html", "_blank");
+    setSt(`Graphique interactif ouvert dans une nouvelle fenêtre (${facetsShown.length} vignette(s)).`);
   } catch (e) {
     setSt("Erreur : " + e.message, true);
     console.error(e);
@@ -2973,6 +3199,7 @@ function wireEvents() {
     });
   });
   document.getElementById("btnGenererGraph").addEventListener("click", genererGraphique);
+  document.getElementById("btnOuvrirPlotly").addEventListener("click", ouvrirGraphiquePlotly);
 
   refreshDimUI();
 }

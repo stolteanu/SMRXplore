@@ -15,6 +15,7 @@ app/*
 !app/explorateur.html
 !app/catalogue.js
 !app/app.js
+!app/plotly_viewer.html
 !app/lib/
 !app/lib/**
 
