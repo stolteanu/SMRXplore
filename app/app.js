@@ -2525,15 +2525,42 @@ function flattenHierarchyForPlotly(root) {
   return { ids, labels, parents, values, colors };
 }
 
+// Titre exprimant la combinaison de variables choisies (mesure(s) × axe X × Série), formulé
+// différemment selon la "grammaire" du type de graphique : "par" pour une répartition/comparaison
+// de catégories, "vs" pour un nuage/bulles (deux mesures l'une contre l'autre), "Flux A → B" pour
+// un Sankey, "Distribution de" pour boîte à moustaches/histogramme (une seule mesure étalée).
+function buildPlotlyTitle(chartType, exprsUsed) {
+  const xLabel = graphXDimRows.map(r => labelForDimRow(r)).join(" / ");
+  const serieLabel = graphSeriesDimRows.length ? graphSeriesDimRows.map(r => labelForDimRow(r)).join(" / ") : null;
+  const mLabel = exprsUsed.map(e => exprLabelFor(e, activeSourceGraph)).join(", ");
+  if (chartType === "sankey") return `Flux : ${xLabel} → ${serieLabel || "?"} (${mLabel})`;
+  if (chartType === "nuage" || chartType === "bulles") {
+    const exX = exprsUsed[0], exY = exprsUsed[1], exSize = exprsUsed[2];
+    let t = `${exprLabelFor(exY, activeSourceGraph)} vs ${exprLabelFor(exX, activeSourceGraph)}`;
+    if (exSize) t += ` — taille : ${exprLabelFor(exSize, activeSourceGraph)}`;
+    if (serieLabel) t += ` (couleur : ${serieLabel})`;
+    return t;
+  }
+  if (chartType === "histogramme") return `Distribution de ${mLabel}` + (serieLabel ? ` par ${serieLabel}` : "");
+  if (chartType === "boxplot") return `Distribution de ${mLabel} par ${xLabel}` + (serieLabel ? ` × ${serieLabel}` : "");
+  if (chartType === "camembert" || chartType === "sunburst" || chartType === "treemap") {
+    return `${mLabel} — répartition par ${xLabel}` + (serieLabel ? ` × ${serieLabel}` : "");
+  }
+  return `${mLabel} par ${xLabel}` + (serieLabel ? ` × ${serieLabel}` : "");
+}
+
 // Construit la figure Plotly ({data, layout}) d'une vignette pour le type de graphique choisi —
 // couvre les 14 types disponibles côté rendu maison, avec la même sémantique (mêmes dimensions,
 // mêmes mesures, même repli "Autres" au-delà de CHART_CAT_CAP). Contrairement au rendu SVG, la
 // géométrie (échelles, ticks, positionnement) est laissée à Plotly : on ne fournit que les données.
 function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
   const label = g.label || null;
+  const xLabel = graphXDimRows.map(r => labelForDimRow(r)).join(" / ");
+  const serieLabel = graphSeriesDimRows.length ? graphSeriesDimRows.map(r => labelForDimRow(r)).join(" / ") : null;
   const baseLayout = {
+    title: { text: buildPlotlyTitle(chartType, exprsUsed), font: { size: 15 } },
     font: { family: "'Segoe UI', Arial, sans-serif", size: 13, color: "#1b2631" },
-    margin: { t: 30, r: 30, b: 70, l: 70 },
+    margin: { t: 60, r: 30, b: 70, l: 70 },
     legend: { orientation: "h", y: -0.22 },
     colorway: CHART_PALETTE,
     paper_bgcolor: "#fff", plot_bgcolor: "#fff",
@@ -2587,8 +2614,15 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
       traces.push({ type: "histogram", x: extractValues(g.rows, measure), marker: { color: CHART_PALETTE[0] } });
     }
     const layout = { ...baseLayout };
-    if (chartType === "boxplot") { layout.boxmode = "group"; layout.yaxis = { title: exprLabelFor(exprsUsed[0], activeSourceGraph) }; }
-    else { layout.barmode = "overlay"; layout.xaxis = { title: exprLabelFor(exprsUsed[0], activeSourceGraph) }; }
+    if (chartType === "boxplot") {
+      layout.boxmode = "group";
+      layout.xaxis = { title: xLabel, automargin: true };
+      layout.yaxis = { title: exprLabelFor(exprsUsed[0], activeSourceGraph), automargin: true };
+    } else {
+      layout.barmode = "overlay";
+      layout.xaxis = { title: exprLabelFor(exprsUsed[0], activeSourceGraph), automargin: true };
+      layout.yaxis = { title: "Nombre", automargin: true };
+    }
     return { label, data: traces, layout };
   }
 
@@ -2644,7 +2678,9 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     const pr = pivot.perExpr[exprsUsed[0].uid];
     const z = pivot.rowKeys.map(rk => pivot.colKeys.map(ck => pr.grid[rk][ck]));
     const y = pivot.rowKeys.map(rk => pivot.rowPartsByKey.get(rk).join(" / "));
-    return { label, data: [{ type: "heatmap", x: pivot.colKeys, y, z, colorscale: "Blues", hoverongaps: false }], layout: baseLayout };
+    const heatLayout = { ...baseLayout, yaxis: { title: xLabel, automargin: true } };
+    if (serieLabel) heatLayout.xaxis = { title: serieLabel, automargin: true };
+    return { label, data: [{ type: "heatmap", x: pivot.colKeys, y, z, colorscale: "Blues", hoverongaps: false }], layout: heatLayout };
   }
 
   if (chartType === "nuage" || chartType === "bulles") {
@@ -2669,13 +2705,23 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
 
   const { categories, series } = chartSeriesData(pivot, graphSeriesDimRows, exprsUsed);
 
+  // Axe des valeurs : le libellé de la mesure si une seule, sinon un titre générique (plusieurs
+  // mesures hétérogènes tracées côte à côte via des expressions distinctes plutôt qu'une Série).
+  const valueAxisTitle = exprsUsed.length === 1 ? exprLabelFor(exprsUsed[0], activeSourceGraph) : "Valeur";
+
   if (chartType === "barres" || chartType === "barres_empilees" || chartType === "barres_horiz") {
     const horiz = chartType === "barres_horiz";
     const traces = series.map(s => horiz
       ? { type: "bar", orientation: "h", y: categories, x: s.values, name: s.label, marker: { color: s.color } }
       : { type: "bar", x: categories, y: s.values, name: s.label, marker: { color: s.color } });
     const layout = { ...baseLayout, barmode: chartType === "barres_empilees" ? "stack" : "group" };
-    if (horiz) layout.yaxis = { automargin: true }; else layout.xaxis = { tickangle: -40, automargin: true };
+    if (horiz) {
+      layout.yaxis = { title: xLabel, automargin: true };
+      layout.xaxis = { title: valueAxisTitle, automargin: true };
+    } else {
+      layout.xaxis = { title: xLabel, tickangle: -40, automargin: true };
+      layout.yaxis = { title: valueAxisTitle, automargin: true };
+    }
     return { label, data: traces, layout };
   }
 
@@ -2685,7 +2731,10 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     line: { color: s.color, width: 2 }, marker: { color: s.color },
     fill: chartType === "aires" ? "tozeroy" : undefined,
   }));
-  return { label, data: traces, layout: { ...baseLayout, xaxis: { tickangle: -40, automargin: true } } };
+  return {
+    label, data: traces,
+    layout: { ...baseLayout, xaxis: { title: xLabel, tickangle: -40, automargin: true }, yaxis: { title: valueAxisTitle, automargin: true } },
+  };
 }
 
 function ouvrirGraphiquePlotly() {
