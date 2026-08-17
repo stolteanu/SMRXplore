@@ -71,6 +71,18 @@ import sqlite3
 from collections import defaultdict
 
 
+def _norm_numadmin(raw) -> str:
+    """Normalise numero_admin_sejour pour le matching rhs_groupe/valorisation_sejour
+    (zero-paddé côté RHS, pas côté valorisation, cf. note ci-dessus) : retire les
+    zéros de tête comme le ferait int(), mais SANS planter sur une valeur
+    alphanumérique erronée (ex. "070246515N001", un numéro de dossier faux
+    constaté dans un fichier source mais qui doit quand même être chargé en
+    base, 2026-08-07) — une telle valeur est alors simplement dépouillée de ses
+    zéros de tête et gardée telle quelle comme clé."""
+    s = str(raw).strip()
+    return s.lstrip("0") or "0"
+
+
 def _rhs_presence_days_by_sejour(
     conn: sqlite3.Connection, finess: str | None = None
 ) -> dict[tuple[str, int], list[datetime.date]]:
@@ -99,7 +111,7 @@ def _rhs_presence_days_by_sejour(
                 jour = datetime.date.fromisocalendar(year, week, weekday)
             except ValueError:
                 continue
-            key = (finess, int(numadmin))
+            key = (finess, _norm_numadmin(numadmin))
             out.setdefault(key, []).append(jour)
     return out
 
@@ -125,7 +137,7 @@ def _dernier_uf_par_sejour(conn: sqlite3.Connection, finess: str | None = None) 
     ).fetchall()
     best: dict[tuple[str, int], tuple[int, str]] = {}
     for finess_v, numadmin, numero_semaine, uf in rows:
-        key = (finess_v, int(numadmin))
+        key = (finess_v, _norm_numadmin(numadmin))
         week = int(numero_semaine[:2])
         prev = best.get(key)
         if prev is None or week >= prev[0]:
@@ -171,7 +183,7 @@ def _rhs_presence_days_by_campagne(
                 jour = datetime.date.fromisocalendar(year, week, weekday)
             except ValueError:
                 continue
-            key = (finess, int(numadmin), campagne)
+            key = (finess, _norm_numadmin(numadmin), campagne)
             out.setdefault(key, []).append(jour)
     return out
 
@@ -207,7 +219,7 @@ def _rhs_presence_days_by_week(
                 jour = datetime.date.fromisocalendar(year, week, weekday)
             except ValueError:
                 continue
-            key = (finess_v, int(numadmin), year, week)
+            key = (finess_v, _norm_numadmin(numadmin), year, week)
             out.setdefault(key, []).append(jour)
     return out
 
@@ -233,7 +245,7 @@ def _date_entree_par_sejour(
     ).fetchall()
     out: dict[tuple[str, int], datetime.date] = {}
     for finess_v, numadmin, date_entree in rows:
-        out[(finess_v, int(numadmin))] = datetime.date.fromisoformat(date_entree)
+        out[(finess_v, _norm_numadmin(numadmin))] = datetime.date.fromisoformat(date_entree)
     return out
 
 
@@ -303,7 +315,7 @@ def _rhs_day_axis(
                 jour = datetime.date.fromisocalendar(year, week, weekday)
             except ValueError:
                 continue
-            out[(finess_v, int(numadmin), jour)] = (uf, type_hosp)
+            out[(finess_v, _norm_numadmin(numadmin), jour)] = (uf, type_hosp)
     return out
 
 
@@ -378,7 +390,7 @@ def compute_valeur_journaliere(
         lambda: defaultdict(list)
     )
     for finess_v, numadmin, campagne, numero_semaine, montant in valo_rows:
-        rows_by_sejour[(finess_v, int(numadmin))][campagne].append((numero_semaine, montant))
+        rows_by_sejour[(finess_v, _norm_numadmin(numadmin))][campagne].append((numero_semaine, montant))
 
     presence_all = _rhs_presence_days_by_sejour(conn, finess)
     presence_by_campagne = _rhs_presence_days_by_campagne(conn, finess)
@@ -496,7 +508,7 @@ def _derniere_semaine_rhs_par_sejour(
     ).fetchall()
     out: dict[int, int] = {}
     for numadmin, numero_semaine in rows:
-        numadmin = int(numadmin)
+        numadmin = _norm_numadmin(numadmin)
         week = int(numero_semaine[:2])
         if week > out.get(numadmin, 0):
             out[numadmin] = week
@@ -616,7 +628,7 @@ def montant_br_tot_campagne_comparable(
 
     total = 0.0
     for numadmin, montant in rows:
-        numadmin = int(numadmin)
+        numadmin = _norm_numadmin(numadmin)
         derniere_semaine = dernieres_semaines.get(numadmin)
         if derniere_semaine is None or derniere_semaine > max_week:
             continue
@@ -661,7 +673,7 @@ def valeur_sur_periode(
     return sum(r["valeur"] for r in rows if date_debut <= r["date"] <= date_fin)
 
 
-def sejours_non_factures_sans_anomalie(conn: sqlite3.Connection, finess: str, campagne: int) -> set[int]:
+def sejours_non_factures_sans_anomalie(conn: sqlite3.Connection, finess: str, campagne: int) -> set[str]:
     """ESSAI (demande utilisateur 2026-08-05, facile à retirer — voir
     estimation_recettes_sejours_en_cours). Séjours actifs dans `campagne`
     (au moins 1 ligne RHS dont l'année du numero_semaine est `campagne`)
@@ -675,7 +687,7 @@ def sejours_non_factures_sans_anomalie(conn: sqlite3.Connection, finess: str, ca
     anomalies à part. Seuls les séjours vraiment "propres" sont candidats
     à l'estimation ci-dessous."""
     actifs = {
-        int(r[0])
+        _norm_numadmin(r[0])
         for r in conn.execute(
             "SELECT DISTINCT numero_admin_sejour FROM rhs_groupe "
             "WHERE finess_epmsi = ? AND substr(numero_semaine, 3, 4) = ?",
@@ -683,7 +695,7 @@ def sejours_non_factures_sans_anomalie(conn: sqlite3.Connection, finess: str, ca
         ).fetchall()
     }
     deja_factures = {
-        int(r[0])
+        _norm_numadmin(r[0])
         for r in conn.execute(
             "SELECT DISTINCT numero_admin_sejour FROM valorisation_sejour "
             "WHERE finess_epmsi = ? AND montant_br_tot IS NOT NULL",
@@ -691,7 +703,7 @@ def sejours_non_factures_sans_anomalie(conn: sqlite3.Connection, finess: str, ca
         ).fetchall()
     }
     en_anomalie = {
-        int(r[0])
+        _norm_numadmin(r[0])
         for r in conn.execute(
             "SELECT DISTINCT numero_admin_sejour FROM valorisation_sejour "
             "WHERE finess_epmsi = ? AND (COALESCE(nv_chain, 0) != 0 OR COALESCE(nv_attente_dts, 0) != 0 "

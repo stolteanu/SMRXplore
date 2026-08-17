@@ -29,6 +29,8 @@ from __future__ import annotations
 import datetime
 import sqlite3
 
+from src.viz.valorisation import _norm_numadmin
+
 from src.util.paths import project_root
 
 DB_PATH = project_root() / "data/processed/pmsi.db"
@@ -307,7 +309,7 @@ def section_patients(
     bucket = {"F": 0, "M": 0, "ages_f": [], "ages_m": []}
     seen_ipp: set[str] = set()
     for r in rows:
-        if sejours_ok is not None and int(r["numero_admin_sejour"]) not in sejours_ok:
+        if sejours_ok is not None and _norm_numadmin(r["numero_admin_sejour"]) not in sejours_ok:
             continue
         start_raw = r["date_entree"] or r["date_hospitalisation"]
         if not start_raw:
@@ -854,7 +856,7 @@ def valeurs_axe(conn: sqlite3.Connection, periods: list[dict], finess: str, cham
 
 def _sejours_matching_axis(
     conn: sqlite3.Connection, period: dict, finess: str, axis_filter: tuple[str, str] | None
-) -> set[int] | None:
+) -> set[str] | None:
     """Séjours ayant au moins une ligne RHS correspondant à `axis_filter` sur
     la période — utilisé pour restreindre la section Patients (VID-HOSP,
     aucune notion d'UF/type d'hospitalisation propre) dans un TDB secondaire.
@@ -865,7 +867,7 @@ def _sejours_matching_axis(
     rows = conn.execute(
         f"SELECT DISTINCT numero_admin_sejour FROM rhs_groupe WHERE {clause}", params
     ).fetchall()
-    return {int(r[0]) for r in rows}
+    return {_norm_numadmin(r[0]) for r in rows}
 
 
 _GME_CODE_LENGTH = {"CM": 2, "GN": 4, "GME": 7}
@@ -897,7 +899,7 @@ def _sejour_code_gme_by_period(
     ).fetchall()
     best: dict[int, tuple[int, str]] = {}
     for numadmin, numero_semaine, code in rows:
-        numadmin = int(numadmin)
+        numadmin = _norm_numadmin(numadmin)
         week = int(numero_semaine[:2])
         prev = best.get(numadmin)
         if prev is None or week >= prev[0]:
@@ -955,7 +957,7 @@ def section_palmares_gme(
         ).fetchall()
         val: dict[str, float] = {}
         for numadmin, montant in rows:
-            numadmin = int(numadmin)
+            numadmin = _norm_numadmin(numadmin)
             derniere = derniere_semaines.get(numadmin)
             if derniere is None or derniere > period["max_week"]:
                 continue
@@ -1073,7 +1075,7 @@ def section_structure_gme(
         ).fetchall()
         val_by_block: dict[str, dict[str, float]] = {b: {} for b in blocks}
         for numadmin, montant in rows:
-            numadmin = int(numadmin)
+            numadmin = _norm_numadmin(numadmin)
             derniere = derniere_semaines.get(numadmin)
             if derniere is None or derniere > period["max_week"]:
                 continue
