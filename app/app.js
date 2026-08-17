@@ -1418,6 +1418,22 @@ function svgScrollWrap(svgMarkup, pxWidth, scrollable) {
   return `<div style="overflow-x:auto;width:100%;"><div style="width:${pxWidth}px;max-width:none;">${svgMarkup}</div></div>`;
 }
 
+// Libellé d'axe des valeurs : le nom de la mesure s'il n'y en a qu'une, sinon un titre générique
+// (plusieurs mesures hétérogènes tracées côte à côte via des expressions distinctes plutôt qu'une
+// Série n'ont pas de nom commun sensé). Partagé entre le rendu SVG maison et les figures Plotly.
+function measureAxisTitle(exprsUsed) {
+  return exprsUsed.length === 1 ? exprLabelFor(exprsUsed[0], activeSourceGraph) : "Valeur";
+}
+// Ajoute les libellés d'axes (texte centré sous l'axe X, texte pivoté à gauche de l'axe Y) — même
+// emplacement/style que ceux déjà utilisés pour le nuage de points/bulles, pour rester cohérent
+// d'un type de graphique à l'autre.
+function svgAxisTitleTags(xTitle, yTitle, ML, MT, plotW, plotH, H) {
+  let s = "";
+  if (xTitle) s += `<text x="${(ML + plotW / 2).toFixed(1)}" y="${H - 6}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle">${esc(xTitle)}</text>`;
+  if (yTitle) s += `<text x="14" y="${(MT + plotH / 2).toFixed(1)}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle" transform="rotate(-90 14 ${(MT + plotH / 2).toFixed(1)})">${esc(yTitle)}</text>`;
+  return s;
+}
+
 // ---- Couleurs par anneau (camembert imbriqué) : une teinte de base par anneau (personnalisable
 // via un sélecteur couleur), déclinée en dégradé de luminosité pour les valeurs de cet anneau —
 // cohérent (même famille de teinte du début à la fin d'un anneau) tout en restant distinguable
@@ -1561,10 +1577,10 @@ function chartSeriesData(pivot, seriesDimsCfg, exprsUsed) {
   return { categories, series };
 }
 
-function renderBarSvg(categories, series, stacked) {
+function renderBarSvg(categories, series, stacked, valueAxisTitle) {
   series = foldSeriesList(series, CHART_CAT_CAP);
   const n = categories.length;
-  const H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
+  const H = 320, ML = 68, MR = 16, MT = 16, MB = 96;
   const perCat = stacked ? 46 : 34 * Math.max(1, series.length);
   const BASE_W = 560; // largeur de base classique, magnifiée librement par le conteneur (voir svgScrollWrap)
   const scrollable = n * perCat > 1700; // au-delà, même magnifié le texte resterait tassé : défilement à police fixe
@@ -1624,6 +1640,7 @@ function renderBarSvg(categories, series, stacked) {
     const lx = ML + i * groupW + groupW / 2;
     svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
   });
+  svg += svgAxisTitleTags(graphXDimRows.map(r => labelForDimRow(r)).join(" / "), valueAxisTitle, ML, MT, plotW, plotH, H);
 
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series);
@@ -1633,10 +1650,10 @@ function renderBarSvg(categories, series, stacked) {
 // horizontal, pas de rotation) et valeurs en abscisse — nettement plus lisible dès que les libellés
 // de catégorie sont longs (codes GME, libellés d'actes...) ou nombreux, cf. recommandation
 // "part-to-whole : passer en horizontal pour de nombreuses catégories / libellés longs".
-function renderBarSvgH(categories, series) {
+function renderBarSvgH(categories, series, valueAxisTitle) {
   series = foldSeriesList(series, CHART_CAT_CAP);
   const n = categories.length;
-  const W = 620, ML = 168, MR = 46, MT = 10, MB = 34;
+  const W = 620, ML = 168, MR = 46, MT = 10, MB = 50;
   const rowH = chartWidthPx(1, 30 * Math.max(1, series.length), 30, 60); // hauteur par groupe de catégorie
   const H = MT + MB + n * rowH;
   const plotW = W - ML - MR, plotH = H - MT - MB;
@@ -1672,6 +1689,7 @@ function renderBarSvgH(categories, series) {
       }
     });
   });
+  if (valueAxisTitle) svg += `<text x="${(ML + plotW / 2).toFixed(1)}" y="${H - 6}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle">${esc(valueAxisTitle)}</text>`;
 
   // Largeur toujours à 100% (magnifiée librement par le conteneur, cf. note sur svgScrollWrap) : un
   // graphique à barres horizontales a autant besoin de s'agrandir sur un grand écran qu'un graphique
@@ -1684,10 +1702,10 @@ function renderBarSvgH(categories, series) {
     : `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>`) + legendHtml(series);
 }
 
-function renderLineAreaSvg(categories, series, filled) {
+function renderLineAreaSvg(categories, series, filled, valueAxisTitle) {
   series = foldSeriesList(series, CHART_CAT_CAP);
   const n = categories.length;
-  const H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
+  const H = 320, ML = 68, MR = 16, MT = 16, MB = 96;
   const BASE_W = 560;
   const scrollable = n * 30 > 1700;
   const W = scrollable ? n * 30 : BASE_W;
@@ -1732,6 +1750,7 @@ function renderLineAreaSvg(categories, series, filled) {
       svg += `<text x="${(last[0] + 5).toFixed(1)}" y="${(last[1] - 5).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="start">${esc(fmtAxisNum(lastV))}</text>`;
     }
   });
+  svg += svgAxisTitleTags(graphXDimRows.map(r => labelForDimRow(r)).join(" / "), valueAxisTitle, ML, MT, plotW, plotH, H);
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series);
 }
@@ -2010,7 +2029,7 @@ function renderHeatmapSvg(pivot, expr) {
   let vmin = Infinity, vmax = -Infinity;
   rowsK.forEach(rk => cols.forEach(ck => { const v = pr.grid[rk][ck]; if (v !== null && v !== undefined) { vmin = Math.min(vmin, v); vmax = Math.max(vmax, v); } }));
   if (!isFinite(vmin)) { vmin = 0; vmax = 1; }
-  const ML = 160, MT = 50, cellW = 58, cellH = 28, MR = 16, MB = 10;
+  const ML = 160, MT = 66, cellW = 58, cellH = 28, MR = 16, MB = 10;
   const W = ML + Math.max(1, cols.length) * cellW + MR, H = MT + Math.max(1, rowsK.length) * cellH + MB;
   const scrollable = W > 1100 || H > 900;
   let svg = "";
@@ -2032,6 +2051,10 @@ function renderHeatmapSvg(pivot, expr) {
       }
     });
   });
+  const xTitle = graphSeriesDimRows.length ? graphSeriesDimRows.map(r => labelForDimRow(r)).join(" / ") : null;
+  const yTitle = graphXDimRows.map(r => labelForDimRow(r)).join(" / ");
+  if (xTitle) svg += `<text x="${(ML + (W - ML - MR) / 2).toFixed(1)}" y="16" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle">${esc(xTitle)}</text>`;
+  svg += `<text x="14" y="${(MT + (H - MT - MB) / 2).toFixed(1)}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle" transform="rotate(-90 14 ${(MT + (H - MT - MB) / 2).toFixed(1)})">${esc(yTitle)}</text>`;
   const style = scrollable
     ? `width:${W}px;height:auto;display:block;${CH_FONT}`
     : `width:100%;height:auto;display:block;${CH_FONT}`; // magnifié librement par le conteneur si la grille tient dans le plafond
@@ -2072,9 +2095,9 @@ function buildBoxplotGroups(rows, xDimsCfg, serieDimCfg, measure, foreignIdx, ba
   }));
   return { categories, series };
 }
-function renderBoxplotSvg(categories, series) {
+function renderBoxplotSvg(categories, series, valueAxisTitle) {
   const n = categories.length;
-  const H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
+  const H = 320, ML = 68, MR = 16, MT = 16, MB = 96;
   const perCat = 40 * Math.max(1, series.length);
   const BASE_W = 560;
   const scrollable = n * perCat > 1700;
@@ -2115,6 +2138,7 @@ function renderBoxplotSvg(categories, series) {
     const lx = ML + i * groupW + groupW / 2;
     svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
   });
+  svg += svgAxisTitleTags(graphXDimRows.map(r => labelForDimRow(r)).join(" / "), valueAxisTitle, ML, MT, plotW, plotH, H);
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series.length > 1 ? series : []);
 }
@@ -2153,9 +2177,9 @@ function buildHistogramSeries(rows, serieDimCfg, measure, foreignIdx, baseSrcKey
   });
   return { bins, series };
 }
-function renderHistogramSvg(bins, series) {
+function renderHistogramSvg(bins, series, valueAxisTitle) {
   const k = bins.k || 0;
-  const H = 320, ML = 54, MR = 16, MT = 16, MB = 46;
+  const H = 320, ML = 68, MR = 16, MT = 16, MB = 66;
   const perCat = 26 * Math.max(1, series.length);
   const BASE_W = 560;
   const scrollable = k * perCat > 1700;
@@ -2189,6 +2213,7 @@ function renderHistogramSvg(bins, series) {
     }
   }
   svg += `<text x="${(ML + plotW).toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_AXIS - 0.5}" fill="${CH_MUTED}" text-anchor="middle">${esc(fmtAxisNum(bins.max))}</text>`;
+  svg += svgAxisTitleTags(valueAxisTitle, "Nombre", ML, MT, plotW, plotH, H);
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series.length > 1 ? series : []);
 }
@@ -2377,11 +2402,12 @@ function renderChartFragment(chartType, pivot, seriesDimsCfg, exprsUsed) {
     return renderSankeySvg(pivot, exprsUsed[0]);
   }
   const { categories, series } = chartSeriesData(pivot, seriesDimsCfg, exprsUsed);
-  if (chartType === "barres_horiz") return renderBarSvgH(categories, series);
-  if (chartType === "barres_empilees") return renderBarSvg(categories, series, true);
-  if (chartType === "lignes") return renderLineAreaSvg(categories, series, false);
-  if (chartType === "aires") return renderLineAreaSvg(categories, series, true);
-  return renderBarSvg(categories, series, false);
+  const valueAxisTitle = measureAxisTitle(exprsUsed);
+  if (chartType === "barres_horiz") return renderBarSvgH(categories, series, valueAxisTitle);
+  if (chartType === "barres_empilees") return renderBarSvg(categories, series, true, valueAxisTitle);
+  if (chartType === "lignes") return renderLineAreaSvg(categories, series, false, valueAxisTitle);
+  if (chartType === "aires") return renderLineAreaSvg(categories, series, true, valueAxisTitle);
+  return renderBarSvg(categories, series, false, valueAxisTitle);
 }
 
 // Étape commune à la vignette SVG intégrée (genererGraphique) et à l'ouverture interactive
@@ -2469,6 +2495,7 @@ function genererGraphique() {
     if (!d) return;
     const { chartType, src, exprsUsed, facetGroups, facetsShown, foreignIdx, activeGF } = d;
 
+    const chartTitle = buildChartTitle(chartType, exprsUsed);
     const panels = facetsShown.map(g => {
       let fragment;
       if (chartType === "sunburst" || (chartType === "camembert" && graphSeriesDimRows.length)) {
@@ -2478,16 +2505,17 @@ function genererGraphique() {
       } else if (chartType === "boxplot") {
         const measure = src.measures.find(m => m.id === exprsUsed[0].measureId);
         const { categories, series } = buildBoxplotGroups(g.rows, graphXDimRows, graphSeriesDimRows[0] || null, measure, foreignIdx, activeSourceGraph);
-        fragment = renderBoxplotSvg(categories, series);
+        fragment = renderBoxplotSvg(categories, series, measureAxisTitle(exprsUsed));
       } else if (chartType === "histogramme") {
         const measure = src.measures.find(m => m.id === exprsUsed[0].measureId);
         const { bins, series } = buildHistogramSeries(g.rows, graphSeriesDimRows[0] || null, measure, foreignIdx, activeSourceGraph);
-        fragment = renderHistogramSvg(bins, series);
+        fragment = renderHistogramSvg(bins, series, measureAxisTitle(exprsUsed));
       } else {
         const pivot = computeMultiPivot(g.rows, graphXDimRows, graphSeriesDimRows, exprsUsed, src.measures, foreignIdx, activeSourceGraph);
         fragment = renderChartFragment(chartType, pivot, graphSeriesDimRows, exprsUsed);
       }
-      return `<div class="chart-panel">${g.label ? `<h4>${esc(g.label)}</h4>` : ""}${fragment}</div>`;
+      const panelTitle = g.label ? `${chartTitle} — ${g.label}` : chartTitle;
+      return `<div class="chart-panel"><h4>${esc(panelTitle)}</h4>${fragment}</div>`;
     });
 
     document.getElementById("panelGraphResult").style.display = "block";
@@ -2529,7 +2557,7 @@ function flattenHierarchyForPlotly(root) {
 // différemment selon la "grammaire" du type de graphique : "par" pour une répartition/comparaison
 // de catégories, "vs" pour un nuage/bulles (deux mesures l'une contre l'autre), "Flux A → B" pour
 // un Sankey, "Distribution de" pour boîte à moustaches/histogramme (une seule mesure étalée).
-function buildPlotlyTitle(chartType, exprsUsed) {
+function buildChartTitle(chartType, exprsUsed) {
   const xLabel = graphXDimRows.map(r => labelForDimRow(r)).join(" / ");
   const serieLabel = graphSeriesDimRows.length ? graphSeriesDimRows.map(r => labelForDimRow(r)).join(" / ") : null;
   const mLabel = exprsUsed.map(e => exprLabelFor(e, activeSourceGraph)).join(", ");
@@ -2558,7 +2586,7 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
   const xLabel = graphXDimRows.map(r => labelForDimRow(r)).join(" / ");
   const serieLabel = graphSeriesDimRows.length ? graphSeriesDimRows.map(r => labelForDimRow(r)).join(" / ") : null;
   const baseLayout = {
-    title: { text: buildPlotlyTitle(chartType, exprsUsed), font: { size: 15 } },
+    title: { text: buildChartTitle(chartType, exprsUsed), font: { size: 15 } },
     font: { family: "'Segoe UI', Arial, sans-serif", size: 13, color: "#1b2631" },
     margin: { t: 60, r: 30, b: 70, l: 70 },
     legend: { orientation: "h", y: -0.22 },
