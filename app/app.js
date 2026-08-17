@@ -1396,14 +1396,25 @@ function foldSeriesList(series, maxN) {
 // gagnent en largeur réelle (pas juste en zoom arrière, qui rétrécirait aussi le texte) jusqu'à un
 // plafond, au-delà duquel on bascule en défilement horizontal (voir svgScrollWrap) plutôt que de
 // continuer à tasser les catégories jusqu'à l'illisible.
+// Largeur de viewBox à utiliser UNE FOIS qu'on a basculé en mode défilement (voir plus bas) —
+// n'est PAS utilisée pour le cas courant : le cas courant garde une largeur de viewBox fixe et
+// laisse le SVG se magnifier librement (voir la note sur `width:100%` ci-dessous).
 function chartWidthPx(n, perCat, min, max) {
   return Math.max(min, Math.min(max, Math.round(n * perCat)));
 }
-// Encapsule un <svg> dans un conteneur centré ; si `scrollable` (graphique large), le SVG garde sa
-// largeur réelle en px (texte à taille constante) et le conteneur défile horizontalement plutôt que
-// de tout réduire — sinon le SVG est limité à `pxWidth` et centré, sans jamais dépasser le parent.
+// Un <svg viewBox="0 0 W H" style="width:100%;height:auto"> se met MÉCANIQUEMENT à l'échelle du
+// conteneur qui le reçoit — écran large, fenêtre agrandie, panneau plus large : le navigateur
+// recalcule le facteur d'agrandissement à chaque redimensionnement, SANS JavaScript, et grossit
+// le texte en même temps que les traits puisque tout est exprimé en unités du viewBox. C'est ce
+// mécanisme qui rendait les graphiques nettement plus grands avant qu'un `max-width` figé n'y soit
+// ajouté par erreur : ne JAMAIS poser de `max-width` en pixels sur le cas normal, sous peine de
+// plafonner artificiellement la taille bien en dessous de ce que l'écran permettrait.
+// Seule exception : un nombre de catégories tel que même magnifié sur un très grand écran, le texte
+// resterait illisible une fois tassé dans la largeur de base — dans ce seul cas (`scrollable`), on
+// bascule en largeur réelle fixe (pas de mise à l'échelle) et on fait défiler horizontalement,
+// pour garder une police à taille constante plutôt que de continuer à la réduire.
 function svgScrollWrap(svgMarkup, pxWidth, scrollable) {
-  if (!scrollable) return `<div style="display:flex;justify-content:center;">${svgMarkup}</div>`;
+  if (!scrollable) return `<div style="display:flex;justify-content:center;width:100%;">${svgMarkup}</div>`;
   return `<div style="overflow-x:auto;width:100%;"><div style="width:${pxWidth}px;max-width:none;">${svgMarkup}</div></div>`;
 }
 
@@ -1554,10 +1565,10 @@ function renderBarSvg(categories, series, stacked) {
   series = foldSeriesList(series, CHART_CAT_CAP);
   const n = categories.length;
   const H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
-  // Largeur adaptée au nombre de catégories : compacte (donc bien centrée) si peu nombreuses,
-  // élargie jusqu'à un plafond sinon — au-delà, défilement horizontal plutôt que des barres tassées.
-  const W = chartWidthPx(n, stacked ? 46 : 34 * Math.max(1, series.length), 480, 1400);
-  const scrollable = W >= 1400;
+  const perCat = stacked ? 46 : 34 * Math.max(1, series.length);
+  const BASE_W = 560; // largeur de base classique, magnifiée librement par le conteneur (voir svgScrollWrap)
+  const scrollable = n * perCat > 1700; // au-delà, même magnifié le texte resterait tassé : défilement à police fixe
+  const W = scrollable ? n * perCat : BASE_W;
   const plotW = W - ML - MR, plotH = H - MT - MB;
   let maxV = 0;
   if (stacked) {
@@ -1614,7 +1625,7 @@ function renderBarSvg(categories, series, stacked) {
     svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
   });
 
-  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};max-width:${scrollable ? "none" : W + "px"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series);
 }
 
@@ -1662,19 +1673,24 @@ function renderBarSvgH(categories, series) {
     });
   });
 
+  // Largeur toujours à 100% (magnifiée librement par le conteneur, cf. note sur svgScrollWrap) : un
+  // graphique à barres horizontales a autant besoin de s'agrandir sur un grand écran qu'un graphique
+  // vertical — seule la hauteur (proportionnelle au nombre de catégories) peut devenir trop grande,
+  // d'où le défilement vertical ci-dessous plutôt qu'un plafond de largeur.
   const scrollable = H > 900;
-  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return (scrollable
-    ? `<div style="max-height:900px;overflow-y:auto;display:flex;justify-content:center;">${svgTag}</div>`
-    : `<div style="display:flex;justify-content:center;">${svgTag}</div>`) + legendHtml(series);
+    ? `<div style="max-height:900px;overflow-y:auto;width:100%;display:flex;justify-content:center;">${svgTag}</div>`
+    : `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>`) + legendHtml(series);
 }
 
 function renderLineAreaSvg(categories, series, filled) {
   series = foldSeriesList(series, CHART_CAT_CAP);
   const n = categories.length;
   const H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
-  const W = chartWidthPx(n, 30, 480, 1400);
-  const scrollable = W >= 1400;
+  const BASE_W = 560;
+  const scrollable = n * 30 > 1700;
+  const W = scrollable ? n * 30 : BASE_W;
   const plotW = W - ML - MR, plotH = H - MT - MB;
   let maxV = 0, minV = 0;
   for (const ser of series) for (const v of ser.values) { if (v !== null && v !== undefined) { maxV = Math.max(maxV, v); minV = Math.min(minV, v); } }
@@ -1716,7 +1732,7 @@ function renderLineAreaSvg(categories, series, filled) {
       svg += `<text x="${(last[0] + 5).toFixed(1)}" y="${(last[1] - 5).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="start">${esc(fmtAxisNum(lastV))}</text>`;
     }
   });
-  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};max-width:${scrollable ? "none" : W + "px"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series);
 }
 
@@ -1732,7 +1748,10 @@ function textColorForBg(hex) {
 
 function renderPieSvg(categories, values, baseColor) {
   ({ labels: categories, values } = foldTopN(categories, values, CHART_CAT_CAP));
-  const W = 320, H = 320, cx = W / 2, cy = H / 2 - 10, r = Math.min(W, H) / 2 - 40;
+  // Un camembert n'a pas besoin de s'étirer sur toute la largeur d'un écran large comme un
+  // graphique en barres (un cercle immense est disproportionné) : plafond généreux mais borné,
+  // plus haut qu'avant (320→460) pour rester lisible sur grand écran sans devenir excessif.
+  const W = 460, H = 460, cx = W / 2, cy = H / 2 - 12, r = Math.min(W, H) / 2 - 56;
   const total = values.reduce((a, b) => a + (b || 0), 0);
   if (!total) {
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;${CH_FONT}"><text x="${cx}" y="${cy}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg>`;
@@ -1759,7 +1778,7 @@ function renderPieSvg(categories, values, baseColor) {
   });
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   const legendSeries = categories.map((c, i) => ({ label: `${c} (${fmtVal(values[i] || 0, false)})`, color: colorFor(i) }));
-  return `<div style="display:flex;justify-content:center;">${svgTag}</div>` + legendHtml(legendSeries);
+  return `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>` + legendHtml(legendSeries);
 }
 
 // Chemin SVG d'un secteur en couronne (anneau) entre rIn et rOut — dégénère en secteur plein
@@ -1834,8 +1853,8 @@ function collectAllLevelLabels(root, nRings) {
 // Légende affichée à partir de l'anneau 1 (Série) ; l'axe X reste en infobulle seule, pouvant
 // compter beaucoup de catégories.
 function renderHierPieSvg(root, nRings, ringNames, ringColors) {
-  const W = 360, H = 360, cx = W / 2, cy = H / 2 - 6;
-  const rOuter = Math.min(W, H) / 2 - 26;
+  const W = 480, H = 480, cx = W / 2, cy = H / 2 - 8; // même logique de plafond généreux que renderPieSvg
+  const rOuter = Math.min(W, H) / 2 - 34;
   const rStep = rOuter / nRings;
   if (!root.value) {
     return `<div style="display:flex;justify-content:center;"><svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;${CH_FONT}"><text x="${cx}" y="${cy}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg></div>`;
@@ -1875,7 +1894,7 @@ function renderHierPieSvg(root, nRings, ringNames, ringColors) {
     const series = labels.map(lbl => ({ label: lbl, color: colorFor(ringIdx, lbl) }));
     extraLegend += `<div style="font-size:0.82em;color:var(--gris);margin-top:4px;text-align:center;">${esc(ringNames[ringIdx])}</div>` + legendHtml(series);
   }
-  return `<div style="display:flex;justify-content:center;">${svgTag}</div>` + extraLegend;
+  return `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>` + extraLegend;
 }
 
 // Point d'entrée du camembert imbriqué depuis genererGraphique : construit les fonctions de clé
@@ -1959,7 +1978,7 @@ function renderPointsSvg(pivot, seriesDimsCfg, exX, exY, exSize) {
     svg += `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="${colorFor(p.group)}" fill-opacity="0.72" stroke="#fff" stroke-width="1">${title}</circle>`;
     if (r < 10) svg += `<circle cx="${cx}" cy="${cy}" r="10" fill="transparent">${title}</circle>`; // agrandit la zone de survol sans changer le rendu
   });
-  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   const legendSeries = groups.length > 1
     ? groups.map((g, i) => ({ label: g, color: CHART_PALETTE[i % CHART_PALETTE.length] })).concat(
         groupsAll.length > groups.length ? [{ label: `Autres (${groupsAll.length - groups.length})`, color: CHART_OTHER_COLOR }] : [])
@@ -1973,7 +1992,7 @@ function renderPointsSvg(pivot, seriesDimsCfg, exX, exY, exSize) {
     }).join("");
     sizeLegend = `<div style="font-size:0.82em;color:var(--gris);margin-top:6px;display:flex;align-items:center;justify-content:center;gap:14px;"><span style="font-weight:600;">${esc(exprLabelFor(exSize, activeSourceGraph))} :</span>${items}</div>`;
   }
-  return `<div style="display:flex;justify-content:center;">${svgTag}</div>` + legendHtml(legendSeries) + sizeLegend;
+  return `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>` + legendHtml(legendSeries) + sizeLegend;
 }
 function renderScatterSvg(pivot, seriesDimsCfg, exprsUsed) {
   return renderPointsSvg(pivot, seriesDimsCfg, exprsUsed[0], exprsUsed[1], null);
@@ -2015,11 +2034,11 @@ function renderHeatmapSvg(pivot, expr) {
   });
   const style = scrollable
     ? `width:${W}px;height:auto;display:block;${CH_FONT}`
-    : `width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}`;
+    : `width:100%;height:auto;display:block;${CH_FONT}`; // magnifié librement par le conteneur si la grille tient dans le plafond
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="${style}">${svg}</svg>`;
   return scrollable
     ? `<div style="overflow:auto;max-width:100%;max-height:900px;"><div style="width:${W}px;">${svgTag}</div></div>`
-    : `<div style="display:flex;justify-content:center;">${svgTag}</div>`;
+    : `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>`;
 }
 
 // ---- Boîte à moustaches : quartiles/médiane/min-max d'une mesure numérique par catégorie
@@ -2056,8 +2075,10 @@ function buildBoxplotGroups(rows, xDimsCfg, serieDimCfg, measure, foreignIdx, ba
 function renderBoxplotSvg(categories, series) {
   const n = categories.length;
   const H = 320, ML = 54, MR = 16, MT = 16, MB = 78;
-  const W = chartWidthPx(n, 40 * Math.max(1, series.length), 480, 1400);
-  const scrollable = W >= 1400;
+  const perCat = 40 * Math.max(1, series.length);
+  const BASE_W = 560;
+  const scrollable = n * perCat > 1700;
+  const W = scrollable ? n * perCat : BASE_W;
   const plotW = W - ML - MR, plotH = H - MT - MB;
   let maxV = -Infinity, minV = Infinity;
   series.forEach(ser => ser.boxes.forEach(b => { if (b) { maxV = Math.max(maxV, b.max); minV = Math.min(minV, b.min); } }));
@@ -2094,7 +2115,7 @@ function renderBoxplotSvg(categories, series) {
     const lx = ML + i * groupW + groupW / 2;
     svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
   });
-  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};max-width:${scrollable ? "none" : W + "px"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series.length > 1 ? series : []);
 }
 
@@ -2135,10 +2156,12 @@ function buildHistogramSeries(rows, serieDimCfg, measure, foreignIdx, baseSrcKey
 function renderHistogramSvg(bins, series) {
   const k = bins.k || 0;
   const H = 320, ML = 54, MR = 16, MT = 16, MB = 46;
-  const W = chartWidthPx(k, 26 * Math.max(1, series.length), 480, 1400);
-  const scrollable = W >= 1400;
+  const perCat = 26 * Math.max(1, series.length);
+  const BASE_W = 560;
+  const scrollable = k * perCat > 1700;
+  const W = scrollable ? k * perCat : BASE_W;
   const plotW = W - ML - MR, plotH = H - MT - MB;
-  if (!k) return `<div style="display:flex;justify-content:center;"><svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="${CH_FONT}"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg></div>`;
+  if (!k) return `<div style="width:100%;display:flex;justify-content:center;"><svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="${CH_FONT}"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg></div>`;
   let maxCount = 0;
   series.forEach(ser => ser.counts.forEach(c => maxCount = Math.max(maxCount, c)));
   const niceMax = niceCeil(maxCount || 1);
@@ -2166,7 +2189,7 @@ function renderHistogramSvg(bins, series) {
     }
   }
   svg += `<text x="${(ML + plotW).toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_AXIS - 0.5}" fill="${CH_MUTED}" text-anchor="middle">${esc(fmtAxisNum(bins.max))}</text>`;
-  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};max-width:${scrollable ? "none" : W + "px"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series.length > 1 ? series : []);
 }
 
@@ -2207,8 +2230,8 @@ function renderTreemapSvg(root, ringNames, ringColors) {
     });
   }
   layout(root, 0, 0, W, H, 0);
-  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
-  return `<div style="display:flex;justify-content:center;">${svgTag}</div>`;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  return `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>`;
 }
 function renderTreemapFromRows(rows, foreignIdx, expr, measures) {
   const measure = measures.find(m => m.id === expr.measureId);
@@ -2328,8 +2351,8 @@ function renderSankeySvg(pivot, expr) {
     svg += `<rect x="${x1}" y="${seg.y0.toFixed(1)}" width="${nodeW}" height="${Math.max(1, seg.y1 - seg.y0).toFixed(1)}" fill="${CH_MUTED}"><title>${esc(seg.label)} : ${esc(fmtVal(seg.total, false))}</title></rect>`;
     svg += `<text x="${x1 + nodeW + 8}" y="${((seg.y0 + seg.y1) / 2 + 3.5).toFixed(1)}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="start">${esc(truncLabel(seg.label, 20))} (${esc(fmtAxisNum(seg.total))})</text>`;
   });
-  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
-  return `<div style="display:flex;justify-content:center;">${svgTag}</div>`;
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  return `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>`;
 }
 
 function renderChartFragment(chartType, pivot, seriesDimsCfg, exprsUsed) {
