@@ -28,7 +28,7 @@
   button.secondary { background: #fff; color: var(--bleu); border: 1px solid var(--bleu); padding: 8px 16px; border-radius: 4px; cursor: pointer; }
   button.secondary:hover { background: var(--bleu-clair); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
-  .source-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .source-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
   .source-tabs button { padding: 8px 18px; border: 1px solid var(--bordure); background: #fff; border-radius: 20px; cursor: pointer; font-weight: 600; color: var(--gris); }
   .source-tabs button.active { background: var(--bleu); color: #fff; border-color: var(--bleu); }
   .dims-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -53,11 +53,48 @@
   table.pivot th, table.pivot td { border: 1px solid var(--bordure); padding: 6px 10px; text-align: right; white-space: nowrap; }
   table.pivot th { background: var(--bleu-clair); position: sticky; top: 0; text-align: center; }
   table.pivot td.rowhead { text-align: left; font-weight: 600; background: #fafcfd; position: sticky; left: 0; }
+  table.pivot td.rowhead.rowhead-nested { position: static; left: auto; }
   table.pivot tr:nth-child(even) td:not(.rowhead) { background: #fbfcfc; }
   table.pivot tr.totalrow td { background: #eaf2f8 !important; font-weight: 700; border-top: 2px solid var(--bleu); }
   table.pivot td.totalcol { background: #eaf2f8 !important; font-weight: 700; border-left: 2px solid var(--bleu); }
   .export-bar { display: flex; gap: 10px; margin-top: 14px; }
   .meta-line { font-size: 0.82em; color: var(--gris); margin-bottom: 10px; }
+  .mode-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .mode-tabs button { padding: 9px 20px; border: 1px solid var(--bordure); background: #fff; border-radius: 20px; cursor: pointer; font-weight: 700; color: var(--gris); }
+  .mode-tabs button.active { background: var(--vert); color: #fff; border-color: var(--vert); }
+  .entry-choice { flex: 1 1 260px; text-align: left; background: #fff; border: 2px solid var(--bordure); border-radius: 8px; padding: 18px 20px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
+  .entry-choice:hover { border-color: var(--bleu); background: var(--bleu-clair); }
+  .entry-choice strong { color: var(--bleu); font-size: 1.05em; }
+  .entry-choice span { color: var(--gris); font-size: 0.88em; font-weight: normal; }
+  .back-link { margin: 0 0 14px; }
+  .back-link a { color: var(--bleu); text-decoration: none; font-size: 0.88em; font-weight: 600; }
+  .back-link a:hover { text-decoration: underline; }
+  .filter-row { display: flex; gap: 6px; align-items: center; background: #fafcfd; border: 1px solid var(--bordure); border-radius: 4px; padding: 6px; flex-wrap: wrap; }
+  .filter-row select.op-sel { flex: 0 0 150px; }
+  .filter-row input.filter-val { flex: 1 1 140px; min-width: 100px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; }
+  .filter-row input.filter-val2 { flex: 1 1 100px; min-width: 80px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; }
+  .filter-row select.filter-multiselect { flex: 1 1 220px; min-height: 88px; }
+  .filter-row span.filter-note { font-size: 0.82em; color: var(--gris); }
+  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+  .chart-panel { border: 1px solid var(--bordure); border-radius: 6px; padding: 10px; background: #fff; }
+  .chart-panel h4 { margin: 0 0 6px; font-size: 0.85em; color: var(--bleu); }
+  .chart-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 6px; font-size: 0.78em; }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
+  .fiche-header { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 20px; margin-bottom: 16px; }
+  .fiche-header dt { font-size: 0.78em; color: var(--gris); font-weight: 600; text-transform: uppercase; }
+  .fiche-header dd { margin: 2px 0 0; font-size: 0.98em; }
+  table.semaines { border-collapse: collapse; width: 100%; font-size: 0.88em; margin-bottom: 16px; }
+  table.semaines th, table.semaines td { border: 1px solid var(--bordure); padding: 6px 9px; text-align: left; }
+  table.semaines th { background: var(--bleu-clair); }
+  details.semaine-detail { border: 1px solid var(--bordure); border-radius: 4px; margin-bottom: 8px; background: #fff; }
+  details.semaine-detail summary { padding: 8px 12px; cursor: pointer; font-weight: 600; background: #fafcfd; }
+  details.semaine-detail .semaine-body { padding: 10px 14px; }
+  .badge { display: inline-block; background: var(--bleu-clair); color: var(--bleu); border-radius: 3px; padding: 1px 7px; font-size: 0.82em; margin: 2px 4px 2px 0; }
+  .badge.err { background: #fdecea; color: #c0392b; }
+  table.actes-mini { border-collapse: collapse; width: 100%; font-size: 0.85em; margin: 6px 0 10px; }
+  table.actes-mini th, table.actes-mini td { border: 1px solid var(--bordure); padding: 4px 8px; text-align: left; }
+  table.actes-mini th { background: #f4f6f7; }
   #printExport { display: none; }
   @media print {
     body * { visibility: hidden; }
@@ -86,8 +123,25 @@
     <input type="file" id="dbFileInput" accept=".db,.sqlite,.sqlite3">
   </div>
 
+  <div class="panel" id="panelEntry" style="display:none">
+    <h2>Que voulez-vous faire ?</h2>
+    <div class="row" style="gap:16px;">
+      <button class="entry-choice" data-parcours="requetes">
+        <strong>Requêtes sur mesure</strong>
+        <span>Tableaux croisés et listes filtrées sur plusieurs séjours — statistiques agrégées.</span>
+      </button>
+      <button class="entry-choice" data-parcours="dossier">
+        <strong>Aperçu dossier</strong>
+        <span>Recherche d'un séjour précis par NDA — fiche RHS complète, semaine par semaine.</span>
+      </button>
+    </div>
+  </div>
+
+  <div id="flowRequetes" style="display:none">
+  <p class="back-link"><a href="#" id="btnBackFromRequetes">&larr; Changer de parcours</a></p>
+
   <div class="panel" id="panelSelection">
-    <h2>1. Établissement(s) &amp; période</h2>
+    <h2>1. Filtres</h2>
     <div class="row">
       <div class="field">
         <label>Établissement(s) — 5 maximum</label>
@@ -102,16 +156,56 @@
         <select id="selMois"></select>
       </div>
     </div>
+    <div class="field" style="width:100%; margin-top:14px;">
+      <label>Filtres additionnels — s'appliquent à toute l'exploration (tableaux et graphiques)</label>
+      <div class="var-list" id="globalFilterList"></div>
+      <button class="btn-add" id="btnAddGlobalFilter">+ Ajouter un filtre</button>
+    </div>
     <div id="status"></div>
   </div>
 
+  <div class="panel" id="panelSortieChoice" style="display:none">
+    <h2>2. Que voulez-vous produire ?</h2>
+    <div class="row" style="gap:16px;">
+      <button class="entry-choice" data-sortie="tableaux">
+        <strong>Tableaux</strong>
+        <span>Tableau croisé ou liste filtrée — export HTML / PDF / Word / Excel.</span>
+      </button>
+      <button class="entry-choice" data-sortie="graphique">
+        <strong>Graphique</strong>
+        <span>Barres, lignes, aires, camembert, nuage de points — avec vignettes (petits multiples).</span>
+      </button>
+    </div>
+  </div>
+
+  <div id="flowTableaux" style="display:none">
+  <p class="back-link"><a href="#" id="btnBackFromTableaux">&larr; Changer de sortie</a></p>
+
+  <div class="panel" id="panelModeTabs" style="display:none">
+    <div class="source-tabs" id="modeTabs">
+      <button data-mode="pivot" class="active">Tableau croisé</button>
+      <button data-mode="liste">Liste filtrée</button>
+    </div>
+  </div>
+
+  <div id="modePivot">
   <div class="panel" id="panelPivot" style="display:none">
     <h2>2. Construire le tableau</h2>
     <div class="source-tabs" id="sourceTabs">
       <button data-src="rhs" class="active">RHS groupé (séjours/semaines)</button>
       <button data-src="vidhosp">VID-HOSP (facturation/patients)</button>
       <button data-src="valo">Valorisation</button>
+      <button data-src="das">DAS (diagnostics associés)</button>
+      <button data-src="csarr">Actes CSARR</button>
+      <button data-src="csar">Actes CSAR</button>
+      <button data-src="ccam">Actes CCAM</button>
     </div>
+    <p style="font-size:0.82em;color:var(--gris);margin:-8px 0 14px;">
+      Cet onglet fixe le fichier des <strong>expressions</strong> (mesures). Les variables en
+      <strong>lignes</strong> et <strong>colonnes</strong> ci-dessous peuvent être choisies dans
+      n'importe lequel des 3 fichiers — leur provenance est indiquée entre parenthèses — et sont
+      rattachées aux données par séjour.
+    </p>
 
     <div class="row">
       <div class="field" style="flex:1; min-width:320px;">
@@ -142,6 +236,41 @@
       <button class="primary" id="btnGenerer">Générer le tableau</button>
     </div>
   </div>
+  </div>
+
+  <div id="modeListe" style="display:none">
+  <div class="panel" id="panelListeSrc">
+    <h2>2. Table de départ &amp; filtres</h2>
+    <div class="source-tabs" id="sourceTabsListe">
+      <button data-src="rhs" class="active">RHS groupé (séjours/semaines)</button>
+      <button data-src="vidhosp">VID-HOSP (facturation/patients)</button>
+      <button data-src="valo">Valorisation</button>
+      <button data-src="das">DAS (diagnostics associés)</button>
+      <button data-src="csarr">Actes CSARR</button>
+      <button data-src="csar">Actes CSAR</button>
+      <button data-src="ccam">Actes CCAM</button>
+    </div>
+    <p style="font-size:0.82em;color:var(--gris);margin:-8px 0 14px;">
+      Chaque ligne du résultat est une ligne de la table ci-dessus (pas d'agrégation). Les filtres
+      peuvent porter sur cette table ou sur une autre (rattachement par séjour) : un filtre sur un
+      autre fichier retient les lignes dont le séjour a <strong>au moins une</strong> ligne correspondante.
+    </p>
+    <div class="field" style="width:100%">
+      <label>Filtres (tous combinés en ET)</label>
+      <div class="var-list" id="filterList"></div>
+      <button class="btn-add" id="btnAddFilter">+ Ajouter un filtre</button>
+    </div>
+    <div class="field" style="width:100%; margin-top:14px;">
+      <label>Colonnes à afficher</label>
+      <div class="var-list" id="listeColsList"></div>
+      <button class="btn-add" id="btnAddListeCol">+ Ajouter une colonne</button>
+    </div>
+    <div class="row" style="margin-top:14px;">
+      <button class="primary" id="btnGenererListe">Générer la liste</button>
+    </div>
+    <div id="statusListe" style="font-size:0.85em;color:var(--gris);margin-top:10px;"></div>
+  </div>
+  </div>
 
   <div class="panel" id="panelResult" style="display:none">
     <h2>4. Résultat</h2>
@@ -151,7 +280,118 @@
       <button class="secondary" id="btnExportHtml" disabled>Exporter en HTML</button>
       <button class="secondary" id="btnExportPdf" disabled>Exporter en PDF</button>
       <button class="secondary" id="btnExportDoc" disabled>Exporter en Word (.doc)</button>
+      <button class="secondary" id="btnExportXls" disabled>Exporter en Excel (.xls)</button>
     </div>
+  </div>
+  </div>
+
+  <div id="flowGraphique" style="display:none">
+  <p class="back-link"><a href="#" id="btnBackFromGraphique">&larr; Changer de sortie</a></p>
+
+  <div class="panel" id="panelGraphBuild">
+    <h2>3. Construire le graphique</h2>
+    <div class="source-tabs" id="sourceTabsGraph">
+      <button data-src="rhs" class="active">RHS groupé (séjours/semaines)</button>
+      <button data-src="vidhosp">VID-HOSP (facturation/patients)</button>
+      <button data-src="valo">Valorisation</button>
+      <button data-src="das">DAS (diagnostics associés)</button>
+      <button data-src="csarr">Actes CSARR</button>
+      <button data-src="csar">Actes CSAR</button>
+      <button data-src="ccam">Actes CCAM</button>
+    </div>
+    <p style="font-size:0.82em;color:var(--gris);margin:-8px 0 14px;">
+      Cet onglet fixe le fichier des <strong>mesures</strong>. Les variables ci-dessous peuvent venir
+      de n'importe quel fichier — rattachées aux données par séjour, comme pour le tableau croisé.
+    </p>
+
+    <div class="row">
+      <div class="field" style="flex:1; min-width:260px;">
+        <label>Axe X (jusqu'à 3 variables imbriquées)</label>
+        <div class="var-list" id="graphXDimsList"></div>
+        <button class="btn-add" id="btnAddGraphXDim">+ Ajouter une variable</button>
+      </div>
+      <div class="field" style="flex:1; min-width:260px;">
+        <label>Série / légende (facultatif, max 3)</label>
+        <div class="var-list" id="graphSeriesDimsList"></div>
+        <button class="btn-add" id="btnAddGraphSeriesDim">+ Ajouter une variable</button>
+      </div>
+      <div class="field" style="flex:1; min-width:260px;">
+        <label>Vignettes — petits multiples (facultatif, max 3)</label>
+        <div class="var-list" id="graphFacetDimsList"></div>
+        <button class="btn-add" id="btnAddGraphFacetDim">+ Ajouter une variable</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <div class="field" style="flex:1; min-width:320px;">
+        <label>Mesure(s) Y (mesure × fonction)</label>
+        <div class="var-list" id="graphExprList"></div>
+        <button class="btn-add" id="btnAddGraphExpr">+ Ajouter une expression</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <div class="field" style="width:100%;">
+        <label>Type de graphique <span style="text-transform:none;font-weight:normal;">(laissez vide pour une suggestion automatique selon les variables choisies)</span></label>
+        <div class="mode-tabs" id="chartTypeTabs">
+          <button data-type="barres">Barres</button>
+          <button data-type="barres_empilees">Barres empilées</button>
+          <button data-type="lignes">Lignes</button>
+          <button data-type="aires">Aires</button>
+          <button data-type="camembert">Camembert</button>
+          <button data-type="nuage">Nuage de points</button>
+          <button data-type="carte_chaleur">Carte de chaleur</button>
+          <button data-type="boxplot">Boîte à moustaches</button>
+          <button data-type="histogramme">Histogramme</button>
+          <button data-type="treemap">Treemap</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row" id="ringColorsField" style="margin-top:14px; display:none;">
+      <div class="field" style="width:100%;">
+        <label>Couleurs par niveau (camembert imbriqué / treemap) <span style="text-transform:none;font-weight:normal;">— un dégradé de la teinte choisie est appliqué aux valeurs de chaque niveau</span></label>
+        <div id="ringColorsList"></div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <button class="primary" id="btnGenererGraph">Générer le graphique</button>
+    </div>
+    <div id="statusGraph" style="font-size:0.85em;color:var(--gris);margin-top:10px;"></div>
+  </div>
+
+  <div class="panel" id="panelGraphResult" style="display:none">
+    <h2>4. Résultat</h2>
+    <div class="meta-line" id="graphResultMeta"></div>
+    <div id="graphResultWrap" class="chart-grid"></div>
+  </div>
+  </div>
+  </div>
+
+  <div id="flowDossier" style="display:none">
+  <p class="back-link"><a href="#" id="btnBackFromDossier">&larr; Changer de parcours</a></p>
+  <div id="modeFiche">
+  <div class="panel" id="panelFicheSaisie">
+    <h2>2. Rechercher un séjour</h2>
+    <div class="row">
+      <div class="field">
+        <label for="selFicheFiness">Établissement</label>
+        <select id="selFicheFiness"></select>
+      </div>
+      <div class="field">
+        <label for="inpFicheNda">N° Dossier administratif (NDA)</label>
+        <input type="text" id="inpFicheNda" placeholder="ex. 027080510" style="padding:6px 8px;border:1px solid var(--bordure);border-radius:4px;min-width:220px;">
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <button class="primary" id="btnRechercherFiche">Rechercher</button>
+      </div>
+    </div>
+    <div id="statusFiche" style="font-size:0.85em;color:var(--gris);margin-top:10px;"></div>
+  </div>
+  <div class="panel" id="panelFicheResult" style="display:none"></div>
+  </div>
   </div>
 
 </main>

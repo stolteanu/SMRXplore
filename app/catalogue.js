@@ -6,6 +6,7 @@
 const SOURCES = {
   rhs: {
     label: "RHS groupé",
+    short: "RHS",
     table: "rhs_groupe r",
     sql: `SELECT r.*, gme.libelle_long AS lib_gme, gn.libelle_long AS lib_gn,
                  err.libelle AS lib_erreur, err.type AS type_erreur,
@@ -23,16 +24,19 @@ const SOURCES = {
     periodKind: "semaine", // filtre par numero_semaine (semaine ISO + année)
     dims: [
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
+      { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
       { id: "sexe", label: "Sexe", col: "sexe" },
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
       { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
       { id: "gme", label: "GME", col: "code_gme", libCol: "lib_gme" },
       { id: "gn", label: "GN (groupe nosologique)", derive: r => (r.code_gme || "").substring(0, 4), libCol: "lib_gn" },
       { id: "erreur", label: "Erreur de groupage", col: "code_retour_groupage",
         libDerive: r => r.lib_erreur || (r.code_retour_groupage === "0" || r.code_retour_groupage === "000" ? "Aucune" : null) },
       { id: "erreur_type", label: "Erreur de groupage (bloquant/non)", col: "type_erreur" },
-      { id: "dp", label: "Diagnostic principal", col: "manifestation_morbide_principale", libCol: "lib_dp" },
-      { id: "ae", label: "Affection étiologique", col: "affection_etiologique", libCol: "lib_ae" },
+      // MMP + AE = "morbidité principale" (MP) au sens du guide de production PMSI-SMR.
+      { id: "dp", label: "Manifestation morbide principale (MMP)", col: "manifestation_morbide_principale", libCol: "lib_dp" },
+      { id: "ae", label: "Affection étiologique (AE)", col: "affection_etiologique", libCol: "lib_ae" },
       { id: "mode_entree_um", label: "Mode d'entrée UM", col: "mode_entree_um" },
       { id: "provenance", label: "Provenance", col: "provenance" },
       { id: "mode_sortie", label: "Mode de sortie", col: "mode_sortie" },
@@ -65,11 +69,13 @@ const SOURCES = {
 
   vidhosp: {
     label: "VID-HOSP",
+    short: "VID-HOSP",
     table: "vid_hosp v",
     sql: `SELECT v.* FROM vid_hosp v WHERE v.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
     periodKind: "dates", // filtre par chevauchement [date_entree, date_sortie]
     dims: [
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
+      { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
       { id: "sexe_b", label: "Sexe (bénéficiaire)", col: "sexe_beneficiaire" },
       { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
       { id: "code_grand_regime", label: "Régime (code grand régime)", col: "code_grand_regime" },
@@ -97,11 +103,13 @@ const SOURCES = {
 
   valo: {
     label: "Valorisation",
+    short: "Valo",
     table: "valorisation_sejour va",
     sql: `SELECT va.* FROM valorisation_sejour va WHERE va.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
     periodKind: "campagne", // filtre par colonne campagne = année
     dims: [
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
+      { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
       { id: "campagne", label: "Année (campagne)", col: "campagne" },
       { id: "type_um", label: "Type d'UM", col: "type_um" },
@@ -133,7 +141,119 @@ const SOURCES = {
       { id: "reste_a_charge", label: "Reste à charge détenu (€)", col: "reste_a_charge_detenu", numeric: true },
     ],
   },
+
+  // Les 4 sources suivantes donnent accès au détail des actes/diagnostics associés
+  // (une ligne = une occurrence, ex. un acte CSARR précis), rattachés à leur RHS parent
+  // (finess, séjour, semaine). Elles permettent de ventiler par établissement/année et de
+  // compter le nombre d'occurrences (contrairement à rhs.nb_das/nb_csarr/... qui ne donnent
+  // qu'un total par RHS, sans détail par code ou par intervenant).
+  das: {
+    label: "Diagnostics associés (DAS)",
+    short: "DAS",
+    table: "rhs_groupe_das d",
+    sql: `SELECT d.*, r.finess_epmsi, r.numero_admin_sejour, r.numero_semaine, r.type_hospitalisation,
+                 dp.libelle_complet AS lib_das
+          FROM rhs_groupe_das d
+          JOIN rhs_groupe r ON r.id = d.parent_id
+          LEFT JOIN nomenclature_diagnostics dp ON dp.code = d.code_das
+          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
+    periodKind: "semaine",
+    dims: [
+      { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
+      { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
+      { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
+      { id: "code_das", label: "Diagnostic associé (DAS)", col: "code_das", libCol: "lib_das" },
+    ],
+    measures: [
+      { id: "nb_das", label: "Nombre de DAS", derive: r => 1 },
+    ],
+  },
+
+  csarr: {
+    label: "Actes CSARR",
+    short: "CSARR",
+    table: "rhs_groupe_csarr c",
+    sql: `SELECT c.*, r.finess_epmsi, r.numero_admin_sejour, r.numero_semaine, r.type_hospitalisation,
+                 nom.libelle AS lib_csarr, interv.libelle AS lib_intervenant
+          FROM rhs_groupe_csarr c
+          JOIN rhs_groupe r ON r.id = c.parent_id
+          LEFT JOIN nomenclature_csarr nom ON nom.code = c.code_principal
+          LEFT JOIN nomenclature_csarr_intervenants interv ON interv.code = c.code_intervenant
+          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
+    periodKind: "semaine",
+    dims: [
+      { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
+      { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
+      { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
+      { id: "code_csarr", label: "Acte CSARR (code principal)", col: "code_principal", libCol: "lib_csarr" },
+      { id: "intervenant", label: "Type d'intervenant", col: "code_intervenant", libCol: "lib_intervenant" },
+    ],
+    measures: [
+      { id: "nb_csarr", label: "Nombre d'actes CSARR", derive: r => 1 },
+      { id: "nb_realisations", label: "Nombre de réalisations (cumulé)", col: "nombre_realisations", numeric: true },
+    ],
+  },
+
+  csar: {
+    label: "Actes CSAR",
+    short: "CSAR",
+    table: "rhs_groupe_csar c",
+    sql: `SELECT c.*, r.finess_epmsi, r.numero_admin_sejour, r.numero_semaine, r.type_hospitalisation,
+                 nom.libelle AS lib_csar, interv.libelle AS lib_intervenant
+          FROM rhs_groupe_csar c
+          JOIN rhs_groupe r ON r.id = c.parent_id
+          LEFT JOIN nomenclature_csar nom ON nom.code = c.code_principal
+          LEFT JOIN nomenclature_csar_intervenants interv ON interv.code = c.code_intervenant
+          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
+    periodKind: "semaine",
+    dims: [
+      { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
+      { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
+      { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
+      { id: "code_csar", label: "Acte CSAR (code principal)", col: "code_principal", libCol: "lib_csar" },
+      { id: "intervenant", label: "Type d'intervenant", col: "code_intervenant", libCol: "lib_intervenant" },
+    ],
+    measures: [
+      { id: "nb_csar", label: "Nombre d'actes CSAR", derive: r => 1 },
+      { id: "nb_realisations", label: "Nombre de réalisations (cumulé)", col: "nombre_realisations", numeric: true },
+    ],
+  },
+
+  ccam: {
+    label: "Actes CCAM",
+    short: "CCAM",
+    table: "rhs_groupe_ccam k",
+    sql: `SELECT k.*, r.finess_epmsi, r.numero_admin_sejour, r.numero_semaine, r.type_hospitalisation,
+                 nom.libelle AS lib_ccam
+          FROM rhs_groupe_ccam k
+          JOIN rhs_groupe r ON r.id = k.parent_id
+          LEFT JOIN nomenclature_ccam nom ON nom.code = k.code_ccam
+          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
+    periodKind: "semaine",
+    dims: [
+      { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
+      { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
+      { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
+      { id: "code_ccam", label: "Acte CCAM (code)", col: "code_ccam", libCol: "lib_ccam" },
+      { id: "code_activite", label: "Code activité", col: "code_activite" },
+    ],
+    measures: [
+      { id: "nb_ccam", label: "Nombre d'actes CCAM", derive: r => 1 },
+      { id: "nb_realisations", label: "Nombre de réalisations (cumulé)", col: "nombre_realisations", numeric: true },
+    ],
+  },
 };
+
+// Ordre d'affichage des sources dans les sélecteurs de variables (lignes/colonnes).
+const SOURCE_ORDER = ["rhs", "vidhosp", "valo", "das", "csarr", "csar", "ccam"];
 
 // Fonctions d'agrégation disponibles pour les expressions (mesure + fonction).
 const AGG_DEFS = [
