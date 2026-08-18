@@ -906,27 +906,6 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
 
 // ---------- Génération ----------
 
-// Note pour le lecteur (pas pour nous : le détail technique de la méthode — rattachement par séjour
-// puis par semaine, répartition au jour de présence — reste dans le projet, pas dans l'outil) :
-// affichée dès qu'un tableau/graphique croise le fichier de base avec une variable ou une mesure de
-// Valorisation, le seul fichier qui n'a pas un grain fixe (une ligne par séjour en HC, par semaine en
-// HTP) — le seul cas où le rattachement multi-fichiers reste une approximation, dans de rares cas de
-// désalignement entre fichiers sources (une semaine de valorisation sans RHS correspondant). Absente
-// quand Valorisation est elle-même le fichier de base (alors une somme directe, toujours exacte).
-function crossSourceValoNoteHtml(baseSrcKey, cfgLists) {
-  if (baseSrcKey === "valo") return "";
-  const touchesValo = cfgLists.some(list => (list || []).some(c => c && c.srcKey === "valo"));
-  if (!touchesValo) return "";
-  return `<div style="background:#fff8e1;border:1px solid #f0d98c;border-radius:6px;padding:10px 14px;` +
-    `margin-bottom:14px;font-size:0.85em;color:#5c4b12;">⚠ Ce résultat croise le fichier ` +
-    `<b>${esc(SOURCES[baseSrcKey].short)}</b> avec une variable ou une mesure de <b>Valorisation</b>. ` +
-    `Le rattachement se fait par séjour (et par semaine de présence en hospitalisation à temps ` +
-    `partiel, montant réparti au prorata des jours de présence) — un très petit nombre de semaines ` +
-    `de valorisation sans ligne RHS correspondante peuvent ne pas être comptées (désalignement entre ` +
-    `fichiers sources, pas une erreur de calcul). Pour un total garanti identique à la référence ATIH, ` +
-    `utilisez Valorisation comme fichier de base.</div>`;
-}
-
 function generer() {
   try {
     const src = SOURCES[activeSource];
@@ -965,12 +944,10 @@ function generer() {
       `Colonnes : ${colDimRows.length ? colDimRows.map(r => labelForDimRow(r)).join(" / ") : "(aucune)"} · ` +
       `Expressions : ${exprRows.map(e => exprLabel(e)).join(", ")} · ${rows.length} ligne(s) source analysée(s)`;
 
-    const crossNote = crossSourceValoNoteHtml(activeSource, [rowDimRows, colDimRows, exprRows]);
-
     document.getElementById("panelResult").style.display = "block";
     document.getElementById("resultMeta").textContent = metaText;
-    document.getElementById("resultWrap").innerHTML = crossNote + tableHtml;
-    lastResult = { titleText, metaText, tableHtml: crossNote + tableHtml };
+    document.getElementById("resultWrap").innerHTML = tableHtml;
+    lastResult = { titleText, metaText, tableHtml };
     ["btnExportHtml", "btnExportPdf", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
     status(`Tableau généré (${pivot.rowKeys.length} ligne(s) × ${pivot.colKeys.length} colonne(s) × ${exprRows.length} expression(s)).`);
   } catch (e) {
@@ -2834,11 +2811,9 @@ function genererGraphique() {
       return `<div class="chart-panel"><h4>${esc(panelTitle)}</h4>${fragment}</div>`;
     });
 
-    const crossNote = crossSourceValoNoteHtml(activeSourceGraph, [graphXDimRows, graphSeriesDimRows, graphFacetDimRows, exprsUsed]);
-
     document.getElementById("panelGraphResult").style.display = "block";
     document.getElementById("graphResultMeta").textContent = graphResultMetaText(chartType, exprsUsed, facetGroups, facetsShown, activeGF);
-    document.getElementById("graphResultWrap").innerHTML = crossNote + panels.join("");
+    document.getElementById("graphResultWrap").innerHTML = panels.join("");
     setSt(`Graphique généré (${facetsShown.length} vignette(s)).`);
   } catch (e) {
     setSt("Erreur : " + e.message, true);
