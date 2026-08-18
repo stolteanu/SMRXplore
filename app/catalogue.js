@@ -9,11 +9,15 @@ const SOURCES = {
     short: "RHS",
     table: "rhs_groupe r",
     sql: `SELECT r.*, gme.libelle_long AS lib_gme, gn.libelle_long AS lib_gn,
+                 cm.libelle_long AS lib_cm, gr.libelle_long AS lib_gr, gl.libelle_long AS lib_gl,
                  err.libelle AS lib_erreur, err.type AS type_erreur,
                  dp.libelle_complet AS lib_dp, ae.libelle_complet AS lib_ae
           FROM rhs_groupe r
           LEFT JOIN nomenclature_gme gme ON gme.code = r.code_gme AND gme.kind = 'GME'
           LEFT JOIN nomenclature_gme gn ON gn.code = substr(r.code_gme,1,4) AND gn.kind = 'GN'
+          LEFT JOIN nomenclature_gme cm ON cm.code = substr(r.code_gme,1,2) AND cm.kind = 'CM'
+          LEFT JOIN nomenclature_gme gr ON gr.code = substr(r.code_gme,1,5) AND gr.kind = 'GR'
+          LEFT JOIN nomenclature_gme gl ON gl.code = substr(r.code_gme,1,6) AND gl.kind = 'GL'
           LEFT JOIN nomenclature_gme_erreurs err
                  ON err.code = CASE WHEN r.code_retour_groupage GLOB '[0-9]*'
                                      THEN CAST(CAST(r.code_retour_groupage AS INTEGER) AS TEXT)
@@ -30,13 +34,28 @@ const SOURCES = {
       { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
       { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
       { id: "gme", label: "GME", col: "code_gme", libCol: "lib_gme" },
+      // Hiérarchie GME (nomenclature_gme, plate CM->GN->GR->GL->GME) : chaque niveau est une
+      // troncature du code GME 7 caractères (longueurs fixes CM=2, GN=4, GR=5, GL=6, GME=7 — cf.
+      // config/nomenclatures/gme.schema.json) ; le libellé de chaque niveau est résolu par jointure
+      // sur son "kind" plutôt que reconstruit en JS, pour rester fidèle à la nomenclature ATIH.
+      { id: "cm", label: "CM (catégorie majeure)", derive: r => (r.code_gme || "").substring(0, 2), libCol: "lib_cm" },
       { id: "gn", label: "GN (groupe nosologique)", derive: r => (r.code_gme || "").substring(0, 4), libCol: "lib_gn" },
+      { id: "gr", label: "GR (groupe racine)", derive: r => (r.code_gme || "").substring(0, 5), libCol: "lib_gr" },
+      { id: "gl", label: "GL (niveau de sévérité/lourdeur)", derive: r => (r.code_gme || "").substring(0, 6), libCol: "lib_gl" },
       { id: "erreur", label: "Erreur de groupage", col: "code_retour_groupage",
         libDerive: r => r.lib_erreur || (r.code_retour_groupage === "0" || r.code_retour_groupage === "000" ? "Aucune" : null) },
       { id: "erreur_type", label: "Erreur de groupage (bloquant/non)", col: "type_erreur" },
       // MMP + AE = "morbidité principale" (MP) au sens du guide de production PMSI-SMR.
       { id: "dp", label: "Manifestation morbide principale (MMP)", col: "manifestation_morbide_principale", libCol: "lib_dp" },
+      { id: "dp_chapitre", label: "Chapitre CIM-10 (MMP)", derive: r => { const n = diagAncestorOfKind(r.manifestation_morbide_principale, "chapter"); return n ? n.code : null; },
+        libDerive: r => { const n = diagAncestorOfKind(r.manifestation_morbide_principale, "chapter"); return n ? n.libelle : null; } },
+      { id: "dp_bloc", label: "Bloc/sous-chapitre CIM-10 (MMP)", derive: r => { const n = diagAncestorOfKind(r.manifestation_morbide_principale, "block"); return n ? n.code : null; },
+        libDerive: r => { const n = diagAncestorOfKind(r.manifestation_morbide_principale, "block"); return n ? n.libelle : null; } },
       { id: "ae", label: "Affection étiologique (AE)", col: "affection_etiologique", libCol: "lib_ae" },
+      { id: "ae_chapitre", label: "Chapitre CIM-10 (AE)", derive: r => { const n = diagAncestorOfKind(r.affection_etiologique, "chapter"); return n ? n.code : null; },
+        libDerive: r => { const n = diagAncestorOfKind(r.affection_etiologique, "chapter"); return n ? n.libelle : null; } },
+      { id: "ae_bloc", label: "Bloc/sous-chapitre CIM-10 (AE)", derive: r => { const n = diagAncestorOfKind(r.affection_etiologique, "block"); return n ? n.code : null; },
+        libDerive: r => { const n = diagAncestorOfKind(r.affection_etiologique, "block"); return n ? n.libelle : null; } },
       { id: "mode_entree_um", label: "Mode d'entrée UM", col: "mode_entree_um" },
       { id: "provenance", label: "Provenance", col: "provenance" },
       { id: "mode_sortie", label: "Mode de sortie", col: "mode_sortie" },
@@ -105,7 +124,11 @@ const SOURCES = {
     label: "Valorisation",
     short: "Valo",
     table: "valorisation_sejour va",
-    sql: `SELECT va.* FROM valorisation_sejour va WHERE va.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
+    sql: `SELECT va.*, cm.libelle_long AS lib_cm, gl.libelle_long AS lib_gl
+          FROM valorisation_sejour va
+          LEFT JOIN nomenclature_gme cm ON cm.code = substr(va.code_gme,1,2) AND cm.kind = 'CM'
+          LEFT JOIN nomenclature_gme gl ON gl.code = substr(va.code_gme,1,6) AND gl.kind = 'GL'
+          WHERE va.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
     periodKind: "campagne", // filtre par colonne campagne = année
     dims: [
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
@@ -118,8 +141,10 @@ const SOURCES = {
       { id: "type_suite", label: "Type de suite (séjour)", col: "type_suite" },
       { id: "cas_30j", label: "Cas < 30 jours", col: "cas_30j" },
       { id: "gme", label: "GME", col: "code_gme", libCol: "libelle_gme" },
+      { id: "cm", label: "CM (catégorie majeure)", derive: r => (r.code_gme || "").substring(0, 2), libCol: "lib_cm" },
       { id: "gn", label: "GN", col: "code_gn", libCol: "libelle_gn" },
       { id: "gr", label: "GR", col: "code_gr", libCol: "libelle_gr" },
+      { id: "gl", label: "GL (niveau de sévérité/lourdeur)", derive: r => (r.code_gme || "").substring(0, 6), libCol: "lib_gl" },
       { id: "niveau_lourdeur", label: "Niveau de lourdeur (GR)", col: "niveau_lourdeur" },
       { id: "code_gmt", label: "Code GMT", col: "code_gmt" },
       { id: "code_gmth", label: "Code GMTH (> 90j)", col: "code_gmth" },
@@ -165,6 +190,10 @@ const SOURCES = {
       { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
       { id: "code_das", label: "Diagnostic associé (DAS)", col: "code_das", libCol: "lib_das" },
+      { id: "das_chapitre", label: "Chapitre CIM-10 (DAS)", derive: r => { const n = diagAncestorOfKind(r.code_das, "chapter"); return n ? n.code : null; },
+        libDerive: r => { const n = diagAncestorOfKind(r.code_das, "chapter"); return n ? n.libelle : null; } },
+      { id: "das_bloc", label: "Bloc/sous-chapitre CIM-10 (DAS)", derive: r => { const n = diagAncestorOfKind(r.code_das, "block"); return n ? n.code : null; },
+        libDerive: r => { const n = diagAncestorOfKind(r.code_das, "block"); return n ? n.libelle : null; } },
     ],
     measures: [
       { id: "nb_das", label: "Nombre de DAS", derive: r => 1 },
@@ -176,11 +205,15 @@ const SOURCES = {
     short: "CSARR",
     table: "rhs_groupe_csarr c",
     sql: `SELECT c.*, r.finess_epmsi, r.numero_admin_sejour, r.numero_semaine, r.type_hospitalisation,
-                 nom.libelle AS lib_csarr, interv.libelle AS lib_intervenant
+                 nom.libelle AS lib_csarr, interv.libelle AS lib_intervenant,
+                 chap.code AS code_csarr_chap, chap.libelle AS lib_csarr_chap,
+                 sschap.code AS code_csarr_sschap, sschap.libelle AS lib_csarr_sschap
           FROM rhs_groupe_csarr c
           JOIN rhs_groupe r ON r.id = c.parent_id
           LEFT JOIN nomenclature_csarr nom ON nom.code = c.code_principal
           LEFT JOIN nomenclature_csarr_intervenants interv ON interv.code = c.code_intervenant
+          LEFT JOIN nomenclature_csarr_hierarchie chap ON chap.code = substr(nom.parent_code,1,2) AND chap.kind = 'chapitre'
+          LEFT JOIN nomenclature_csarr_hierarchie sschap ON sschap.code = substr(nom.parent_code,1,5) AND sschap.kind = 'sous_chapitre'
           WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
     periodKind: "semaine",
     dims: [
@@ -190,6 +223,12 @@ const SOURCES = {
       { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
       { id: "code_csarr", label: "Acte CSARR (code principal)", col: "code_principal", libCol: "lib_csarr" },
+      // Hiérarchie CSARR (nomenclature_csarr_hierarchie, codes pointés "07.01.01…") : le chapitre/
+      // sous-chapitre est une troncature du CodeHier de classement de l'acte (nom.parent_code),
+      // fiable quelle que soit sa profondeur réelle (2 à 4 niveaux) puisque tout code commence par
+      // le chapitre (2 car.) puis ".XX" pour le sous-chapitre (5 car.) — cf. csarr_hierarchie.schema.json.
+      { id: "csarr_chapitre", label: "Chapitre CSARR", col: "code_csarr_chap", libCol: "lib_csarr_chap" },
+      { id: "csarr_sous_chapitre", label: "Sous-chapitre CSARR", col: "code_csarr_sschap", libCol: "lib_csarr_sschap" },
       { id: "intervenant", label: "Type d'intervenant", col: "code_intervenant", libCol: "lib_intervenant" },
     ],
     measures: [

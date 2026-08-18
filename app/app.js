@@ -118,11 +118,36 @@ async function onDbFilePicked(evt) {
 }
 
 function onDbReady() {
+  loadDiagHierarchy();
   populateFiness();
   populateMoisSelect();
   populateFicheFiness();
   wireEvents();
   onFinessChange();
+}
+
+// ---- Hiérarchie CIM-10 (nomenclature_diagnostics_hierarchie) : arbre à profondeur variable
+// (catégorie -> ... -> catégorie 3 car. -> bloc -> chapitre), contrairement à la hiérarchie GME qui
+// se lit par simple troncature de longueur fixe (voir catalogue.js) — chargée une fois en mémoire au
+// démarrage (table restant petite, ~12k lignes) et remontée nœud par nœud via parent_code plutôt que
+// par une jointure SQL récursive à chaque requête RHS/DAS.
+let diagHierByCode = null;
+function loadDiagHierarchy() {
+  diagHierByCode = new Map();
+  const rows = queryAll("SELECT code, kind, parent_code, libelle FROM nomenclature_diagnostics_hierarchie");
+  for (const r of rows) diagHierByCode.set(r.code, r);
+}
+// Remonte de `code` (diagnostic feuille, 3 à 6 caractères, point omis) vers son ancêtre de type
+// `targetKind` ("chapter" ou "block"). Repli sur le préfixe 3 caractères si le code exact n'a pas
+// d'entrée propre dans la hiérarchie (cf. note diagnostics_hierarchie.schema.json).
+function diagAncestorOfKind(code, targetKind) {
+  if (!code || !diagHierByCode) return null;
+  let node = diagHierByCode.get(code) || diagHierByCode.get(String(code).slice(0, 3));
+  let guard = 0;
+  while (node && node.kind !== targetKind && node.parent_code && guard++ < 12) {
+    node = diagHierByCode.get(node.parent_code);
+  }
+  return (node && node.kind === targetKind) ? node : null;
 }
 
 function queryAll(sql, params) {
