@@ -1,4 +1,4 @@
-// Explorateur TDB PMSI-SMR — logique applicative (sql.js, 100% navigateur, aucun serveur).
+﻿// Explorateur TDB PMSI-SMR — logique applicative (sql.js, 100% navigateur, aucun serveur).
 
 let db = null;
 let activeSource = "rhs";
@@ -29,6 +29,9 @@ let graphFacetDimRows = [];  // vignettes (petits multiples), max 3, facultatif
 let graphExprRows = [];      // mesure(s) Y
 let activeChartType = null;  // choisi par l'utilisateur, sinon suggéré automatiquement à la génération
 let graphRingColors = [];    // couleur de base (hex) par anneau du camembert : [axe X, Série 1, Série 2, ...]
+let graphSeriesColors = [];  // couleur (hex) par position de série, override positionnel de CHART_PALETTE — barres/lignes/aires/radar
+let graphDataLabelsMode = "aucune"; // 'aucune' | 'valeurs' | 'pct_col' | 'pct_ligne' | 'pct_total' — barres/lignes/aires/radar
+let graphSpline = false;     // lignes/aires : interpoler la ligne en courbe lissée (spline) plutôt qu'en segments droits
 
 // ---------- Utilitaires date / semaine ISO ----------
 
@@ -221,7 +224,7 @@ function refreshDimUI() {
   const src = SOURCES[activeSource];
   rowDimRows = [{ uid: ++uidCounter, srcKey: activeSource, dimId: src.dims[0].id, mode: defaultModeFor(src.dims[0]) }];
   colDimRows = [];
-  exprRows = [{ uid: ++uidCounter, measureId: src.measures[0].id, aggId: "count", label: "" }];
+  exprRows = [{ uid: ++uidCounter, srcKey: activeSource, measureId: src.measures[0].id, aggId: "count", label: "" }];
   renderDimsList("rowDimsList", rowDimRows, 1);
   renderDimsList("colDimsList", colDimRows, 0);
   renderExprList();
@@ -310,28 +313,40 @@ function updateGraphAddButtons() {
   const bf = document.getElementById("btnAddGraphFacetDim");
   if (bf) bf.disabled = graphFacetDimRows.length >= 3;
   renderRingColorsUI();
+  renderSeriesColorsUI();
+  renderChartOptionsUI();
 }
 
-function renderExprListGeneric(containerId, arr, srcKey, minCount) {
+// Sélecteur de mesure en expression : comme renderDimsList pour les lignes/colonnes, une seule
+// liste groupée par fichier source — les mesures de n'importe quel fichier peuvent être combinées
+// dans un même tableau/graphique (ex. Nombre de séjours (RHS) ET Montant brut total (Valo)),
+// rattachées via le séjour (finess + numéro admin séjour) au moment de générer.
+function renderExprListGeneric(containerId, arr, minCount) {
   const container = document.getElementById(containerId);
-  const src = SOURCES[srcKey];
   container.innerHTML = "";
   arr.forEach(row => {
     const div = document.createElement("div");
     div.className = "var-row";
 
     const measSel = document.createElement("select");
-    src.measures.forEach(m => {
-      const o = document.createElement("option");
-      o.value = m.id; o.textContent = m.label;
-      if (m.id === row.measureId) o.selected = true;
-      measSel.appendChild(o);
+    SOURCE_ORDER.forEach(srcKey => {
+      const src = SOURCES[srcKey];
+      const group = document.createElement("optgroup");
+      group.label = src.label;
+      src.measures.forEach(m => {
+        const o = document.createElement("option");
+        o.value = srcKey + "::" + m.id;
+        o.textContent = `${m.label} (${src.short})`;
+        if (srcKey === row.srcKey && m.id === row.measureId) o.selected = true;
+        group.appendChild(o);
+      });
+      measSel.appendChild(group);
     });
 
     const aggSel = document.createElement("select");
     function fillAgg() {
       aggSel.innerHTML = "";
-      const measure = src.measures.find(m => m.id === row.measureId);
+      const measure = measureOf(row);
       // Une mesure "distincte" (ex. nb de séjours) n'a pas de valeur numérique par ligne :
       // count et les % (basés sur un compte d'éléments distincts) restent valides, pas sum/avg/médiane/min/max.
       const DISTINCT_OK = ["count", "pct_total", "pct_row", "pct_col"];
@@ -346,7 +361,11 @@ function renderExprListGeneric(containerId, arr, srcKey, minCount) {
     }
     fillAgg();
 
-    measSel.addEventListener("change", () => { row.measureId = measSel.value; fillAgg(); updateRecap(); });
+    measSel.addEventListener("change", () => {
+      const [srcKey, measureId] = measSel.value.split("::");
+      row.srcKey = srcKey; row.measureId = measureId;
+      fillAgg(); updateRecap();
+    });
     aggSel.addEventListener("change", () => { row.aggId = aggSel.value; updateRecap(); });
 
     const labelInput = document.createElement("input");
@@ -362,7 +381,7 @@ function renderExprListGeneric(containerId, arr, srcKey, minCount) {
       if (arr.length <= minCount) return;
       const idx = arr.indexOf(row);
       if (idx >= 0) arr.splice(idx, 1);
-      renderExprListGeneric(containerId, arr, srcKey, minCount);
+      renderExprListGeneric(containerId, arr, minCount);
       updateRecap();
     });
 
@@ -371,7 +390,7 @@ function renderExprListGeneric(containerId, arr, srcKey, minCount) {
   });
 }
 
-function renderExprList() { renderExprListGeneric("exprList", exprRows, activeSource, 1); }
+function renderExprList() { renderExprListGeneric("exprList", exprRows, 1); }
 
 function labelForDimRow(row) {
   const d = dimDefOf(row);
@@ -385,14 +404,15 @@ function labelForDimRow(row) {
   return d.label + srcSuffix;
 }
 
-function exprLabelFor(expr, srcKey) {
-  const src = SOURCES[srcKey];
-  const measure = src.measures.find(m => m.id === expr.measureId);
+function exprLabelFor(expr) {
+  const src = SOURCES[expr.srcKey];
+  const measure = measureOf(expr);
   const agg = AGG_DEFS.find(a => a.id === expr.aggId);
   if (expr.label && expr.label.trim()) return expr.label.trim();
-  return `${agg ? agg.short : expr.aggId} — ${measure ? measure.label : expr.measureId}`;
+  const base = `${agg ? agg.short : expr.aggId} — ${measure ? measure.label : expr.measureId}`;
+  return src ? `${base} [${src.short}]` : base;
 }
-function exprLabel(expr) { return exprLabelFor(expr, activeSource); }
+function exprLabel(expr) { return exprLabelFor(expr); }
 
 function updateRecap() {
   const src = SOURCES[activeSource];
@@ -403,7 +423,7 @@ function updateRecap() {
     <dt>Établissement(s)</dt><dd>${finessList.length ? esc(finessList.join(", ")) : '<span style="color:#c0392b">aucun sélectionné</span>'}</dd>
     <dt>Période</dt><dd>${periods.length ? esc(periods.map(p => p.label).join(", ")) : '<span style="color:#c0392b">aucune période valide</span>'}</dd>
     <dt>Filtres globaux</dt><dd>${activeGlobalFilters().length ? activeGlobalFilters().map(f => esc(globalFilterLabel(f))).join(" ; ") : "(aucun)"}</dd>
-    <dt>Table source (mesures)</dt><dd>${esc(src.label)}</dd>
+    <dt>Table pilote (requête)</dt><dd>${esc(src.label)}</dd>
     <dt>Lignes</dt><dd>${rowDimRows.map(r => esc(labelForDimRow(r))).join(" / ") || "—"}</dd>
     <dt>Colonnes</dt><dd>${colDimRows.length ? colDimRows.map(r => esc(labelForDimRow(r))).join(" / ") : "(aucune)"}</dd>
     <dt>Expressions</dt><dd>${exprRows.map(e => esc(exprLabel(e))).join(", ")}</dd>
@@ -559,10 +579,41 @@ function agFn(values, isDistinct, aggName) {
   }
 }
 
-function extractValues(cellRows, measure) {
-  if (measure.distinctKey) return cellRows.map(r => measure.distinctKey(r));
+// `expr` (optionnel) porte le srcKey de la mesure : quand il diffère de baseSrcKey (mesure venant
+// d'un autre fichier que celui parcouru par `cellRows`), chaque ligne est d'abord rattachée à sa
+// ligne homologue du fichier tiers via foreignIdx (même mécanisme que dimValue/sourceRowFor pour
+// les dimensions) — c'est ce qui permet de croiser, par ex., un nb de séjours (RHS) avec une somme
+// de montant de valorisation (Valo) dans la même expression de tableau/graphique.
+//
+// Fan-out de jointure : quand le fichier de base a plusieurs lignes par séjour (RHS : une par
+// semaine) et que la mesure vient d'un fichier au grain séjour (Valo : une ligne par séjour), la
+// résolution ci-dessus fait pointer TOUTES les lignes RHS de ce séjour vers la MÊME ligne Valo —
+// sans dédoublonnage, un montant séjour serait alors sommé une fois par semaine (des dizaines de
+// millions d'euros de trop) au lieu d'une fois par séjour. `sourceRowFor`/`resolveForeignRow`
+// renvoient systématiquement la même référence d'objet pour un même séjour (tirée du même tableau
+// dans foreignIdx) : un Set de références suffit donc à ne garder qu'une occurrence par séjour tiers,
+// sans avoir besoin de connaître sa clé. Uniquement quand la mesure change réellement de fichier —
+// les mesures du fichier de base elles-mêmes (ex. nb de journées RHS, une valeur par ligne) doivent
+// au contraire rester sommées ligne par ligne, sans dédoublonnage.
+function extractValues(cellRows, measure, expr, foreignIdx, baseSrcKey) {
+  const crossSource = !!(expr && expr.srcKey !== baseSrcKey);
+  const resolve = crossSource ? (r0 => sourceRowFor(expr, r0, foreignIdx, baseSrcKey)) : (r0 => r0);
+  const seen = crossSource ? new Set() : null;
+  if (measure.distinctKey) {
+    const out = [];
+    for (const r0 of cellRows) {
+      const r = resolve(r0);
+      if (!r) continue;
+      if (seen) { if (seen.has(r)) continue; seen.add(r); }
+      out.push(measure.distinctKey(r));
+    }
+    return out;
+  }
   const vals = [];
-  for (const r of cellRows) {
+  for (const r0 of cellRows) {
+    const r = resolve(r0);
+    if (!r) continue;
+    if (seen) { if (seen.has(r)) continue; seen.add(r); }
     let v = measure.derive ? measure.derive(r) : r[measure.col];
     if (v !== null && v !== undefined && v !== "") {
       v = Number(v);
@@ -573,13 +624,13 @@ function extractValues(cellRows, measure) {
   return vals;
 }
 
-function computeExprPivot(cells, rowKeys, colKeys, measure, aggId) {
+function computeExprPivot(cells, rowKeys, colKeys, expr, measure, aggId, foreignIdx, baseSrcKey) {
   const isDistinct = !!measure.distinctKey;
   const isPct = aggId === "pct_total" || aggId === "pct_row" || aggId === "pct_col";
   const grid = {}, rowTotal = {}, colTotal = {};
   let grandTotal = null;
 
-  function cellValues(rk, ck) { return extractValues(cells.get(cellKeyStr(rk, ck)) || [], measure); }
+  function cellValues(rk, ck) { return extractValues(cells.get(cellKeyStr(rk, ck)) || [], measure, expr, foreignIdx, baseSrcKey); }
 
   if (!isPct) {
     for (const rk of rowKeys) {
@@ -630,7 +681,7 @@ function computeExprPivot(cells, rowKeys, colKeys, measure, aggId) {
   return { grid, rowTotal, colTotal, grandTotal, isPct };
 }
 
-function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, measures, foreignIdx, baseSrcKey) {
+function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, baseSrcKey) {
   function valueFor(cfg, row) {
     return dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, baseSrcKey));
   }
@@ -658,8 +709,8 @@ function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, measures, for
 
   const perExpr = {};
   for (const expr of exprsCfg) {
-    const measure = measures.find(m => m.id === expr.measureId);
-    perExpr[expr.uid] = computeExprPivot(cells, rowKeys, colKeys, measure, expr.aggId);
+    const measure = measureOf(expr);
+    perExpr[expr.uid] = computeExprPivot(cells, rowKeys, colKeys, expr, measure, expr.aggId, foreignIdx, baseSrcKey);
   }
 
   return { rowKeys, colKeys, perExpr, rowPartsByKey, colPartsByKey };
@@ -797,7 +848,7 @@ function generer() {
     // on les indexe par séjour pour rattacher leurs variables aux lignes de la table active.
     const activeGF = activeGlobalFilters();
     const foreignSrcKeys = new Set(
-      [...rowDimRows, ...colDimRows].map(r => r.srcKey)
+      [...rowDimRows, ...colDimRows, ...exprRows].map(r => r.srcKey)
         .concat(activeGF.map(f => f.srcKey))
         .filter(k => k !== activeSource)
     );
@@ -806,7 +857,7 @@ function generer() {
 
     rows = applyGlobalFilters(rows, activeSource, foreignIdx);
 
-    const pivot = computeMultiPivot(rows, rowDimRows, colDimRows, exprRows, src.measures, foreignIdx, activeSource);
+    const pivot = computeMultiPivot(rows, rowDimRows, colDimRows, exprRows, foreignIdx, activeSource);
     const rowLabel = rowDimRows.map(r => labelForDimRow(r)).join(" / ");
     const tableHtml = renderMultiPivotTable(pivot, rowDimRows, colDimRows, exprRows);
 
@@ -835,6 +886,8 @@ function catalogEntry(srcKey, kind, id) {
   const arr = kind === "measure" ? src.measures : src.dims;
   return (arr || []).find(x => x.id === id) || null;
 }
+
+function measureOf(expr) { return catalogEntry(expr.srcKey, "measure", expr.measureId); }
 
 // Construit les <optgroup> "Src — Variables" / "Src — Mesures" pour un select de
 // filtre/colonne, couvrant les 7 sources (mêmes catalogues que le pivot).
@@ -1337,8 +1390,14 @@ const CHART_TYPE_LABELS = {
   lignes: "Lignes", aires: "Aires",
   camembert: "Camembert", sunburst: "Sunburst", nuage: "Nuage de points", bulles: "Bulles (bubble chart)",
   carte_chaleur: "Carte de chaleur", boxplot: "Boîte à moustaches", histogramme: "Histogramme",
-  treemap: "Treemap", sankey: "Diagramme de Sankey (flux)",
+  treemap: "Treemap", sankey: "Diagramme de Sankey (flux)", radar: "Radar",
 };
+// Types pour lesquels les options "étiquettes de données", "couleurs de séries" et "spline"
+// s'appliquent (famille barres/lignes/radar — un point/une barre par catégorie × série, share la
+// même construction `chartSeriesData`). Le camembert/sunburst/treemap affichent déjà un % natif ;
+// nuage/bulles/carte de chaleur/boxplot/histogramme/sankey ont une sémantique différente.
+const CHART_TYPES_WITH_LABELS = new Set(["barres", "barres_horiz", "barres_empilees", "lignes", "aires", "radar"]);
+const CHART_TYPES_WITH_SPLINE = new Set(["lignes", "aires"]);
 // Dimensions "temporelles" au sens large (année/semaine/campagne) : un axe X sur l'une d'elles
 // suggère un graphique en lignes plutôt qu'en barres.
 const TEMPORAL_DIM_IDS = new Set(["annee_periode", "semaine", "campagne"]);
@@ -1422,7 +1481,7 @@ function svgScrollWrap(svgMarkup, pxWidth, scrollable) {
 // (plusieurs mesures hétérogènes tracées côte à côte via des expressions distinctes plutôt qu'une
 // Série n'ont pas de nom commun sensé). Partagé entre le rendu SVG maison et les figures Plotly.
 function measureAxisTitle(exprsUsed) {
-  return exprsUsed.length === 1 ? exprLabelFor(exprsUsed[0], activeSourceGraph) : "Valeur";
+  return exprsUsed.length === 1 ? exprLabelFor(exprsUsed[0]) : "Valeur";
 }
 // Ajoute les libellés d'axes (texte centré sous l'axe X, texte pivoté à gauche de l'axe Y) — même
 // emplacement/style que ceux déjà utilisés pour le nuage de points/bulles, pour rester cohérent
@@ -1501,14 +1560,49 @@ function renderRingColorsUI() {
   });
 }
 
+// Couleurs de séries (barres/lignes/aires/radar) : swatches génériques par position (1ʳᵉ, 2ᵉ…)
+// plutôt que par valeur réelle de la Série, car cette dernière n'est connue qu'après la requête
+// (colonnes du pivot) — même limite que la palette par défaut, qui colore déjà par position.
+function renderSeriesColorsUI() {
+  const field = document.getElementById("seriesColorsField");
+  const container = document.getElementById("seriesColorsList");
+  if (!field || !container) return;
+  field.style.display = CHART_TYPES_WITH_LABELS.has(activeChartType) ? "flex" : "none";
+  syncGraphSeriesColors();
+  container.innerHTML = "";
+  container.style.cssText = "display:flex;flex-wrap:wrap;gap:14px;align-items:center;";
+  graphSeriesColors.forEach((color, i) => {
+    const wrap = document.createElement("label");
+    wrap.style.cssText = "display:flex;align-items:center;gap:6px;font-weight:normal;text-transform:none;letter-spacing:normal;font-size:0.88em;color:var(--texte);";
+    const inp = document.createElement("input");
+    inp.type = "color";
+    inp.value = color;
+    inp.style.cssText = "width:34px;height:26px;padding:0;border:1px solid var(--bordure);border-radius:4px;cursor:pointer;";
+    inp.addEventListener("input", () => { graphSeriesColors[i] = inp.value; });
+    wrap.appendChild(inp);
+    wrap.appendChild(document.createTextNode(`Série ${i + 1}`));
+    container.appendChild(wrap);
+  });
+}
+
+// Étiquettes de données + spline : un seul menu déroulant pour toute la famille barres/lignes/aires/
+// radar (voir CHART_TYPES_WITH_LABELS) ; la case spline n'apparaît que pour lignes/aires.
+function renderChartOptionsUI() {
+  const field = document.getElementById("chartOptionsField");
+  const splineField = document.getElementById("splineField");
+  if (!field) return;
+  field.style.display = CHART_TYPES_WITH_LABELS.has(activeChartType) ? "flex" : "none";
+  if (splineField) splineField.style.display = CHART_TYPES_WITH_SPLINE.has(activeChartType) ? "block" : "none";
+}
+
 function refreshGraphUI() {
   const src = SOURCES[activeSourceGraph];
   if (!graphXDimRows.length) graphXDimRows = [{ uid: ++uidCounter, srcKey: activeSourceGraph, dimId: src.dims[0].id, mode: defaultModeFor(src.dims[0]) }];
-  if (!graphExprRows.length) graphExprRows = [{ uid: ++uidCounter, measureId: src.measures[0].id, aggId: "count", label: "" }];
+  if (!graphExprRows.length) graphExprRows = [{ uid: ++uidCounter, srcKey: activeSourceGraph, measureId: src.measures[0].id, aggId: "count", label: "" }];
   renderDimsList("graphXDimsList", graphXDimRows, 1);
   renderDimsList("graphSeriesDimsList", graphSeriesDimRows, 0);
   renderDimsList("graphFacetDimsList", graphFacetDimRows, 0);
-  renderExprListGeneric("graphExprList", graphExprRows, activeSourceGraph, 1);
+  renderExprListGeneric("graphExprList", graphExprRows, 1);
 }
 
 function suggestChartType(xDimsCfg, seriesDimsCfg, exprsCfg) {
@@ -1561,7 +1655,7 @@ function chartSeriesData(pivot, seriesDimsCfg, exprsUsed) {
     const pr = pivot.perExpr[exprsUsed[0].uid];
     series = pivot.colKeys.map((ck, i) => ({
       label: ck,
-      color: CHART_PALETTE[i % CHART_PALETTE.length],
+      color: graphSeriesColors[i] || CHART_PALETTE[i % CHART_PALETTE.length],
       values: pivot.rowKeys.map(rk => pr.grid[rk][ck]),
     }));
   } else {
@@ -1569,13 +1663,38 @@ function chartSeriesData(pivot, seriesDimsCfg, exprsUsed) {
     // calculé avec une Série non vide mais qu'on l'ignore ici (ex. camembert), auquel cas les
     // colKeys ne sont pas ["Total"] — rowTotal fait alors la somme sur toute la Série.
     series = exprsUsed.map((e, i) => ({
-      label: exprLabelFor(e, activeSourceGraph),
-      color: CHART_PALETTE[i % CHART_PALETTE.length],
+      label: exprLabelFor(e),
+      color: graphSeriesColors[i] || CHART_PALETTE[i % CHART_PALETTE.length],
       values: pivot.rowKeys.map(rk => pivot.perExpr[e.uid].rowTotal[rk]),
     }));
   }
   return { categories, series };
 }
+
+// ---- Étiquettes de données (barres/lignes/aires/radar) : valeur brute ou %, selon graphDataLabelsMode.
+// "% en colonne" = part de la catégorie (somme des séries à cette catégorie) ; "% en ligne" = part
+// de la série (somme de ses valeurs sur toutes les catégories) ; "% du total" = part du total général.
+function syncGraphSeriesColors() {
+  while (graphSeriesColors.length < CHART_CAT_CAP) graphSeriesColors.push(CHART_PALETTE[graphSeriesColors.length % CHART_PALETTE.length]);
+  graphSeriesColors.length = CHART_CAT_CAP;
+}
+function seriesColTotal(series, catIdx) { return series.reduce((s, ser) => s + (ser.values[catIdx] || 0), 0); }
+function seriesRowTotal(ser) { return ser.values.reduce((a, b) => a + (b || 0), 0); }
+function seriesGrandTotal(series) { return series.reduce((s, ser) => s + seriesRowTotal(ser), 0); }
+function dataLabelText(mode, v, ser, catIdx, series) {
+  if (mode === "aucune" || v === null || v === undefined) return null;
+  if (mode === "valeurs") return fmtAxisNum(v);
+  let total = 0;
+  if (mode === "pct_col") total = seriesColTotal(series, catIdx);
+  else if (mode === "pct_ligne") total = seriesRowTotal(ser);
+  else if (mode === "pct_total") total = seriesGrandTotal(series);
+  else return null;
+  return total ? ((v / total) * 100).toFixed(1) + "%" : null;
+}
+// Estimation grossière (police Segoe UI condensée à cette taille) de la largeur d'un texte en px —
+// suffisant pour décider si une étiquette a la place de s'afficher sans la mesurer réellement dans
+// le DOM (le rendu SVG est généré en chaîne de caractères, hors DOM, avant d'être inséré).
+function estTextWidth(text, fontSize) { return String(text).length * fontSize * 0.58; }
 
 function renderBarSvg(categories, series, stacked, valueAxisTitle) {
   series = foldSeriesList(series, CHART_CAT_CAP);
@@ -1602,7 +1721,7 @@ function renderBarSvg(categories, series, stacked, valueAxisTitle) {
   const barGap = groupW * 0.15;
   const barsAreaW = groupW - barGap;
   const barW = stacked ? barsAreaW : barsAreaW / Math.max(1, series.length);
-  const showValueLabels = series.length === 1 && n <= 24; // une seule série, pas trop de barres : étiquette directe à la pointe
+  const labelsMode = graphDataLabelsMode;
 
   let svg = "";
   const ticks = 4;
@@ -1623,6 +1742,14 @@ function renderBarSvg(categories, series, stacked, valueAxisTitle) {
         if (!v) return;
         const y0 = y(cum), y1 = y(cum + v);
         svg += `<rect x="${gx.toFixed(1)}" y="${y1.toFixed(1)}" width="${barW.toFixed(1)}" height="${(y0 - y1).toFixed(1)}" fill="${ser.color}"><title>${esc(cat)} — ${esc(ser.label)} : ${esc(fmtVal(v, false))}</title></rect>`;
+        // Étiquette centrée dans le segment, seulement si le segment est assez haut/large pour la
+        // contenir sans déborder sur les segments voisins (sinon on l'omet : l'infobulle au survol
+        // reste disponible) — jamais de texte tassé illisible.
+        const segH = y0 - y1;
+        const txt = dataLabelText(labelsMode, v, ser, i, series);
+        if (txt && segH >= CH_FS_VAL + 4 && estTextWidth(txt, CH_FS_VAL) <= barW - 4) {
+          svg += `<text x="${(gx + barW / 2).toFixed(1)}" y="${((y0 + y1) / 2 + CH_FS_VAL * 0.35).toFixed(1)}" font-size="${CH_FS_VAL}" font-weight="600" fill="${textColorForBg(ser.color)}" text-anchor="middle">${esc(txt)}</text>`;
+        }
         cum += v;
       });
     } else {
@@ -1632,8 +1759,11 @@ function renderBarSvg(categories, series, stacked, valueAxisTitle) {
         const y0 = MT + plotH, y1 = y(v);
         const bx = gx + si * barW;
         svg += `<rect x="${bx.toFixed(1)}" y="${y1.toFixed(1)}" width="${(barW * 0.9).toFixed(1)}" height="${(y0 - y1).toFixed(1)}" fill="${ser.color}"><title>${esc(cat)} — ${esc(ser.label)} : ${esc(fmtVal(v, false))}</title></rect>`;
-        if (showValueLabels && v > 0) {
-          svg += `<text x="${(bx + barW * 0.45).toFixed(1)}" y="${(y1 - 4).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="middle">${esc(fmtAxisNum(v))}</text>`;
+        // Étiquette au-dessus de la barre, seulement si le texte tient dans la largeur de la barre
+        // (sinon omise plutôt que débordant sur les barres voisines).
+        const txt = dataLabelText(labelsMode, v, ser, i, series);
+        if (txt && estTextWidth(txt, CH_FS_VAL) <= barW * 0.9 + 6) {
+          svg += `<text x="${(bx + barW * 0.45).toFixed(1)}" y="${(y1 - 4).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="middle">${esc(txt)}</text>`;
         }
       });
     }
@@ -1664,7 +1794,7 @@ function renderBarSvgH(categories, series, valueAxisTitle) {
   const barGap = rowH * 0.18;
   const barsAreaH = rowH - barGap;
   const barH = barsAreaH / Math.max(1, series.length);
-  const showValueLabels = series.length === 1 && n <= 30;
+  const labelsMode = graphDataLabelsMode;
 
   let svg = "";
   const ticks = 4;
@@ -1684,8 +1814,11 @@ function renderBarSvgH(categories, series, valueAxisTitle) {
       const by = gy + si * barH;
       const x0 = ML, x1 = x(v);
       svg += `<rect x="${x0.toFixed(1)}" y="${by.toFixed(1)}" width="${Math.max(0, x1 - x0).toFixed(1)}" height="${(barH * 0.86).toFixed(1)}" fill="${ser.color}"><title>${esc(cat)} — ${esc(ser.label)} : ${esc(fmtVal(v, false))}</title></rect>`;
-      if (showValueLabels && v > 0) {
-        svg += `<text x="${(x1 + 5).toFixed(1)}" y="${(by + barH * 0.43 + 3.5).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="start">${esc(fmtAxisNum(v))}</text>`;
+      // Barres horizontales : la ligne (une par catégorie × série) donne assez de place verticale
+      // pour l'étiquette dans la marge de droite tant que la barre elle-même n'est pas trop fine.
+      const txt = dataLabelText(labelsMode, v, ser, i, series);
+      if (txt && barH >= CH_FS_VAL + 2) {
+        svg += `<text x="${(x1 + 5).toFixed(1)}" y="${(by + barH * 0.43 + 3.5).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="start">${esc(txt)}</text>`;
       }
     });
   });
@@ -1702,6 +1835,19 @@ function renderBarSvgH(categories, series, valueAxisTitle) {
     : `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>`) + legendHtml(series);
 }
 
+// Interpolation spline (Catmull-Rom convertie en courbes de Bézier cubiques) pour un tracé lissé
+// passant exactement par chaque point — alternative à la ligne brisée par défaut (segments droits).
+function smoothPathD(pts) {
+  if (pts.length < 2) return pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+  let d = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)} `;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += `C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)} `;
+  }
+  return d.trim();
+}
 function renderLineAreaSvg(categories, series, filled, valueAxisTitle) {
   series = foldSeriesList(series, CHART_CAT_CAP);
   const n = categories.length;
@@ -1730,9 +1876,10 @@ function renderLineAreaSvg(categories, series, filled, valueAxisTitle) {
     svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
   });
   series.forEach(ser => {
-    const pts = ser.values.map((v, i) => (v === null || v === undefined) ? null : [x(i), y(v)]).filter(Boolean);
+    const idxs = []; // indices (dans `categories`) réellement tracés, alignés avec `pts`
+    const pts = ser.values.map((v, i) => { if (v === null || v === undefined) return null; idxs.push(i); return [x(i), y(v)]; }).filter(Boolean);
     if (!pts.length) return;
-    const pathD = pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+    const pathD = graphSpline ? smoothPathD(pts) : pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
     if (filled && pts.length > 1) {
       const baseY = y(Math.max(minV, 0));
       const areaD = pathD + ` L${pts[pts.length - 1][0].toFixed(1)},${baseY.toFixed(1)} L${pts[0][0].toFixed(1)},${baseY.toFixed(1)} Z`;
@@ -1740,19 +1887,83 @@ function renderLineAreaSvg(categories, series, filled, valueAxisTitle) {
     }
     if (pts.length > 1) svg += `<path d="${pathD}" fill="none" stroke="${ser.color}" stroke-width="2"/>`;
     pts.forEach((p, i) => {
-      svg += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.5" fill="${ser.color}" stroke="#fff" stroke-width="1.5"><title>${esc(categories[i])} — ${esc(ser.label)} : ${esc(fmtVal(ser.values[i], false))}</title></circle>`;
+      svg += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.5" fill="${ser.color}" stroke="#fff" stroke-width="1.5"><title>${esc(categories[idxs[i]])} — ${esc(ser.label)} : ${esc(fmtVal(ser.values[idxs[i]], false))}</title></circle>`;
     });
-    // Étiquette directe au dernier point de la série (l'extrémité) — repère la ligne sans
-    // surcharger le graphique d'une valeur à chaque point.
-    const last = pts[pts.length - 1];
-    if (last && series.length <= 6) {
-      const lastV = ser.values[ser.values.map((v,i)=>v!==null&&v!==undefined?i:-1).filter(i=>i>=0).pop()];
-      svg += `<text x="${(last[0] + 5).toFixed(1)}" y="${(last[1] - 5).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="start">${esc(fmtAxisNum(lastV))}</text>`;
+    // Étiquettes de données : éclaircissage glouton de gauche à droite — une étiquette n'est posée
+    // que si elle a la place par rapport à la dernière posée (sinon omise, l'infobulle reste au
+    // survol) ; évite le fouillis de textes chevauchants sur les séries à nombreux points.
+    if (graphDataLabelsMode !== "aucune") {
+      let lastX = -Infinity;
+      pts.forEach((p, i) => {
+        const catIdx = idxs[i];
+        const txt = dataLabelText(graphDataLabelsMode, ser.values[catIdx], ser, catIdx, series);
+        if (!txt) return;
+        const halfW = estTextWidth(txt, CH_FS_VAL) / 2;
+        if (p[0] - halfW < lastX + 4) return;
+        svg += `<text x="${p[0].toFixed(1)}" y="${(p[1] - 7).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="middle">${esc(txt)}</text>`;
+        lastX = p[0] + halfW;
+      });
     }
   });
   svg += svgAxisTitleTags(graphXDimRows.map(r => labelForDimRow(r)).join(" / "), valueAxisTitle, ML, MT, plotW, plotH, H);
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series);
+}
+
+// ---- Radar (diagramme en toile d'araignée) : chaque catégorie de l'axe X devient un rayon, chaque
+// Série un polygone. Nécessite au moins 3 catégories pour être un polygone sensé — sinon message
+// d'aide plutôt qu'une forme dégénérée. Les étiquettes de données sont omises au-delà de 10 rayons
+// (elles se chevaucheraient autour du centre) : l'infobulle au survol reste alors le seul recours.
+function renderRadarSvg(categories, series, valueAxisTitle) {
+  series = foldSeriesList(series, CHART_CAT_CAP);
+  const n = categories.length;
+  const W = 480, H = 480, cx = W / 2, cy = H / 2 - 4;
+  if (n < 3) {
+    return `<div style="display:flex;justify-content:center;"><svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;${CH_FONT}"><text x="${cx}" y="${cy}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Le radar nécessite au moins 3 catégories en axe X.</text></svg></div>`;
+  }
+  const R = Math.min(W, H) / 2 - 66;
+  let maxV = 0;
+  for (const ser of series) for (const v of ser.values) maxV = Math.max(maxV, v || 0);
+  const niceMax = niceCeil(maxV || 1);
+  const angle = i => -Math.PI / 2 + i * (2 * Math.PI / n);
+  const rFor = v => (Math.max(0, v || 0) / niceMax) * R;
+  const ptFor = (i, v) => [cx + rFor(v) * Math.cos(angle(i)), cy + rFor(v) * Math.sin(angle(i))];
+
+  let svg = "";
+  const ticks = 4;
+  for (let t = 1; t <= ticks; t++) {
+    const rr = R * t / ticks;
+    const ring = categories.map((_, i) => { const a = angle(i); return `${(cx + rr * Math.cos(a)).toFixed(1)},${(cy + rr * Math.sin(a)).toFixed(1)}`; }).join(" ");
+    svg += `<polygon points="${ring}" fill="none" stroke="${CH_GRID}" stroke-width="1"/>`;
+    if (t === ticks) svg += `<text x="${(cx + 4).toFixed(1)}" y="${(cy - rr + 3).toFixed(1)}" font-size="${CH_FS_AXIS - 1}" fill="${CH_MUTED}">${esc(fmtAxisNum(niceMax))}</text>`;
+  }
+  categories.forEach((cat, i) => {
+    const a = angle(i);
+    const ex = cx + R * Math.cos(a), ey = cy + R * Math.sin(a);
+    svg += `<line x1="${cx}" y1="${cy}" x2="${ex.toFixed(1)}" y2="${ey.toFixed(1)}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+    const lx = cx + (R + 14) * Math.cos(a), ly = cy + (R + 14) * Math.sin(a);
+    const anchor = Math.cos(a) > 0.2 ? "start" : Math.cos(a) < -0.2 ? "end" : "middle";
+    svg += `<text x="${lx.toFixed(1)}" y="${(ly + 3.5).toFixed(1)}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="${anchor}">${esc(truncLabel(cat, 14))}</text>`;
+  });
+  series.forEach(ser => {
+    const pts = categories.map((_, i) => ptFor(i, ser.values[i]));
+    const d = pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ") + " Z";
+    svg += `<path d="${d}" fill="${ser.color}" fill-opacity="0.14" stroke="${ser.color}" stroke-width="2"/>`;
+    pts.forEach((p, i) => {
+      svg += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.2" fill="${ser.color}" stroke="#fff" stroke-width="1.3"><title>${esc(categories[i])} — ${esc(ser.label)} : ${esc(fmtVal(ser.values[i], false))}</title></circle>`;
+    });
+    if (graphDataLabelsMode !== "aucune" && n <= 10) {
+      pts.forEach((p, i) => {
+        const txt = dataLabelText(graphDataLabelsMode, ser.values[i], ser, i, series);
+        if (!txt) return;
+        const a = angle(i);
+        const lx2 = p[0] + 11 * Math.cos(a), ly2 = p[1] + 11 * Math.sin(a);
+        svg += `<text x="${lx2.toFixed(1)}" y="${(ly2 + 3).toFixed(1)}" font-size="${CH_FS_VAL - 0.5}" fill="${CH_INK}" text-anchor="middle">${esc(txt)}</text>`;
+      });
+    }
+  });
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  return `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>` + legendHtml(series);
 }
 
 // Couleur de texte (blanc ou encre) à poser sur un aplat `hex` donné, choisie par luminance
@@ -1821,9 +2032,9 @@ function annulusPath(cx, cy, rIn, rOut, a1, a2) {
 // de chaque nœud (feuille ou intermédiaire) est recalculée directement sur son sous-ensemble de
 // lignes via agFn/extractValues (comme le tableau croisé), pas déduite de la somme des enfants —
 // correct même pour une agrégation non additive (moyenne, min, max, médiane).
-function buildPieHierarchy(rows, levelKeyFns, measure, aggId) {
+function buildPieHierarchy(rows, levelKeyFns, expr, measure, aggId, foreignIdx, baseSrcKey) {
   const isDistinct = !!measure.distinctKey;
-  const nodeValue = rowsSubset => agFn(extractValues(rowsSubset, measure), isDistinct, aggId) || 0;
+  const nodeValue = rowsSubset => agFn(extractValues(rowsSubset, measure, expr, foreignIdx, baseSrcKey), isDistinct, aggId) || 0;
   function group(rowsSubset, levelIdx) {
     const value = nodeValue(rowsSubset);
     if (levelIdx >= levelKeyFns.length) return { value, children: null };
@@ -1918,14 +2129,14 @@ function renderHierPieSvg(root, nRings, ringNames, ringColors) {
 
 // Point d'entrée du camembert imbriqué depuis genererGraphique : construit les fonctions de clé
 // (une par anneau) et l'arbre, à partir des lignes déjà filtrées d'une vignette.
-function renderNestedPieFromRows(rows, foreignIdx, expr, measures) {
-  const measure = measures.find(m => m.id === expr.measureId);
+function renderNestedPieFromRows(rows, foreignIdx, expr) {
+  const measure = measureOf(expr);
   const xKeyFn = row => graphXDimRows.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))).join(" / ");
   const levelKeyFns = [xKeyFn, ...graphSeriesDimRows.map(cfg =>
     row => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))
   )];
   const ringNames = [graphXDimRows.map(r => labelForDimRow(r)).join(" / "), ...graphSeriesDimRows.map(r => labelForDimRow(r))];
-  const root = buildPieHierarchy(rows, levelKeyFns, measure, expr.aggId);
+  const root = buildPieHierarchy(rows, levelKeyFns, expr, measure, expr.aggId, foreignIdx, activeSourceGraph);
   syncGraphRingColors();
   return renderHierPieSvg(root, levelKeyFns.length, ringNames, graphRingColors);
 }
@@ -1987,13 +2198,13 @@ function renderPointsSvg(pivot, seriesDimsCfg, exX, exY, exSize) {
   }
   svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
   svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
-  svg += `<text x="${(ML + plotW / 2).toFixed(1)}" y="${H - (exSize ? 30 : 6)}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle">${esc(exprLabelFor(exX, activeSourceGraph))}</text>`;
-  svg += `<text x="14" y="${(MT + plotH / 2).toFixed(1)}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle" transform="rotate(-90 14 ${(MT + plotH / 2).toFixed(1)})">${esc(exprLabelFor(exY, activeSourceGraph))}</text>`;
+  svg += `<text x="${(ML + plotW / 2).toFixed(1)}" y="${H - (exSize ? 30 : 6)}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle">${esc(exprLabelFor(exX))}</text>`;
+  svg += `<text x="14" y="${(MT + plotH / 2).toFixed(1)}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle" transform="rotate(-90 14 ${(MT + plotH / 2).toFixed(1)})">${esc(exprLabelFor(exY))}</text>`;
   // Points triés du plus grand au plus petit : les petites bulles restent visibles par-dessus les grandes.
   const ordered = [...points].sort((a, b) => radiusFor(b.size) - radiusFor(a.size));
   ordered.forEach(p => {
     const cx = px(p.x).toFixed(1), cy = py(p.y).toFixed(1), r = radiusFor(p.size);
-    const title = `<title>${esc(p.label)}${p.group ? ` — ${esc(p.group)}` : ""} : (${esc(fmtVal(p.x, false))}, ${esc(fmtVal(p.y, false))})${exSize ? `, ${esc(exprLabelFor(exSize, activeSourceGraph))} ${esc(fmtVal(p.size, false))}` : ""}</title>`;
+    const title = `<title>${esc(p.label)}${p.group ? ` — ${esc(p.group)}` : ""} : (${esc(fmtVal(p.x, false))}, ${esc(fmtVal(p.y, false))})${exSize ? `, ${esc(exprLabelFor(exSize))} ${esc(fmtVal(p.size, false))}` : ""}</title>`;
     svg += `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="${colorFor(p.group)}" fill-opacity="0.72" stroke="#fff" stroke-width="1">${title}</circle>`;
     if (r < 10) svg += `<circle cx="${cx}" cy="${cy}" r="10" fill="transparent">${title}</circle>`; // agrandit la zone de survol sans changer le rendu
   });
@@ -2009,7 +2220,7 @@ function renderPointsSvg(pivot, seriesDimsCfg, exX, exY, exSize) {
       const r = radiusFor(v);
       return `<span style="display:inline-flex;align-items:center;gap:4px;"><svg width="${(RMAX * 2 + 4)}" height="${(RMAX * 2 + 4)}" viewBox="0 0 ${RMAX * 2 + 4} ${RMAX * 2 + 4}"><circle cx="${RMAX + 2}" cy="${RMAX + 2}" r="${r.toFixed(1)}" fill="none" stroke="${CH_MUTED}" stroke-width="1.2"/></svg>${esc(fmtAxisNum(v))}</span>`;
     }).join("");
-    sizeLegend = `<div style="font-size:0.82em;color:var(--gris);margin-top:6px;display:flex;align-items:center;justify-content:center;gap:14px;"><span style="font-weight:600;">${esc(exprLabelFor(exSize, activeSourceGraph))} :</span>${items}</div>`;
+    sizeLegend = `<div style="font-size:0.82em;color:var(--gris);margin-top:6px;display:flex;align-items:center;justify-content:center;gap:14px;"><span style="font-weight:600;">${esc(exprLabelFor(exSize))} :</span>${items}</div>`;
   }
   return `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>` + legendHtml(legendSeries) + sizeLegend;
 }
@@ -2074,7 +2285,8 @@ function computeBoxStats(values) {
   const q = p => { const idx = p * (s.length - 1), lo = Math.floor(idx), hi = Math.ceil(idx); return s[lo] + (s[hi] - s[lo]) * (idx - lo); };
   return { min: s[0], q1: q(0.25), median: q(0.5), q3: q(0.75), max: s[s.length - 1], n: s.length };
 }
-function buildBoxplotGroups(rows, xDimsCfg, serieDimCfg, measure, foreignIdx, baseSrcKey) {
+function buildBoxplotGroups(rows, xDimsCfg, serieDimCfg, expr, foreignIdx, baseSrcKey) {
+  const measure = measureOf(expr);
   const groups = new Map();
   for (const row of rows) {
     const xKey = xDimsCfg.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, baseSrcKey))).join(" / ");
@@ -2091,7 +2303,7 @@ function buildBoxplotGroups(rows, xDimsCfg, serieDimCfg, measure, foreignIdx, ba
   const series = serieKeys.map((sk, i) => ({
     label: sk,
     color: CHART_PALETTE[i % CHART_PALETTE.length],
-    boxes: categories.map(xk => computeBoxStats(extractValues((groups.get(xk).get(sk)) || [], measure))),
+    boxes: categories.map(xk => computeBoxStats(extractValues((groups.get(xk).get(sk)) || [], measure, expr, foreignIdx, baseSrcKey))),
   }));
   return { categories, series };
 }
@@ -2156,8 +2368,9 @@ function computeHistogramBins(values) {
   values.forEach(v => { let idx = Math.floor((v - min) / width); if (idx >= k) idx = k - 1; if (idx < 0) idx = 0; counts[idx]++; });
   return { counts, min, max, width, k };
 }
-function buildHistogramSeries(rows, serieDimCfg, measure, foreignIdx, baseSrcKey) {
-  const allValues = extractValues(rows, measure);
+function buildHistogramSeries(rows, serieDimCfg, expr, foreignIdx, baseSrcKey) {
+  const measure = measureOf(expr);
+  const allValues = extractValues(rows, measure, expr, foreignIdx, baseSrcKey);
   const bins = computeHistogramBins(allValues);
   if (!serieDimCfg || !bins.k) {
     return { bins, series: [{ label: "Total", color: CHART_PALETTE[0], counts: bins.counts }] };
@@ -2170,7 +2383,7 @@ function buildHistogramSeries(rows, serieDimCfg, measure, foreignIdx, baseSrcKey
   }
   const serieKeys = [...groups.keys()].sort().slice(0, CHART_CAT_CAP); // comptages non additifs entre classes : on tronque plutôt que replier
   const series = serieKeys.map((sk, i) => {
-    const vals = extractValues(groups.get(sk), measure);
+    const vals = extractValues(groups.get(sk), measure, expr, foreignIdx, baseSrcKey);
     const counts = new Array(bins.k).fill(0);
     vals.forEach(v => { let idx = Math.floor((v - bins.min) / bins.width); if (idx >= bins.k) idx = bins.k - 1; if (idx < 0) idx = 0; counts[idx]++; });
     return { label: sk, color: CHART_PALETTE[i % CHART_PALETTE.length], counts };
@@ -2258,14 +2471,14 @@ function renderTreemapSvg(root, ringNames, ringColors) {
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>`;
 }
-function renderTreemapFromRows(rows, foreignIdx, expr, measures) {
-  const measure = measures.find(m => m.id === expr.measureId);
+function renderTreemapFromRows(rows, foreignIdx, expr) {
+  const measure = measureOf(expr);
   const xKeyFn = row => graphXDimRows.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))).join(" / ");
   const levelKeyFns = [xKeyFn, ...graphSeriesDimRows.map(cfg =>
     row => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))
   )];
   const ringNames = [graphXDimRows.map(r => labelForDimRow(r)).join(" / "), ...graphSeriesDimRows.map(r => labelForDimRow(r))];
-  const root = buildPieHierarchy(rows, levelKeyFns, measure, expr.aggId);
+  const root = buildPieHierarchy(rows, levelKeyFns, expr, measure, expr.aggId, foreignIdx, activeSourceGraph);
   syncGraphRingColors();
   return renderTreemapSvg(root, ringNames, graphRingColors);
 }
@@ -2407,6 +2620,7 @@ function renderChartFragment(chartType, pivot, seriesDimsCfg, exprsUsed) {
   if (chartType === "barres_empilees") return renderBarSvg(categories, series, true, valueAxisTitle);
   if (chartType === "lignes") return renderLineAreaSvg(categories, series, false, valueAxisTitle);
   if (chartType === "aires") return renderLineAreaSvg(categories, series, true, valueAxisTitle);
+  if (chartType === "radar") return renderRadarSvg(categories, series, valueAxisTitle);
   return renderBarSvg(categories, series, false, valueAxisTitle);
 }
 
@@ -2429,6 +2643,8 @@ function prepareGraphData(setSt) {
     activeChartType = chartType;
     document.querySelectorAll("#chartTypeTabs button").forEach(b => b.classList.toggle("active", b.dataset.type === chartType));
     renderRingColorsUI();
+    renderSeriesColorsUI();
+    renderChartOptionsUI();
   }
   syncGraphRingColors();
   if (chartType === "nuage" && graphExprRows.length < 2) {
@@ -2444,7 +2660,7 @@ function prepareGraphData(setSt) {
     return null;
   }
   if (chartType === "boxplot" || chartType === "histogramme") {
-    const m = src.measures.find(m => m.id === graphExprRows[0].measureId);
+    const m = measureOf(graphExprRows[0]);
     if (m && m.distinctKey) {
       setSt("Boîte à moustaches / histogramme nécessitent une mesure numérique (pas un comptage de distincts).", true);
       return null;
@@ -2458,7 +2674,7 @@ function prepareGraphData(setSt) {
 
   const activeGF = activeGlobalFilters();
   const foreignSrcKeys = new Set(
-    [...graphXDimRows, ...graphSeriesDimRows, ...graphFacetDimRows].map(r => r.srcKey)
+    [...graphXDimRows, ...graphSeriesDimRows, ...graphFacetDimRows, ...graphExprRows].map(r => r.srcKey)
       .concat(activeGF.map(f => f.srcKey))
       .filter(k => k !== activeSourceGraph)
   );
@@ -2484,7 +2700,7 @@ function graphResultMetaText(chartType, exprsUsed, facetGroups, facetsShown, act
   const facetLabel = graphFacetDimRows.length ? graphFacetDimRows.map(r => labelForDimRow(r)).join(" / ") : "(aucune)";
   return `Type : ${CHART_TYPE_LABELS[chartType]} · Axe X : ${xLabel} · Série : ${serieLabel} · ` +
     `Vignettes : ${facetLabel}${facetGroups.length > 1 ? ` (${facetsShown.length}${facetGroups.length > GRAPH_FACET_CAP ? ` sur ${facetGroups.length}` : ""})` : ""} · ` +
-    `Mesure(s) : ${exprsUsed.map(e => exprLabelFor(e, activeSourceGraph)).join(", ")} · Filtres globaux : ${activeGF.length}`;
+    `Mesure(s) : ${exprsUsed.map(e => exprLabelFor(e)).join(", ")} · Filtres globaux : ${activeGF.length}`;
 }
 
 function genererGraphique() {
@@ -2499,19 +2715,17 @@ function genererGraphique() {
     const panels = facetsShown.map(g => {
       let fragment;
       if (chartType === "sunburst" || (chartType === "camembert" && graphSeriesDimRows.length)) {
-        fragment = renderNestedPieFromRows(g.rows, foreignIdx, exprsUsed[0], src.measures);
+        fragment = renderNestedPieFromRows(g.rows, foreignIdx, exprsUsed[0]);
       } else if (chartType === "treemap") {
-        fragment = renderTreemapFromRows(g.rows, foreignIdx, exprsUsed[0], src.measures);
+        fragment = renderTreemapFromRows(g.rows, foreignIdx, exprsUsed[0]);
       } else if (chartType === "boxplot") {
-        const measure = src.measures.find(m => m.id === exprsUsed[0].measureId);
-        const { categories, series } = buildBoxplotGroups(g.rows, graphXDimRows, graphSeriesDimRows[0] || null, measure, foreignIdx, activeSourceGraph);
+        const { categories, series } = buildBoxplotGroups(g.rows, graphXDimRows, graphSeriesDimRows[0] || null, exprsUsed[0], foreignIdx, activeSourceGraph);
         fragment = renderBoxplotSvg(categories, series, measureAxisTitle(exprsUsed));
       } else if (chartType === "histogramme") {
-        const measure = src.measures.find(m => m.id === exprsUsed[0].measureId);
-        const { bins, series } = buildHistogramSeries(g.rows, graphSeriesDimRows[0] || null, measure, foreignIdx, activeSourceGraph);
+        const { bins, series } = buildHistogramSeries(g.rows, graphSeriesDimRows[0] || null, exprsUsed[0], foreignIdx, activeSourceGraph);
         fragment = renderHistogramSvg(bins, series, measureAxisTitle(exprsUsed));
       } else {
-        const pivot = computeMultiPivot(g.rows, graphXDimRows, graphSeriesDimRows, exprsUsed, src.measures, foreignIdx, activeSourceGraph);
+        const pivot = computeMultiPivot(g.rows, graphXDimRows, graphSeriesDimRows, exprsUsed, foreignIdx, activeSourceGraph);
         fragment = renderChartFragment(chartType, pivot, graphSeriesDimRows, exprsUsed);
       }
       const panelTitle = g.label ? `${chartTitle} — ${g.label}` : chartTitle;
@@ -2560,12 +2774,12 @@ function flattenHierarchyForPlotly(root) {
 function buildChartTitle(chartType, exprsUsed) {
   const xLabel = graphXDimRows.map(r => labelForDimRow(r)).join(" / ");
   const serieLabel = graphSeriesDimRows.length ? graphSeriesDimRows.map(r => labelForDimRow(r)).join(" / ") : null;
-  const mLabel = exprsUsed.map(e => exprLabelFor(e, activeSourceGraph)).join(", ");
+  const mLabel = exprsUsed.map(e => exprLabelFor(e)).join(", ");
   if (chartType === "sankey") return `Flux : ${xLabel} → ${serieLabel || "?"} (${mLabel})`;
   if (chartType === "nuage" || chartType === "bulles") {
     const exX = exprsUsed[0], exY = exprsUsed[1], exSize = exprsUsed[2];
-    let t = `${exprLabelFor(exY, activeSourceGraph)} vs ${exprLabelFor(exX, activeSourceGraph)}`;
-    if (exSize) t += ` — taille : ${exprLabelFor(exSize, activeSourceGraph)}`;
+    let t = `${exprLabelFor(exY)} vs ${exprLabelFor(exX)}`;
+    if (exSize) t += ` — taille : ${exprLabelFor(exSize)}`;
     if (serieLabel) t += ` (couleur : ${serieLabel})`;
     return t;
   }
@@ -2596,19 +2810,20 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
   };
 
   if (chartType === "sunburst" || chartType === "treemap" || (chartType === "camembert" && graphSeriesDimRows.length)) {
-    const measure = src.measures.find(m => m.id === exprsUsed[0].measureId);
+    const expr0 = exprsUsed[0];
+    const measure = measureOf(expr0);
     const xKeyFn = row => graphXDimRows.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))).join(" / ");
     const levelKeyFns = [xKeyFn, ...graphSeriesDimRows.map(cfg =>
       row => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))
     )];
-    const root = buildPieHierarchy(g.rows, levelKeyFns, measure, exprsUsed[0].aggId);
+    const root = buildPieHierarchy(g.rows, levelKeyFns, expr0, measure, expr0.aggId, foreignIdx, activeSourceGraph);
     const { ids, labels, parents, values, colors } = flattenHierarchyForPlotly(root);
     const type = chartType === "treemap" ? "treemap" : "sunburst";
     return { label, data: [{ type, ids, labels, parents, values, branchvalues: "total", marker: { colors }, textinfo: "label+percent parent" }], layout: baseLayout };
   }
 
   if (chartType === "camembert") {
-    const pivot = computeMultiPivot(g.rows, graphXDimRows, [], exprsUsed, src.measures, foreignIdx, activeSourceGraph);
+    const pivot = computeMultiPivot(g.rows, graphXDimRows, [], exprsUsed, foreignIdx, activeSourceGraph);
     const rawLabels = pivot.rowKeys.map(rk => pivot.rowPartsByKey.get(rk).join(" / "));
     const rawValues = pivot.rowKeys.map(rk => pivot.perExpr[exprsUsed[0].uid].rowTotal[rk] || 0);
     const { labels: pieLabels, values: pieValues } = foldTopN(rawLabels, rawValues, CHART_CAT_CAP);
@@ -2616,7 +2831,8 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
   }
 
   if (chartType === "boxplot" || chartType === "histogramme") {
-    const measure = src.measures.find(m => m.id === exprsUsed[0].measureId);
+    const expr0 = exprsUsed[0];
+    const measure = measureOf(expr0);
     const serieDimCfg = graphSeriesDimRows[0] || null;
     const xLabelOf = row => graphXDimRows.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))).join(" / ");
     const traces = [];
@@ -2631,31 +2847,31 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
         const rowsSub = groups.get(sKey);
         const color = CHART_PALETTE[i % CHART_PALETTE.length];
         if (chartType === "boxplot") {
-          traces.push({ type: "box", x: rowsSub.map(xLabelOf), y: extractValues(rowsSub, measure), name: sKey, marker: { color } });
+          traces.push({ type: "box", x: rowsSub.map(xLabelOf), y: extractValues(rowsSub, measure, expr0, foreignIdx, activeSourceGraph), name: sKey, marker: { color } });
         } else {
-          traces.push({ type: "histogram", x: extractValues(rowsSub, measure), name: sKey, opacity: 0.65, marker: { color } });
+          traces.push({ type: "histogram", x: extractValues(rowsSub, measure, expr0, foreignIdx, activeSourceGraph), name: sKey, opacity: 0.65, marker: { color } });
         }
       });
     } else if (chartType === "boxplot") {
-      traces.push({ type: "box", x: g.rows.map(xLabelOf), y: extractValues(g.rows, measure), marker: { color: CHART_PALETTE[0] } });
+      traces.push({ type: "box", x: g.rows.map(xLabelOf), y: extractValues(g.rows, measure, expr0, foreignIdx, activeSourceGraph), marker: { color: CHART_PALETTE[0] } });
     } else {
-      traces.push({ type: "histogram", x: extractValues(g.rows, measure), marker: { color: CHART_PALETTE[0] } });
+      traces.push({ type: "histogram", x: extractValues(g.rows, measure, expr0, foreignIdx, activeSourceGraph), marker: { color: CHART_PALETTE[0] } });
     }
     const layout = { ...baseLayout };
     if (chartType === "boxplot") {
       layout.boxmode = "group";
       layout.xaxis = { title: xLabel, automargin: true };
-      layout.yaxis = { title: exprLabelFor(exprsUsed[0], activeSourceGraph), automargin: true };
+      layout.yaxis = { title: exprLabelFor(exprsUsed[0]), automargin: true };
     } else {
       layout.barmode = "overlay";
-      layout.xaxis = { title: exprLabelFor(exprsUsed[0], activeSourceGraph), automargin: true };
+      layout.xaxis = { title: exprLabelFor(exprsUsed[0]), automargin: true };
       layout.yaxis = { title: "Nombre", automargin: true };
     }
     return { label, data: traces, layout };
   }
 
   if (chartType === "sankey") {
-    const pivot = computeMultiPivot(g.rows, graphXDimRows, graphSeriesDimRows, exprsUsed, src.measures, foreignIdx, activeSourceGraph);
+    const pivot = computeMultiPivot(g.rows, graphXDimRows, graphSeriesDimRows, exprsUsed, foreignIdx, activeSourceGraph);
     const pr = pivot.perExpr[exprsUsed[0].uid];
     let sources = pivot.rowKeys.map(rk => ({ key: rk, label: pivot.rowPartsByKey.get(rk).join(" / ") }));
     let targets = pivot.colKeys.map(ck => ({ key: ck, label: (pivot.colPartsByKey.get(ck) || [ck]).join(" / ") }));
@@ -2700,7 +2916,7 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     return { label, data: [{ type: "sankey", orientation: "h", node: { label: nodeLabels, color: nodeColors, pad: 12, thickness: 16 }, link }], layout: baseLayout };
   }
 
-  const pivot = computeMultiPivot(g.rows, graphXDimRows, graphSeriesDimRows, exprsUsed, src.measures, foreignIdx, activeSourceGraph);
+  const pivot = computeMultiPivot(g.rows, graphXDimRows, graphSeriesDimRows, exprsUsed, foreignIdx, activeSourceGraph);
 
   if (chartType === "carte_chaleur") {
     const pr = pivot.perExpr[exprsUsed[0].uid];
@@ -2728,20 +2944,28 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
       }
       return { type: "scatter", mode: "markers", x: xs, y: ys, text, name: graphSeriesDimRows.length ? ck : undefined, marker };
     });
-    return { label, data: traces, layout: { ...baseLayout, xaxis: { title: exprLabelFor(exX, activeSourceGraph) }, yaxis: { title: exprLabelFor(exY, activeSourceGraph) } } };
+    return { label, data: traces, layout: { ...baseLayout, xaxis: { title: exprLabelFor(exX) }, yaxis: { title: exprLabelFor(exY) } } };
   }
 
   const { categories, series } = chartSeriesData(pivot, graphSeriesDimRows, exprsUsed);
 
   // Axe des valeurs : le libellé de la mesure si une seule, sinon un titre générique (plusieurs
   // mesures hétérogènes tracées côte à côte via des expressions distinctes plutôt qu'une Série).
-  const valueAxisTitle = exprsUsed.length === 1 ? exprLabelFor(exprsUsed[0], activeSourceGraph) : "Valeur";
+  const valueAxisTitle = exprsUsed.length === 1 ? exprLabelFor(exprsUsed[0]) : "Valeur";
 
   if (chartType === "barres" || chartType === "barres_empilees" || chartType === "barres_horiz") {
     const horiz = chartType === "barres_horiz";
-    const traces = series.map(s => horiz
-      ? { type: "bar", orientation: "h", y: categories, x: s.values, name: s.label, marker: { color: s.color } }
-      : { type: "bar", x: categories, y: s.values, name: s.label, marker: { color: s.color } });
+    const labelsMode = graphDataLabelsMode;
+    const traces = series.map((s, si) => {
+      // textposition:'auto' laisse Plotly décider (à l'intérieur/à l'extérieur de la barre) et
+      // masquer nativement le texte qui ne rentre pas — pas de calcul de collision manuel côté JS,
+      // contrairement aux lignes/radar où Plotly ne le fait pas tout seul (cf. plus bas).
+      const text = labelsMode === "aucune" ? undefined : s.values.map((v, i) => dataLabelText(labelsMode, v, s, i, series) || "");
+      const textOpts = labelsMode === "aucune" ? {} : { text, textposition: "auto", textfont: { size: 11 }, cliponaxis: false };
+      return horiz
+        ? { type: "bar", orientation: "h", y: categories, x: s.values, name: s.label, marker: { color: s.color }, ...textOpts }
+        : { type: "bar", x: categories, y: s.values, name: s.label, marker: { color: s.color }, ...textOpts };
+    });
     const layout = { ...baseLayout, barmode: chartType === "barres_empilees" ? "stack" : "group" };
     if (horiz) {
       layout.yaxis = { title: xLabel, automargin: true };
@@ -2753,16 +2977,47 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     return { label, data: traces, layout };
   }
 
-  // lignes / aires
+  if (chartType === "radar") {
+    if (categories.length < 3) {
+      return { label, data: [], layout: { ...baseLayout, annotations: [{ text: "Le radar nécessite au moins 3 catégories en axe X.", showarrow: false, font: { size: 13 } }] } };
+    }
+    const traces = series.map(s => {
+      const r = [...s.values, s.values[0]], theta = [...categories, categories[0]];
+      const text = graphDataLabelsMode === "aucune" ? undefined : plotlyThinnedTexts(s.values, graphDataLabelsMode, s, series, 20).concat([""]);
+      return {
+        type: "scatterpolar", r, theta, name: s.label, fill: "toself",
+        line: { color: s.color, width: 2 }, marker: { color: s.color },
+        text, mode: text ? "lines+markers+text" : "lines+markers", textposition: "top center", textfont: { size: 11 },
+      };
+    });
+    return { label, data: traces, layout: { ...baseLayout, polar: { radialaxis: { visible: true, rangemode: "tozero" }, angularaxis: { type: "category" } } } };
+  }
+
+  // lignes / aires — Plotly ne masque pas de lui-même le texte qui se chevauche (contrairement aux
+  // barres, cf. ci-dessus) : on applique donc le même éclaircissage que le rendu SVG maison, ici
+  // fondé sur le nombre de points plutôt que sur des pixels (la figure Plotly est redimensionnable).
   const traces = series.map(s => ({
-    type: "scatter", mode: "lines+markers", x: categories, y: s.values, name: s.label,
-    line: { color: s.color, width: 2 }, marker: { color: s.color },
+    type: "scatter", mode: graphDataLabelsMode === "aucune" ? "lines+markers" : "lines+markers+text", x: categories, y: s.values, name: s.label,
+    line: { color: s.color, width: 2, shape: graphSpline ? "spline" : "linear" }, marker: { color: s.color },
+    text: graphDataLabelsMode === "aucune" ? undefined : plotlyThinnedTexts(s.values, graphDataLabelsMode, s, series, 25),
+    textposition: "top center", textfont: { size: 11 },
     fill: chartType === "aires" ? "tozeroy" : undefined,
   }));
   return {
     label, data: traces,
     layout: { ...baseLayout, xaxis: { title: xLabel, tickangle: -40, automargin: true }, yaxis: { title: valueAxisTitle, automargin: true } },
   };
+}
+// Éclaircissage par décimation régulière (pas par pixels, la figure Plotly étant redimensionnable) :
+// au-delà de `maxLabels` points valorisés, n'en garde qu'un sur N réparti uniformément — cohérent
+// avec l'éclaircissage par pixels du rendu SVG (même intention, mécanisme adapté au contexte).
+function plotlyThinnedTexts(values, mode, ser, series, maxLabels) {
+  const texts = values.map((v, i) => dataLabelText(mode, v, ser, i, series) || "");
+  const shown = texts.filter(Boolean).length;
+  if (shown <= maxLabels) return texts;
+  const step = Math.ceil(shown / maxLabels);
+  let count = 0;
+  return texts.map(t => { if (!t) return ""; count++; return count % step === 0 ? t : ""; });
 }
 
 function ouvrirGraphiquePlotly() {
@@ -3110,13 +3365,9 @@ function wireEvents() {
       document.querySelectorAll("#sourceTabs button").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       activeSource = btn.dataset.src;
-      // Changer d'onglet ne change que la table de mesures (expressions) : les variables déjà
-      // choisies en lignes/colonnes, qui peuvent venir de n'importe quel fichier, sont conservées.
-      const src = SOURCES[activeSource];
-      exprRows = [{ uid: ++uidCounter, measureId: src.measures[0].id, aggId: "count", label: "" }];
-      renderExprList();
-      renderDimsList("rowDimsList", rowDimRows, 1);
-      renderDimsList("colDimsList", colDimRows, 0);
+      // Changer d'onglet ne change que la table pilote de la requête (celle dont les lignes sont
+      // parcourues) et la source par défaut des nouvelles variables ajoutées : les variables déjà
+      // choisies en lignes/colonnes/expressions, qui peuvent venir de n'importe quel fichier, sont conservées.
       updateRecap();
     });
   });
@@ -3135,7 +3386,7 @@ function wireEvents() {
   });
   document.getElementById("btnAddExpr").addEventListener("click", () => {
     const src = SOURCES[activeSource];
-    exprRows.push({ uid: ++uidCounter, measureId: src.measures[0].id, aggId: "count", label: "" });
+    exprRows.push({ uid: ++uidCounter, srcKey: activeSource, measureId: src.measures[0].id, aggId: "count", label: "" });
     renderExprList();
     updateRecap();
   });
@@ -3239,9 +3490,9 @@ function wireEvents() {
       document.querySelectorAll("#sourceTabsGraph button").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       activeSourceGraph = btn.dataset.src;
-      const src = SOURCES[activeSourceGraph];
-      graphExprRows = [{ uid: ++uidCounter, measureId: src.measures[0].id, aggId: "count", label: "" }];
-      renderExprListGeneric("graphExprList", graphExprRows, activeSourceGraph, 1);
+      // Comme pour le tableau croisé : changer d'onglet ne change que la table pilote de la
+      // requête / la source par défaut des nouvelles variables — les expressions déjà choisies,
+      // qui peuvent venir de n'importe quel fichier, sont conservées.
     });
   });
   document.getElementById("btnAddGraphXDim").addEventListener("click", () => {
@@ -3264,8 +3515,8 @@ function wireEvents() {
   });
   document.getElementById("btnAddGraphExpr").addEventListener("click", () => {
     const src = SOURCES[activeSourceGraph];
-    graphExprRows.push({ uid: ++uidCounter, measureId: src.measures[0].id, aggId: "count", label: "" });
-    renderExprListGeneric("graphExprList", graphExprRows, activeSourceGraph, 1);
+    graphExprRows.push({ uid: ++uidCounter, srcKey: activeSourceGraph, measureId: src.measures[0].id, aggId: "count", label: "" });
+    renderExprListGeneric("graphExprList", graphExprRows, 1);
   });
   document.querySelectorAll("#chartTypeTabs button").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -3273,8 +3524,12 @@ function wireEvents() {
       btn.classList.add("active");
       activeChartType = btn.dataset.type;
       renderRingColorsUI();
+      renderSeriesColorsUI();
+      renderChartOptionsUI();
     });
   });
+  document.getElementById("selDataLabelsMode").addEventListener("change", e => { graphDataLabelsMode = e.target.value; });
+  document.getElementById("chkSpline").addEventListener("change", e => { graphSpline = e.target.checked; });
   document.getElementById("btnGenererGraph").addEventListener("click", genererGraphique);
   document.getElementById("btnOuvrirPlotly").addEventListener("click", ouvrirGraphiquePlotly);
 

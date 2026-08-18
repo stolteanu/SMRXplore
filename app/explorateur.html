@@ -349,8 +349,9 @@
           <button data-type="histogramme">Histogramme</button>
           <button data-type="treemap">Treemap</button>
           <button data-type="sankey">Sankey (flux)</button>
+          <button data-type="radar">Radar</button>
         </div>
-        <p style="font-size:0.82em;color:var(--gris);margin:6px 0 0;">Bulles : nécessite 3 mesures (X, Y, taille). Sankey : nécessite une variable de Série (la cible des flux — l'axe X en est la source).</p>
+        <p style="font-size:0.82em;color:var(--gris);margin:6px 0 0;">Bulles : nécessite 3 mesures (X, Y, taille). Sankey : nécessite une variable de Série (la cible des flux — l'axe X en est la source). Radar : nécessite au moins 3 catégories en axe X.</p>
       </div>
     </div>
 
@@ -358,6 +359,31 @@
       <div class="field" style="width:100%;">
         <label>Couleurs par niveau (camembert imbriqué / treemap) <span style="text-transform:none;font-weight:normal;">— un dégradé de la teinte choisie est appliqué aux valeurs de chaque niveau</span></label>
         <div id="ringColorsList"></div>
+      </div>
+    </div>
+
+    <div class="row" id="chartOptionsField" style="margin-top:14px; display:none; gap:24px; align-items:flex-end;">
+      <div class="field">
+        <label>Étiquettes de données</label>
+        <select id="selDataLabelsMode">
+          <option value="aucune">Aucune</option>
+          <option value="valeurs">Valeurs</option>
+          <option value="pct_col">% en colonne (par catégorie)</option>
+          <option value="pct_ligne">% en ligne (par série)</option>
+          <option value="pct_total">% du total</option>
+        </select>
+      </div>
+      <div class="field" id="splineField" style="display:none;">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:normal;text-transform:none;letter-spacing:normal;">
+          <input type="checkbox" id="chkSpline" style="width:auto;"> Lignes arrondies (spline)
+        </label>
+      </div>
+    </div>
+
+    <div class="row" id="seriesColorsField" style="margin-top:14px; display:none;">
+      <div class="field" style="width:100%;">
+        <label>Couleurs des séries <span style="text-transform:none;font-weight:normal;">— par position (1ʳᵉ série, 2ᵉ série…), appliqué que la Série provienne d'une variable ou de plusieurs mesures</span></label>
+        <div id="seriesColorsList"></div>
       </div>
     </div>
 
