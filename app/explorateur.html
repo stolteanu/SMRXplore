@@ -153,8 +153,23 @@
         <div class="checks" id="checksAnnees"></div>
       </div>
       <div class="field">
-        <label for="selMois">Cumulé jusqu'au mois</label>
+        <label for="selPeriodeMode">Période</label>
+        <select id="selPeriodeMode">
+          <option value="cumule" selected>Cumulé depuis janvier, jusqu'au mois</option>
+          <option value="perso">Plage personnalisée (mêmes jour/mois chaque année)</option>
+        </select>
+      </div>
+      <div class="field" id="champMoisCumule">
+        <label for="selMois">Jusqu'au mois</label>
         <select id="selMois"></select>
+      </div>
+      <div class="field" id="champPeriodePerso" style="display:none">
+        <label>Du (JJ/MM) au (JJ/MM)</label>
+        <div class="row" style="gap:6px;">
+          <input type="text" id="inpPeriodeDebut" placeholder="03/01" size="6">
+          <span style="align-self:center;">→</span>
+          <input type="text" id="inpPeriodeFin" placeholder="26/06" size="6">
+        </div>
       </div>
     </div>
     <div class="field" style="width:100%; margin-top:14px;">
@@ -192,20 +207,12 @@
   <div id="modePivot">
   <div class="panel" id="panelPivot" style="display:none">
     <h2>2. Construire le tableau</h2>
-    <div class="source-tabs" id="sourceTabs">
-      <button data-src="rhs" class="active">RHS groupé (séjours/semaines)</button>
-      <button data-src="vidhosp">VID-HOSP (facturation/patients)</button>
-      <button data-src="valo">Valorisation</button>
-      <button data-src="das">DAS (diagnostics associés)</button>
-      <button data-src="csarr">Actes CSARR</button>
-      <button data-src="csar">Actes CSAR</button>
-      <button data-src="ccam">Actes CCAM</button>
-    </div>
-    <p style="font-size:0.82em;color:var(--gris);margin:-8px 0 14px;">
-      Cet onglet fixe le fichier des <strong>expressions</strong> (mesures). Les variables en
-      <strong>lignes</strong> et <strong>colonnes</strong> ci-dessous peuvent être choisies dans
-      n'importe lequel des 3 fichiers — leur provenance est indiquée entre parenthèses — et sont
-      rattachées aux données par séjour.
+    <p style="font-size:0.82em;color:var(--gris);margin:0 0 14px;">
+      Les variables en <strong>lignes</strong>, <strong>colonnes</strong> et
+      <strong>expressions</strong> ci-dessous peuvent être choisies dans n'importe lequel des
+      fichiers — leur provenance est indiquée entre parenthèses — et sont rattachées aux données
+      par séjour ; chaque expression compte/somme sur les lignes réelles de son propre fichier,
+      quelle que soit la combinaison choisie.
     </p>
 
     <div class="row">
@@ -291,18 +298,11 @@
 
   <div class="panel" id="panelGraphBuild">
     <h2>3. Construire le graphique</h2>
-    <div class="source-tabs" id="sourceTabsGraph">
-      <button data-src="rhs" class="active">RHS groupé (séjours/semaines)</button>
-      <button data-src="vidhosp">VID-HOSP (facturation/patients)</button>
-      <button data-src="valo">Valorisation</button>
-      <button data-src="das">DAS (diagnostics associés)</button>
-      <button data-src="csarr">Actes CSARR</button>
-      <button data-src="csar">Actes CSAR</button>
-      <button data-src="ccam">Actes CCAM</button>
-    </div>
-    <p style="font-size:0.82em;color:var(--gris);margin:-8px 0 14px;">
-      Cet onglet fixe le fichier des <strong>mesures</strong>. Les variables ci-dessous peuvent venir
-      de n'importe quel fichier — rattachées aux données par séjour, comme pour le tableau croisé.
+    <p style="font-size:0.82em;color:var(--gris);margin:0 0 14px;">
+      Les variables ci-dessous peuvent venir de n'importe quel fichier — leur provenance est
+      indiquée entre parenthèses — et sont rattachées aux données par séjour ; chaque mesure
+      compte/somme sur les lignes réelles de son propre fichier, quelle que soit la combinaison
+      choisie.
     </p>
 
     <div class="row">

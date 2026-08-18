@@ -1,6 +1,9 @@
 ﻿// Explorateur TDB PMSI-SMR — logique applicative (sql.js, 100% navigateur, aucun serveur).
 
 let db = null;
+// Table pilote de la requête (grain interne, cf. computeMultiPivot) — fixe depuis le retrait des
+// boutons de sélection de base (2026-08-18) : chaque expression compte désormais sur son propre
+// fichier, donc ce choix n'affecte plus les résultats, seulement quelle table initie la requête.
 let activeSource = "rhs";
 let lastResult = null; // { titleText, metaText, tableHtml }
 let uidCounter = 0;
@@ -22,6 +25,7 @@ let listeColRows = []; // { uid, srcKey, kind:'dim'|'measure', id, mode }
 let globalFilterRows = []; // { uid, srcKey, kind:'dim'|'measure', id, values:[], op, val, val2 }
 
 // Mode "Graphique"
+// Table pilote de la requête — fixe depuis le retrait des boutons de base (2026-08-18), cf. activeSource.
 let activeSourceGraph = "rhs";
 let graphXDimRows = [];      // axe X, max 3, imbriquées comme les lignes du pivot
 let graphSeriesDimRows = []; // série/légende, max 3, facultatif (équivalent des colonnes du pivot)
@@ -56,6 +60,30 @@ function lastWeekOfMonth(year, month) {
     if (m === month) last = week;
   }
   return last;
+}
+
+// Semaine ISO (année Y, convention numero_semaine — pas nécessairement l'année ISO stricte en cas
+// de chevauchement, cf. isoWeekDate) qui contient le jour/mois donné — utilisée par la plage de
+// période personnalisée (§ "1. Filtres") pour convertir une date calendaire en borne de semaine,
+// symétrique de lastWeekOfMonth (recherche par balayage, même style).
+function weekOfDate(year, month, day) {
+  const target = new Date(Date.UTC(year, month - 1, day));
+  if (isNaN(target)) return null;
+  for (let week = 1; week <= 53; week++) {
+    const mon = isoWeekDate(year, week, 1);
+    const sun = isoWeekDate(year, week, 7);
+    if (target >= mon && target <= sun) return week;
+  }
+  return null;
+}
+
+// Parse "JJ/MM" (séparateur / - ou .) saisi dans les champs de plage personnalisée.
+function parseJourMois(s) {
+  const m = String(s || "").trim().match(/^(\d{1,2})[/\-.](\d{1,2})$/);
+  if (!m) return null;
+  const day = Number(m[1]), month = Number(m[2]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { day, month };
 }
 
 function fmtDate(d) {
@@ -440,7 +468,6 @@ function exprLabelFor(expr) {
 function exprLabel(expr) { return exprLabelFor(expr); }
 
 function updateRecap() {
-  const src = SOURCES[activeSource];
   const finessList = selectedFiness();
   const periods = computeSelectedPeriods();
   const box = document.getElementById("recapBox");
@@ -448,7 +475,6 @@ function updateRecap() {
     <dt>Établissement(s)</dt><dd>${finessList.length ? esc(finessList.join(", ")) : '<span style="color:#c0392b">aucun sélectionné</span>'}</dd>
     <dt>Période</dt><dd>${periods.length ? esc(periods.map(p => p.label).join(", ")) : '<span style="color:#c0392b">aucune période valide</span>'}</dd>
     <dt>Filtres globaux</dt><dd>${activeGlobalFilters().length ? activeGlobalFilters().map(f => esc(globalFilterLabel(f))).join(" ; ") : "(aucun)"}</dd>
-    <dt>Table pilote (requête)</dt><dd>${esc(src.label)}</dd>
     <dt>Lignes</dt><dd>${rowDimRows.map(r => esc(labelForDimRow(r))).join(" / ") || "—"}</dd>
     <dt>Colonnes</dt><dd>${colDimRows.length ? colDimRows.map(r => esc(labelForDimRow(r))).join(" / ") : "(aucune)"}</dd>
     <dt>Expressions</dt><dd>${exprRows.map(e => esc(exprLabel(e))).join(", ")}</dd>
@@ -458,12 +484,40 @@ function updateRecap() {
 
 // ---------- Requête + agrégation ----------
 
+// Mode "perso" (2026-08-18) : la répartition au jour de présence (extractValues, cas Valo/RHS —
+// cf. computeMultiPivot) rend une plage non cumulative fiable, contrairement à une simple somme
+// par séjour/campagne qui aurait pu compter un montant hors plage. La borne basse ne s'applique
+// qu'aux fichiers filtrés par semaine RHS (periodKind "semaine") ; VID-HOSP (periodKind "dates")
+// utilise déjà start/end directement, et Valorisation (periodKind "campagne", pas de grain semaine)
+// n'est de toute façon restreinte à la plage qu'via son rattachement aux lignes RHS retournées.
 function computeSelectedPeriods() {
+  const modeEl = document.getElementById("selPeriodeMode");
   const moisEl = document.getElementById("selMois");
   if (!moisEl) return [];
-  const mois = Number(moisEl.value);
   const checked = [...document.querySelectorAll("#checksAnnees input:checked")].map(c => c.value);
   const periods = [];
+  const perso = modeEl && modeEl.value === "perso";
+
+  if (perso) {
+    const debut = parseJourMois(document.getElementById("inpPeriodeDebut").value);
+    const fin = parseJourMois(document.getElementById("inpPeriodeFin").value);
+    if (!debut || !fin) return [];
+    for (const y of checked) {
+      const yearNum = Number(y);
+      const minWeek = weekOfDate(yearNum, debut.month, debut.day);
+      const maxWeek = weekOfDate(yearNum, fin.month, fin.day);
+      if (minWeek == null || maxWeek == null || minWeek > maxWeek) continue;
+      const start = isoWeekDate(yearNum, minWeek, 1);
+      const end = isoWeekDate(yearNum, maxWeek, 7);
+      periods.push({
+        year: y, minWeek, maxWeek, start, end,
+        label: `${y} (semaines ${String(minWeek).padStart(2, "0")}–${String(maxWeek).padStart(2, "0")})`,
+      });
+    }
+    return periods;
+  }
+
+  const mois = Number(moisEl.value);
   for (const y of checked) {
     const yearNum = Number(y);
     const maxWeek = lastWeekOfMonth(yearNum, mois);
@@ -482,8 +536,8 @@ function buildQuery(sourceKey, finessList, periods) {
   const params = [...finessList];
   if (src.periodKind === "semaine") {
     for (const p of periods) {
-      clauses.push("(substr(r.numero_semaine,3,4)=? AND CAST(substr(r.numero_semaine,1,2) AS INTEGER)<=?)");
-      params.push(p.year, p.maxWeek);
+      clauses.push("(substr(r.numero_semaine,3,4)=? AND CAST(substr(r.numero_semaine,1,2) AS INTEGER) BETWEEN ? AND ?)");
+      params.push(p.year, p.minWeek || 1, p.maxWeek);
     }
   } else if (src.periodKind === "dates") {
     for (const p of periods) {
@@ -636,10 +690,25 @@ function rhsJoursPresents(row) {
 // se rattachent à une ligne Valo donnée, y compris celles qui finiront dans une autre cellule qu'elle
 // (ex. regroupement par semaine, ou par GN pour un séjour HTP reclassé) — sinon la somme par cellule
 // ne reconstituerait pas exactement le montant total.
-function annotateValoCoverage(rows, baseSrcKey, foreignIdx) {
+// Aplatit un index par séjour (Map admKey -> lignes[]) en tableau de lignes, toutes confondues —
+// utilisé pour obtenir le jeu de lignes "propre" d'un fichier source, indépendamment de la façon
+// dont il a été indexé (foreignIdx ou l'onglet de base).
+function flattenIdx(idx) {
+  if (!idx) return [];
+  const out = [];
+  for (const arr of idx.values()) out.push(...arr);
+  return out;
+}
+
+// Généralisée (2026-08-18) pour fonctionner quel que soit l'onglet de base actif : les lignes RHS
+// utilisées peuvent venir de `baseRows` (si RHS est la base) ou de foreignIdx["rhs"] (sinon, dès
+// que RHS est référencé par une variable/expression) — sans RHS quelque part dans la requête, la
+// répartition au jour ne s'applique de toute façon pas (cf. iterSrcKeyFor dans computeMultiPivot).
+function annotateValoCoverage(foreignIdx, baseSrcKey, baseRows) {
   const valoIdx = foreignIdx && foreignIdx["valo"];
-  if (baseSrcKey !== "rhs" || !valoIdx) return; // seul le cas rapporté (RHS en base) est couvert
-  for (const row of rows) {
+  if (!valoIdx) return;
+  const rhsRows = baseSrcKey === "rhs" ? baseRows : flattenIdx(foreignIdx["rhs"]);
+  for (const row of rhsRows) {
     const valoRow = resolveForeignRow(valoIdx, row);
     if (!valoRow) continue;
     valoRow._joursCouverts = (valoRow._joursCouverts || 0) + rhsJoursPresents(row);
@@ -758,27 +827,72 @@ function computeExprPivot(cells, rowKeys, colKeys, expr, measure, aggId, foreign
   return { grid, rowTotal, colTotal, grandTotal, isPct };
 }
 
-function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, baseSrcKey) {
-  function valueFor(cfg, row) {
-    return dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, baseSrcKey));
-  }
-  function partsFor(dimsCfg, row) { return dimsCfg.map(r => valueFor(r, row)); }
+// Chaque expression est désormais comptée/sommée sur les lignes réelles de SON PROPRE fichier
+// source (2026-08-18), plus jamais via un "meilleur candidat" résolu vers un fichier tiers puis
+// dédupliqué (resolveForeignRow ne renvoie qu'UNE ligne par séjour, ce qui sous-comptait fortement
+// tout fichier détail — DAS/CSARR/CSAR/CCAM ont plusieurs lignes par séjour/semaine — et faisait
+// varier "Nombre de RHS"/"Nombre de DAS"/... selon l'onglet de base choisi, alors que ces comptes
+// n'ont de sens que rapportés à leur propre fichier). Seul le croisement RHS -> Valo garde son
+// mécanisme dédié de répartition au jour de présence (cf. extractValues), car lui seul dispose
+// d'une clé de répartition fiable (jours de présence) pour distribuer un montant Valo à grain plus
+// large (séjour/semaine HTP) sur le grain plus fin (semaine RHS) demandé par le regroupement.
+//
+// Ces deux fonctions sont le SEUL endroit qui décide "sur quelles lignes compter" — tout calcul
+// agrégé (tableau croisé, tous les types de graphique : barres/lignes/aires/camembert/sankey via
+// computeMultiPivot, mais aussi sunburst/treemap/boxplot/histogramme via buildPieHierarchy/
+// buildBoxplotGroups/buildHistogramSeries) les appelle, pour garantir qu'une même combinaison
+// d'expression + variables compte toujours la même chose, quel que soit l'onglet de base ou le
+// type de sortie choisi.
+function iterSrcKeyFor(expr, baseSrcKey, dimsCfgLists) {
+  const rhsInvolved = baseSrcKey === "rhs" || dimsCfgLists.some(list => list.some(c => c.srcKey === "rhs"));
+  if (expr.srcKey === "valo" && rhsInvolved) return "rhs";
+  return expr.srcKey;
+}
+function ownRowsFor(srcKey, baseSrcKey, baseRows, foreignIdx) {
+  if (srcKey === baseSrcKey) return baseRows; // déjà filtré (filtres globaux) par l'appelant
+  return applyGlobalFilters(flattenIdx(foreignIdx[srcKey]), srcKey, foreignIdx);
+}
 
-  const cells = new Map();
+function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, baseSrcKey) {
+  function iterSrcKeyOf(expr) { return iterSrcKeyFor(expr, baseSrcKey, [rowDimsCfg, colDimsCfg]); }
+
+  function bucket(srcKey) {
+    const srcRows = ownRowsFor(srcKey, baseSrcKey, rows, foreignIdx);
+    const cells = new Map();
+    const rowPartsByKey = new Map(), colPartsByKey = new Map();
+    for (const row of srcRows) {
+      const rParts = rowDimsCfg.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, srcKey)));
+      const cParts = colDimsCfg.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, srcKey)));
+      const rk = rParts.join(" | ");
+      const ck = colDimsCfg.length ? cParts.join(" | ") : "Total";
+      if (!rowPartsByKey.has(rk)) rowPartsByKey.set(rk, rParts);
+      if (!colPartsByKey.has(ck)) colPartsByKey.set(ck, cParts);
+      const key = cellKeyStr(rk, ck);
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key).push(row);
+    }
+    return { cells, rowPartsByKey, colPartsByKey };
+  }
+
+  const bucketCache = new Map();
+  function bucketCached(srcKey) {
+    if (!bucketCache.has(srcKey)) bucketCache.set(srcKey, bucket(srcKey));
+    return bucketCache.get(srcKey);
+  }
+
+  // rowKeys/colKeys = union des clés rencontrées par chaque expression sur SON propre fichier —
+  // une valeur absente d'un fichier pour une cellule donnée y affichera "—"/0 comme avant.
   const rowKeysSet = new Set(), colKeysSet = new Set();
-  const rowPartsByKey = new Map(); // rowKey (string) -> [valeur dim1, valeur dim2, ...] (imbrication en lignes)
-  const colPartsByKey = new Map(); // idem pour les colonnes
-  for (const row of rows) {
-    const rParts = partsFor(rowDimsCfg, row);
-    const cParts = partsFor(colDimsCfg, row);
-    const rk = rParts.join(" | ");
-    const ck = colDimsCfg.length ? cParts.join(" | ") : "Total";
-    rowKeysSet.add(rk); colKeysSet.add(ck);
-    if (!rowPartsByKey.has(rk)) rowPartsByKey.set(rk, rParts);
-    if (!colPartsByKey.has(ck)) colPartsByKey.set(ck, cParts);
-    const key = cellKeyStr(rk, ck);
-    if (!cells.has(key)) cells.set(key, []);
-    cells.get(key).push(row);
+  const rowPartsByKey = new Map(), colPartsByKey = new Map();
+  const bucketOf = {};
+  for (const expr of exprsCfg) {
+    const iterSrcKey = iterSrcKeyOf(expr);
+    const b = bucketCached(iterSrcKey);
+    bucketOf[expr.uid] = b;
+    for (const rk of b.rowPartsByKey.keys()) rowKeysSet.add(rk);
+    for (const ck of b.colPartsByKey.keys()) colKeysSet.add(ck);
+    for (const [k, v] of b.rowPartsByKey) if (!rowPartsByKey.has(k)) rowPartsByKey.set(k, v);
+    for (const [k, v] of b.colPartsByKey) if (!colPartsByKey.has(k)) colPartsByKey.set(k, v);
   }
 
   const rowKeys = [...rowKeysSet].sort();
@@ -787,7 +901,8 @@ function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, b
   const perExpr = {};
   for (const expr of exprsCfg) {
     const measure = measureOf(expr);
-    perExpr[expr.uid] = computeExprPivot(cells, rowKeys, colKeys, expr, measure, expr.aggId, foreignIdx, baseSrcKey);
+    const iterSrcKey = iterSrcKeyOf(expr);
+    perExpr[expr.uid] = computeExprPivot(bucketOf[expr.uid].cells, rowKeys, colKeys, expr, measure, expr.aggId, foreignIdx, iterSrcKey);
   }
 
   return { rowKeys, colKeys, perExpr, rowPartsByKey, colPartsByKey };
@@ -908,7 +1023,6 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
 
 function generer() {
   try {
-    const src = SOURCES[activeSource];
     const finessList = selectedFiness();
     const periods = computeSelectedPeriods();
     if (!finessList.length) { status("Sélectionnez au moins un établissement.", true); return; }
@@ -921,8 +1035,12 @@ function generer() {
     let rows = queryAll(sql, params);
     tagPeriod(rows, activeSource, periods);
 
-    // Fichiers tiers réellement utilisés en lignes/colonnes/filtres globaux : on les interroge et
-    // on les indexe par séjour pour rattacher leurs variables aux lignes de la table active.
+    // Fichiers tiers réellement utilisés en lignes/colonnes/expressions/filtres globaux : on les
+    // interroge et on les indexe par séjour pour rattacher leurs variables aux lignes de la table
+    // active. La table active elle-même est aussi indexée (pas seulement `rows`) : depuis qu'une
+    // expression peut être comptée sur son propre fichier (computeMultiPivot), un filtre global
+    // portant sur la table active doit rester consultable en index même quand ce n'est plus elle
+    // qui pilote l'itération.
     const activeGF = activeGlobalFilters();
     const foreignSrcKeys = new Set(
       [...rowDimRows, ...colDimRows, ...exprRows].map(r => r.srcKey)
@@ -931,15 +1049,16 @@ function generer() {
     );
     const foreignIdx = {};
     for (const srcKey of foreignSrcKeys) foreignIdx[srcKey] = buildForeignIndex(srcKey, finessList, periods);
+    foreignIdx[activeSource] = buildForeignIndex(activeSource, finessList, periods);
 
     rows = applyGlobalFilters(rows, activeSource, foreignIdx);
-    annotateValoCoverage(rows, activeSource, foreignIdx);
+    annotateValoCoverage(foreignIdx, activeSource, rows);
 
     const pivot = computeMultiPivot(rows, rowDimRows, colDimRows, exprRows, foreignIdx, activeSource);
     const rowLabel = rowDimRows.map(r => labelForDimRow(r)).join(" / ");
     const tableHtml = renderMultiPivotTable(pivot, rowDimRows, colDimRows, exprRows);
 
-    const titleText = `TDB PMSI-SMR — ${src.label} — Établissement(s) ${finessList.join(", ")}`;
+    const titleText = `TDB PMSI-SMR — ${exprRows.map(e => exprLabel(e)).join(", ")} par ${rowLabel} — Établissement(s) ${finessList.join(", ")}`;
     const metaText = `Période : ${periods.map(p => p.label).join(", ")} · Filtres globaux : ${activeGF.length} · Lignes : ${rowLabel} · ` +
       `Colonnes : ${colDimRows.length ? colDimRows.map(r => labelForDimRow(r)).join(" / ") : "(aucune)"} · ` +
       `Expressions : ${exprRows.map(e => exprLabel(e)).join(", ")} · ${rows.length} ligne(s) source analysée(s)`;
@@ -2104,15 +2223,24 @@ function annulusPath(cx, cy, rIn, rOut, a1, a2) {
   return `M${x1i.toFixed(1)},${y1i.toFixed(1)} L${x1o.toFixed(1)},${y1o.toFixed(1)} A${rOut},${rOut} 0 ${large} 1 ${x2o.toFixed(1)},${y2o.toFixed(1)} L${x2i.toFixed(1)},${y2i.toFixed(1)} A${rIn},${rIn} 0 ${large} 0 ${x1i.toFixed(1)},${y1i.toFixed(1)} Z`;
 }
 
-// Construit l'arbre d'agrégation pour le camembert imbriqué : un niveau par fonction de clé
-// (levelKeyFns[0] = axe X combiné, levelKeyFns[1..] = chaque variable de Série PRISE SÉPARÉMENT —
-// une variable de Série = un anneau, pas combinée avec les autres dans un même anneau). La valeur
-// de chaque nœud (feuille ou intermédiaire) est recalculée directement sur son sous-ensemble de
-// lignes via agFn/extractValues (comme le tableau croisé), pas déduite de la somme des enfants —
-// correct même pour une agrégation non additive (moyenne, min, max, médiane).
-function buildPieHierarchy(rows, levelKeyFns, expr, measure, aggId, foreignIdx, baseSrcKey) {
+// Construit l'arbre d'agrégation pour le camembert imbriqué : un niveau par entrée de
+// `levelDimsCfgList` (élément 0 = axe X, combinant ses variables ; éléments suivants = chaque
+// variable de Série PRISE SÉPARÉMENT — un anneau chacune, pas combinées). La valeur de chaque nœud
+// (feuille ou intermédiaire) est recalculée directement sur son sous-ensemble de lignes via
+// agFn/extractValues (comme le tableau croisé), pas déduite de la somme des enfants — correct même
+// pour une agrégation non additive (moyenne, min, max, médiane).
+//
+// Comme computeMultiPivot (cf. iterSrcKeyFor/ownRowsFor) : on itère les lignes du fichier propre à
+// `expr`, pas celles de `baseRows` (sauf le cas particulier Valo/RHS) — un même "Nombre de DAS"
+// donne donc le même total en sunburst/treemap qu'en tableau croisé, quel que soit l'onglet actif.
+function buildPieHierarchy(baseRows, levelDimsCfgList, expr, measure, aggId, foreignIdx, baseSrcKey) {
+  const iterSrcKey = iterSrcKeyFor(expr, baseSrcKey, levelDimsCfgList);
+  const rows = ownRowsFor(iterSrcKey, baseSrcKey, baseRows, foreignIdx);
+  const levelKeyFns = levelDimsCfgList.map(cfgList =>
+    row => cfgList.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, iterSrcKey))).join(" / ")
+  );
   const isDistinct = !!measure.distinctKey;
-  const nodeValue = rowsSubset => agFn(extractValues(rowsSubset, measure, expr, foreignIdx, baseSrcKey), isDistinct, aggId) || 0;
+  const nodeValue = rowsSubset => agFn(extractValues(rowsSubset, measure, expr, foreignIdx, iterSrcKey), isDistinct, aggId) || 0;
   function group(rowsSubset, levelIdx) {
     const value = nodeValue(rowsSubset);
     if (levelIdx >= levelKeyFns.length) return { value, children: null };
@@ -2205,18 +2333,15 @@ function renderHierPieSvg(root, nRings, ringNames, ringColors) {
   return `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>` + extraLegend;
 }
 
-// Point d'entrée du camembert imbriqué depuis genererGraphique : construit les fonctions de clé
-// (une par anneau) et l'arbre, à partir des lignes déjà filtrées d'une vignette.
+// Point d'entrée du camembert imbriqué depuis genererGraphique : construit la liste des niveaux
+// (un par anneau) et l'arbre, à partir des lignes déjà filtrées d'une vignette.
 function renderNestedPieFromRows(rows, foreignIdx, expr) {
   const measure = measureOf(expr);
-  const xKeyFn = row => graphXDimRows.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))).join(" / ");
-  const levelKeyFns = [xKeyFn, ...graphSeriesDimRows.map(cfg =>
-    row => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))
-  )];
+  const levelDimsCfgList = [graphXDimRows, ...graphSeriesDimRows.map(cfg => [cfg])];
   const ringNames = [graphXDimRows.map(r => labelForDimRow(r)).join(" / "), ...graphSeriesDimRows.map(r => labelForDimRow(r))];
-  const root = buildPieHierarchy(rows, levelKeyFns, expr, measure, expr.aggId, foreignIdx, activeSourceGraph);
+  const root = buildPieHierarchy(rows, levelDimsCfgList, expr, measure, expr.aggId, foreignIdx, activeSourceGraph);
   syncGraphRingColors();
-  return renderHierPieSvg(root, levelKeyFns.length, ringNames, graphRingColors);
+  return renderHierPieSvg(root, levelDimsCfgList.length, ringNames, graphRingColors);
 }
 
 // Nuage de points / bulles : `exSize` optionnel — absent pour un nuage simple, fourni pour un
@@ -2363,12 +2488,18 @@ function computeBoxStats(values) {
   const q = p => { const idx = p * (s.length - 1), lo = Math.floor(idx), hi = Math.ceil(idx); return s[lo] + (s[hi] - s[lo]) * (idx - lo); };
   return { min: s[0], q1: q(0.25), median: q(0.5), q3: q(0.75), max: s[s.length - 1], n: s.length };
 }
-function buildBoxplotGroups(rows, xDimsCfg, serieDimCfg, expr, foreignIdx, baseSrcKey) {
+// Comme computeMultiPivot/buildPieHierarchy : itère les lignes du fichier propre à `expr` (sauf
+// cas particulier Valo/RHS), pas celles de `baseRows` — une même mesure donne la même distribution
+// quel que soit l'onglet de base.
+function buildBoxplotGroups(baseRows, xDimsCfg, serieDimCfg, expr, foreignIdx, baseSrcKey) {
   const measure = measureOf(expr);
+  const dimsCfgLists = serieDimCfg ? [xDimsCfg, [serieDimCfg]] : [xDimsCfg];
+  const iterSrcKey = iterSrcKeyFor(expr, baseSrcKey, dimsCfgLists);
+  const rows = ownRowsFor(iterSrcKey, baseSrcKey, baseRows, foreignIdx);
   const groups = new Map();
   for (const row of rows) {
-    const xKey = xDimsCfg.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, baseSrcKey))).join(" / ");
-    const sKey = serieDimCfg ? dimValue(dimDefOf(serieDimCfg), serieDimCfg.mode, sourceRowFor(serieDimCfg, row, foreignIdx, baseSrcKey)) : "Total";
+    const xKey = xDimsCfg.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, iterSrcKey))).join(" / ");
+    const sKey = serieDimCfg ? dimValue(dimDefOf(serieDimCfg), serieDimCfg.mode, sourceRowFor(serieDimCfg, row, foreignIdx, iterSrcKey)) : "Total";
     if (!groups.has(xKey)) groups.set(xKey, new Map());
     const sub = groups.get(xKey);
     if (!sub.has(sKey)) sub.set(sKey, []);
@@ -2381,7 +2512,7 @@ function buildBoxplotGroups(rows, xDimsCfg, serieDimCfg, expr, foreignIdx, baseS
   const series = serieKeys.map((sk, i) => ({
     label: sk,
     color: CHART_PALETTE[i % CHART_PALETTE.length],
-    boxes: categories.map(xk => computeBoxStats(extractValues((groups.get(xk).get(sk)) || [], measure, expr, foreignIdx, baseSrcKey))),
+    boxes: categories.map(xk => computeBoxStats(extractValues((groups.get(xk).get(sk)) || [], measure, expr, foreignIdx, iterSrcKey))),
   }));
   return { categories, series };
 }
@@ -2446,22 +2577,26 @@ function computeHistogramBins(values) {
   values.forEach(v => { let idx = Math.floor((v - min) / width); if (idx >= k) idx = k - 1; if (idx < 0) idx = 0; counts[idx]++; });
   return { counts, min, max, width, k };
 }
-function buildHistogramSeries(rows, serieDimCfg, expr, foreignIdx, baseSrcKey) {
+// Comme buildBoxplotGroups : itère les lignes du fichier propre à `expr`, pas celles de `baseRows`.
+function buildHistogramSeries(baseRows, serieDimCfg, expr, foreignIdx, baseSrcKey) {
   const measure = measureOf(expr);
-  const allValues = extractValues(rows, measure, expr, foreignIdx, baseSrcKey);
+  const dimsCfgLists = serieDimCfg ? [[serieDimCfg]] : [];
+  const iterSrcKey = iterSrcKeyFor(expr, baseSrcKey, dimsCfgLists);
+  const rows = ownRowsFor(iterSrcKey, baseSrcKey, baseRows, foreignIdx);
+  const allValues = extractValues(rows, measure, expr, foreignIdx, iterSrcKey);
   const bins = computeHistogramBins(allValues);
   if (!serieDimCfg || !bins.k) {
     return { bins, series: [{ label: "Total", color: CHART_PALETTE[0], counts: bins.counts }] };
   }
   const groups = new Map();
   for (const row of rows) {
-    const sKey = dimValue(dimDefOf(serieDimCfg), serieDimCfg.mode, sourceRowFor(serieDimCfg, row, foreignIdx, baseSrcKey));
+    const sKey = dimValue(dimDefOf(serieDimCfg), serieDimCfg.mode, sourceRowFor(serieDimCfg, row, foreignIdx, iterSrcKey));
     if (!groups.has(sKey)) groups.set(sKey, []);
     groups.get(sKey).push(row);
   }
   const serieKeys = [...groups.keys()].sort().slice(0, CHART_CAT_CAP); // comptages non additifs entre classes : on tronque plutôt que replier
   const series = serieKeys.map((sk, i) => {
-    const vals = extractValues(groups.get(sk), measure, expr, foreignIdx, baseSrcKey);
+    const vals = extractValues(groups.get(sk), measure, expr, foreignIdx, iterSrcKey);
     const counts = new Array(bins.k).fill(0);
     vals.forEach(v => { let idx = Math.floor((v - bins.min) / bins.width); if (idx >= bins.k) idx = bins.k - 1; if (idx < 0) idx = 0; counts[idx]++; });
     return { label: sk, color: CHART_PALETTE[i % CHART_PALETTE.length], counts };
@@ -2547,16 +2682,24 @@ function renderTreemapSvg(root, ringNames, ringColors) {
   }
   layout(root, 0, 0, W, H, 0);
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
-  return `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>`;
+  // Un treemap n'a pas d'axes cartésiens (imbrication de rectangles, pas X/Y) : la légende par
+  // niveau — même traitement que le camembert imbriqué (renderHierPieSvg) — est ce qui indique
+  // quelle variable chaque niveau de subdivision représente et quelle couleur va à quelle valeur,
+  // puisque ni l'un ni l'autre n'est déductible du dessin seul au-delà de l'infobulle au survol.
+  let extraLegend = "";
+  for (let depth = 0; depth < ringNames.length; depth++) {
+    const labels = levelLabels[depth];
+    if (!labels.length || (depth === 0 && labels.length > CHART_CAT_CAP)) continue; // 1er niveau trop nombreux : infobulle seule
+    const series = labels.map(lbl => ({ label: lbl, color: colorFor(depth, lbl) }));
+    extraLegend += `<div style="font-size:0.82em;color:var(--gris);margin-top:4px;text-align:center;">${esc(ringNames[depth])}</div>` + legendHtml(series);
+  }
+  return `<div style="width:100%;display:flex;justify-content:center;">${svgTag}</div>` + extraLegend;
 }
 function renderTreemapFromRows(rows, foreignIdx, expr) {
   const measure = measureOf(expr);
-  const xKeyFn = row => graphXDimRows.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))).join(" / ");
-  const levelKeyFns = [xKeyFn, ...graphSeriesDimRows.map(cfg =>
-    row => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))
-  )];
+  const levelDimsCfgList = [graphXDimRows, ...graphSeriesDimRows.map(cfg => [cfg])];
   const ringNames = [graphXDimRows.map(r => labelForDimRow(r)).join(" / "), ...graphSeriesDimRows.map(r => labelForDimRow(r))];
-  const root = buildPieHierarchy(rows, levelKeyFns, expr, measure, expr.aggId, foreignIdx, activeSourceGraph);
+  const root = buildPieHierarchy(rows, levelDimsCfgList, expr, measure, expr.aggId, foreignIdx, activeSourceGraph);
   syncGraphRingColors();
   return renderTreemapSvg(root, ringNames, graphRingColors);
 }
@@ -2758,9 +2901,10 @@ function prepareGraphData(setSt) {
   );
   const foreignIdx = {};
   for (const srcKey of foreignSrcKeys) foreignIdx[srcKey] = buildForeignIndex(srcKey, finessList, periods);
+  foreignIdx[activeSourceGraph] = buildForeignIndex(activeSourceGraph, finessList, periods);
 
   rows = applyGlobalFilters(rows, activeSourceGraph, foreignIdx);
-  annotateValoCoverage(rows, activeSourceGraph, foreignIdx);
+  annotateValoCoverage(foreignIdx, activeSourceGraph, rows);
 
   const exprsUsed = (chartType === "camembert" || chartType === "sunburst" || chartType === "boxplot" || chartType === "histogramme" || chartType === "sankey") ? graphExprRows.slice(0, 1)
     : chartType === "nuage" ? graphExprRows.slice(0, 2)
@@ -2891,11 +3035,10 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
   if (chartType === "sunburst" || chartType === "treemap" || (chartType === "camembert" && graphSeriesDimRows.length)) {
     const expr0 = exprsUsed[0];
     const measure = measureOf(expr0);
-    const xKeyFn = row => graphXDimRows.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))).join(" / ");
-    const levelKeyFns = [xKeyFn, ...graphSeriesDimRows.map(cfg =>
-      row => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))
-    )];
-    const root = buildPieHierarchy(g.rows, levelKeyFns, expr0, measure, expr0.aggId, foreignIdx, activeSourceGraph);
+    const levelDimsCfgList = [graphXDimRows, ...graphSeriesDimRows.map(cfg => [cfg])];
+    // Même arbre que l'aperçu SVG (renderNestedPieFromRows/renderTreemapFromRows) : un seul calcul
+    // d'agrégation (buildPieHierarchy), deux mises en forme.
+    const root = buildPieHierarchy(g.rows, levelDimsCfgList, expr0, measure, expr0.aggId, foreignIdx, activeSourceGraph);
     const { ids, labels, parents, values, colors } = flattenHierarchyForPlotly(root);
     const type = chartType === "treemap" ? "treemap" : "sunburst";
     return { label, data: [{ type, ids, labels, parents, values, branchvalues: "total", marker: { colors }, textinfo: "label+percent parent" }], layout: baseLayout };
@@ -2909,43 +3052,38 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     return { label, data: [{ type: "pie", labels: pieLabels, values: pieValues, marker: { colors: CHART_PALETTE }, textinfo: "label+percent" }], layout: baseLayout };
   }
 
-  if (chartType === "boxplot" || chartType === "histogramme") {
+  // Boîte à moustaches / histogramme : mêmes statistiques que l'aperçu SVG (buildBoxplotGroups /
+  // buildHistogramSeries, réutilisées telles quelles — un seul calcul, deux mises en forme), passées
+  // à Plotly comme quartiles/classes déjà agrégés plutôt que de lui laisser recalculer depuis des
+  // points bruts (qui aurait pu binner/quartiler différemment de l'aperçu pour le même graphique).
+  if (chartType === "boxplot") {
     const expr0 = exprsUsed[0];
-    const measure = measureOf(expr0);
     const serieDimCfg = graphSeriesDimRows[0] || null;
-    const xLabelOf = row => graphXDimRows.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, activeSourceGraph))).join(" / ");
-    const traces = [];
-    if (serieDimCfg) {
-      const groups = new Map();
-      for (const row of g.rows) {
-        const sKey = dimValue(dimDefOf(serieDimCfg), serieDimCfg.mode, sourceRowFor(serieDimCfg, row, foreignIdx, activeSourceGraph));
-        if (!groups.has(sKey)) groups.set(sKey, []);
-        groups.get(sKey).push(row);
-      }
-      [...groups.keys()].sort().slice(0, CHART_CAT_CAP).forEach((sKey, i) => {
-        const rowsSub = groups.get(sKey);
-        const color = CHART_PALETTE[i % CHART_PALETTE.length];
-        if (chartType === "boxplot") {
-          traces.push({ type: "box", x: rowsSub.map(xLabelOf), y: extractValues(rowsSub, measure, expr0, foreignIdx, activeSourceGraph), name: sKey, marker: { color } });
-        } else {
-          traces.push({ type: "histogram", x: extractValues(rowsSub, measure, expr0, foreignIdx, activeSourceGraph), name: sKey, opacity: 0.65, marker: { color } });
-        }
-      });
-    } else if (chartType === "boxplot") {
-      traces.push({ type: "box", x: g.rows.map(xLabelOf), y: extractValues(g.rows, measure, expr0, foreignIdx, activeSourceGraph), marker: { color: CHART_PALETTE[0] } });
-    } else {
-      traces.push({ type: "histogram", x: extractValues(g.rows, measure, expr0, foreignIdx, activeSourceGraph), marker: { color: CHART_PALETTE[0] } });
-    }
-    const layout = { ...baseLayout };
-    if (chartType === "boxplot") {
-      layout.boxmode = "group";
-      layout.xaxis = { title: xLabel, automargin: true };
-      layout.yaxis = { title: exprLabelFor(exprsUsed[0]), automargin: true };
-    } else {
-      layout.barmode = "overlay";
-      layout.xaxis = { title: exprLabelFor(exprsUsed[0]), automargin: true };
-      layout.yaxis = { title: "Nombre", automargin: true };
-    }
+    const { categories, series } = buildBoxplotGroups(g.rows, graphXDimRows, serieDimCfg, expr0, foreignIdx, activeSourceGraph);
+    const traces = series.map(ser => {
+      const pts = categories.map((cat, i) => ({ cat, b: ser.boxes[i] })).filter(p => p.b);
+      return {
+        type: "box", name: serieDimCfg ? ser.label : undefined,
+        x: pts.map(p => p.cat),
+        q1: pts.map(p => p.b.q1), median: pts.map(p => p.b.median), q3: pts.map(p => p.b.q3),
+        lowerfence: pts.map(p => p.b.min), upperfence: pts.map(p => p.b.max),
+        marker: { color: ser.color },
+      };
+    });
+    const layout = { ...baseLayout, boxmode: "group", xaxis: { title: xLabel, automargin: true }, yaxis: { title: exprLabelFor(expr0), automargin: true } };
+    return { label, data: traces, layout };
+  }
+
+  if (chartType === "histogramme") {
+    const expr0 = exprsUsed[0];
+    const serieDimCfg = graphSeriesDimRows[0] || null;
+    const { bins, series } = buildHistogramSeries(g.rows, serieDimCfg, expr0, foreignIdx, activeSourceGraph);
+    const centers = Array.from({ length: bins.k }, (_, i) => bins.min + bins.width * (i + 0.5));
+    const traces = series.map(ser => ({
+      type: "bar", name: serieDimCfg ? ser.label : undefined,
+      x: centers, y: ser.counts, opacity: 0.75, marker: { color: ser.color },
+    }));
+    const layout = { ...baseLayout, barmode: "overlay", bargap: 0.05, xaxis: { title: exprLabelFor(expr0), automargin: true }, yaxis: { title: "Nombre", automargin: true } };
     return { label, data: traces, layout };
   }
 
@@ -3438,18 +3576,14 @@ tr:last-child td{background:#eaf2f8;font-weight:bold;}
 function wireEvents() {
   document.getElementById("checksAnnees").addEventListener("change", () => { updateRecap(); renderGlobalFilterList(); });
   document.getElementById("selMois").addEventListener("change", () => { updateRecap(); renderGlobalFilterList(); });
-
-  document.querySelectorAll("#sourceTabs button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#sourceTabs button").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      activeSource = btn.dataset.src;
-      // Changer d'onglet ne change que la table pilote de la requête (celle dont les lignes sont
-      // parcourues) et la source par défaut des nouvelles variables ajoutées : les variables déjà
-      // choisies en lignes/colonnes/expressions, qui peuvent venir de n'importe quel fichier, sont conservées.
-      updateRecap();
-    });
+  document.getElementById("selPeriodeMode").addEventListener("change", () => {
+    const perso = document.getElementById("selPeriodeMode").value === "perso";
+    document.getElementById("champMoisCumule").style.display = perso ? "none" : "";
+    document.getElementById("champPeriodePerso").style.display = perso ? "" : "none";
+    updateRecap(); renderGlobalFilterList();
   });
+  document.getElementById("inpPeriodeDebut").addEventListener("input", () => { updateRecap(); renderGlobalFilterList(); });
+  document.getElementById("inpPeriodeFin").addEventListener("input", () => { updateRecap(); renderGlobalFilterList(); });
 
   document.getElementById("btnAddRowDim").addEventListener("click", () => {
     const src = SOURCES[activeSource];
@@ -3564,16 +3698,6 @@ function wireEvents() {
   });
 
   // ---- Mode "Graphique" ----
-  document.querySelectorAll("#sourceTabsGraph button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#sourceTabsGraph button").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      activeSourceGraph = btn.dataset.src;
-      // Comme pour le tableau croisé : changer d'onglet ne change que la table pilote de la
-      // requête / la source par défaut des nouvelles variables — les expressions déjà choisies,
-      // qui peuvent venir de n'importe quel fichier, sont conservées.
-    });
-  });
   document.getElementById("btnAddGraphXDim").addEventListener("click", () => {
     if (graphXDimRows.length >= 3) return;
     const src = SOURCES[activeSourceGraph];
