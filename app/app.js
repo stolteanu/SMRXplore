@@ -554,6 +554,23 @@ function resolveForeignRow(idx, baseRow) {
   const candidates = idx.get(admKey(baseRow.finess_epmsi, baseRow.numero_admin_sejour));
   if (!candidates || !candidates.length) return null;
   const baseYear = baseRow._periode_annee;
+  // Valorisation_sejour n'a PAS une ligne unique par séjour dans tous les cas : en hospitalisation
+  // complète (HC) oui, mais en hospitalisation à temps partiel (HTP, numero_semaine_htp renseigné)
+  // il y a une ligne PAR SEMAINE, chacune avec son propre montant (et éventuellement son propre GME,
+  // reclassé semaine par semaine). Matcher uniquement par année ferait retomber, pour un séjour HTP,
+  // toutes les semaines d'une même année sur la même ligne (la première trouvée) — sous-évaluant le
+  // montant total (une seule semaine au lieu de leur somme) et le sur-évaluant dès qu'un regroupement
+  // (ex. GN) éclate ces semaines en plusieurs cellules, puisque cette même ligne s'y retrouverait
+  // comptée plusieurs fois. On matche donc d'abord par (année + semaine) quand les deux côtés portent
+  // un numéro de semaine — HC n'ayant qu'un candidat par année, ce cas plus précis n'y change rien.
+  // ATTENTION : valorisation_sejour porte AUSSI un champ numero_semaine à elle (format année+semaine,
+  // sans rapport avec le numero_semaine du RHS, format semaine+année) — ne jamais le lire comme la
+  // semaine de la ligne Valo, seul numero_semaine_htp (2 car., semaine seule) fait foi côté Valo.
+  const baseWeek = baseRow.numero_semaine ? baseRow.numero_semaine.slice(0, 2) : null;
+  if (baseYear != null && baseWeek != null) {
+    const matchWeek = candidates.find(r => String(r._periode_annee) === String(baseYear) && r.numero_semaine_htp === baseWeek);
+    if (matchWeek) return matchWeek;
+  }
   if (baseYear != null) {
     const match = candidates.find(r => String(r._periode_annee) === String(baseYear));
     if (match) return match;
@@ -604,6 +621,31 @@ function agFn(values, isDistinct, aggName) {
   }
 }
 
+// Jours de présence d'une ligne RHS (même calcul que la mesure rhs::nb_journees, dupliqué ici car
+// extractValues travaille sur des lignes brutes, pas via le catalogue de mesures).
+function rhsJoursPresents(row) {
+  return (String(row.jours_hors_weekend || "") + String(row.jours_weekend || "")).split("").filter(c => c === "1").length;
+}
+
+// Répartition au jour de présence des montants Valo croisés depuis RHS (méthode validée par
+// l'utilisateur, 2026-08-18) : annote chaque ligne Valo atteinte depuis `rows` du nombre total de
+// jours de présence RHS qui s'y rattachent (_joursCouverts) — une ligne Valo HC (une par séjour×
+// campagne) est couverte par toutes les semaines RHS de ce séjour cette année-là ; une ligne Valo HTP
+// (une par semaine) n'est couverte que par sa propre semaine. Précalculé UNE FOIS sur l'ensemble des
+// lignes de la requête (pas par cellule du pivot) : la répartition doit voir toutes les semaines qui
+// se rattachent à une ligne Valo donnée, y compris celles qui finiront dans une autre cellule qu'elle
+// (ex. regroupement par semaine, ou par GN pour un séjour HTP reclassé) — sinon la somme par cellule
+// ne reconstituerait pas exactement le montant total.
+function annotateValoCoverage(rows, baseSrcKey, foreignIdx) {
+  const valoIdx = foreignIdx && foreignIdx["valo"];
+  if (baseSrcKey !== "rhs" || !valoIdx) return; // seul le cas rapporté (RHS en base) est couvert
+  for (const row of rows) {
+    const valoRow = resolveForeignRow(valoIdx, row);
+    if (!valoRow) continue;
+    valoRow._joursCouverts = (valoRow._joursCouverts || 0) + rhsJoursPresents(row);
+  }
+}
+
 // `expr` (optionnel) porte le srcKey de la mesure : quand il diffère de baseSrcKey (mesure venant
 // d'un autre fichier que celui parcouru par `cellRows`), chaque ligne est d'abord rattachée à sa
 // ligne homologue du fichier tiers via foreignIdx (même mécanisme que dimValue/sourceRowFor pour
@@ -611,19 +653,23 @@ function agFn(values, isDistinct, aggName) {
 // de montant de valorisation (Valo) dans la même expression de tableau/graphique.
 //
 // Fan-out de jointure : quand le fichier de base a plusieurs lignes par séjour (RHS : une par
-// semaine) et que la mesure vient d'un fichier au grain séjour (Valo : une ligne par séjour), la
-// résolution ci-dessus fait pointer TOUTES les lignes RHS de ce séjour vers la MÊME ligne Valo —
-// sans dédoublonnage, un montant séjour serait alors sommé une fois par semaine (des dizaines de
-// millions d'euros de trop) au lieu d'une fois par séjour. `sourceRowFor`/`resolveForeignRow`
-// renvoient systématiquement la même référence d'objet pour un même séjour (tirée du même tableau
-// dans foreignIdx) : un Set de références suffit donc à ne garder qu'une occurrence par séjour tiers,
-// sans avoir besoin de connaître sa clé. Uniquement quand la mesure change réellement de fichier —
-// les mesures du fichier de base elles-mêmes (ex. nb de journées RHS, une valeur par ligne) doivent
-// au contraire rester sommées ligne par ligne, sans dédoublonnage.
+// semaine) et que la mesure vient d'un fichier à grain plus large (Valo : une ligne par séjour en HC,
+// par semaine en HTP), la résolution ci-dessus fait pointer PLUSIEURS lignes RHS vers la MÊME ligne
+// Valo. Pour RHS -> Valo spécifiquement (le seul cas où l'on connaît le nombre de jours de présence
+// de chaque ligne de base, via rhsJoursPresents), chaque ligne RHS reçoit une fraction du montant
+// Valo proportionnelle à ses propres jours de présence parmi le total couvert par cette ligne Valo
+// (annotateValoCoverage) — la somme des fractions reconstitue exactement le montant, quelle que soit
+// la façon dont les lignes RHS sont ensuite réparties en cellules de regroupement (méthode validée
+// par l'utilisateur : le jour de présence est l'unité qui se prête à tout regroupement, valable aussi
+// bien en HC qu'en HTP). Pour les autres croisements (mesure d'un fichier à grain séjour unique comme
+// VID-HOSP, ou RHS -> Valo depuis une source de détail comme CSARR qui ne porte pas les jours de
+// présence de sa ligne RHS parente), on retombe sur le dédoublonnage par référence — une seule
+// occurrence par ligne tierce, comme avant.
 function extractValues(cellRows, measure, expr, foreignIdx, baseSrcKey) {
   const crossSource = !!(expr && expr.srcKey !== baseSrcKey);
+  const dayWeighted = crossSource && expr.srcKey === "valo" && baseSrcKey === "rhs" && !measure.distinctKey;
   const resolve = crossSource ? (r0 => sourceRowFor(expr, r0, foreignIdx, baseSrcKey)) : (r0 => r0);
-  const seen = crossSource ? new Set() : null;
+  const seen = (crossSource && !dayWeighted) ? new Set() : null;
   if (measure.distinctKey) {
     const out = [];
     for (const r0 of cellRows) {
@@ -643,7 +689,13 @@ function extractValues(cellRows, measure, expr, foreignIdx, baseSrcKey) {
     if (v !== null && v !== undefined && v !== "") {
       v = Number(v);
       if (measure.scale) v *= measure.scale;
-      if (!isNaN(v)) vals.push(v);
+      if (!isNaN(v)) {
+        if (dayWeighted) {
+          const total = r._joursCouverts;
+          v *= total ? (rhsJoursPresents(r0) / total) : 0;
+        }
+        vals.push(v);
+      }
     }
   }
   return vals;
@@ -854,6 +906,27 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
 
 // ---------- Génération ----------
 
+// Note pour le lecteur (pas pour nous : le détail technique de la méthode — rattachement par séjour
+// puis par semaine, répartition au jour de présence — reste dans le projet, pas dans l'outil) :
+// affichée dès qu'un tableau/graphique croise le fichier de base avec une variable ou une mesure de
+// Valorisation, le seul fichier qui n'a pas un grain fixe (une ligne par séjour en HC, par semaine en
+// HTP) — le seul cas où le rattachement multi-fichiers reste une approximation, dans de rares cas de
+// désalignement entre fichiers sources (une semaine de valorisation sans RHS correspondant). Absente
+// quand Valorisation est elle-même le fichier de base (alors une somme directe, toujours exacte).
+function crossSourceValoNoteHtml(baseSrcKey, cfgLists) {
+  if (baseSrcKey === "valo") return "";
+  const touchesValo = cfgLists.some(list => (list || []).some(c => c && c.srcKey === "valo"));
+  if (!touchesValo) return "";
+  return `<div style="background:#fff8e1;border:1px solid #f0d98c;border-radius:6px;padding:10px 14px;` +
+    `margin-bottom:14px;font-size:0.85em;color:#5c4b12;">⚠ Ce résultat croise le fichier ` +
+    `<b>${esc(SOURCES[baseSrcKey].short)}</b> avec une variable ou une mesure de <b>Valorisation</b>. ` +
+    `Le rattachement se fait par séjour (et par semaine de présence en hospitalisation à temps ` +
+    `partiel, montant réparti au prorata des jours de présence) — un très petit nombre de semaines ` +
+    `de valorisation sans ligne RHS correspondante peuvent ne pas être comptées (désalignement entre ` +
+    `fichiers sources, pas une erreur de calcul). Pour un total garanti identique à la référence ATIH, ` +
+    `utilisez Valorisation comme fichier de base.</div>`;
+}
+
 function generer() {
   try {
     const src = SOURCES[activeSource];
@@ -881,6 +954,7 @@ function generer() {
     for (const srcKey of foreignSrcKeys) foreignIdx[srcKey] = buildForeignIndex(srcKey, finessList, periods);
 
     rows = applyGlobalFilters(rows, activeSource, foreignIdx);
+    annotateValoCoverage(rows, activeSource, foreignIdx);
 
     const pivot = computeMultiPivot(rows, rowDimRows, colDimRows, exprRows, foreignIdx, activeSource);
     const rowLabel = rowDimRows.map(r => labelForDimRow(r)).join(" / ");
@@ -891,10 +965,12 @@ function generer() {
       `Colonnes : ${colDimRows.length ? colDimRows.map(r => labelForDimRow(r)).join(" / ") : "(aucune)"} · ` +
       `Expressions : ${exprRows.map(e => exprLabel(e)).join(", ")} · ${rows.length} ligne(s) source analysée(s)`;
 
+    const crossNote = crossSourceValoNoteHtml(activeSource, [rowDimRows, colDimRows, exprRows]);
+
     document.getElementById("panelResult").style.display = "block";
     document.getElementById("resultMeta").textContent = metaText;
-    document.getElementById("resultWrap").innerHTML = tableHtml;
-    lastResult = { titleText, metaText, tableHtml };
+    document.getElementById("resultWrap").innerHTML = crossNote + tableHtml;
+    lastResult = { titleText, metaText, tableHtml: crossNote + tableHtml };
     ["btnExportHtml", "btnExportPdf", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
     status(`Tableau généré (${pivot.rowKeys.length} ligne(s) × ${pivot.colKeys.length} colonne(s) × ${exprRows.length} expression(s)).`);
   } catch (e) {
@@ -2707,6 +2783,7 @@ function prepareGraphData(setSt) {
   for (const srcKey of foreignSrcKeys) foreignIdx[srcKey] = buildForeignIndex(srcKey, finessList, periods);
 
   rows = applyGlobalFilters(rows, activeSourceGraph, foreignIdx);
+  annotateValoCoverage(rows, activeSourceGraph, foreignIdx);
 
   const exprsUsed = (chartType === "camembert" || chartType === "sunburst" || chartType === "boxplot" || chartType === "histogramme" || chartType === "sankey") ? graphExprRows.slice(0, 1)
     : chartType === "nuage" ? graphExprRows.slice(0, 2)
@@ -2757,9 +2834,11 @@ function genererGraphique() {
       return `<div class="chart-panel"><h4>${esc(panelTitle)}</h4>${fragment}</div>`;
     });
 
+    const crossNote = crossSourceValoNoteHtml(activeSourceGraph, [graphXDimRows, graphSeriesDimRows, graphFacetDimRows, exprsUsed]);
+
     document.getElementById("panelGraphResult").style.display = "block";
     document.getElementById("graphResultMeta").textContent = graphResultMetaText(chartType, exprsUsed, facetGroups, facetsShown, activeGF);
-    document.getElementById("graphResultWrap").innerHTML = panels.join("");
+    document.getElementById("graphResultWrap").innerHTML = crossNote + panels.join("");
     setSt(`Graphique généré (${facetsShown.length} vignette(s)).`);
   } catch (e) {
     setSt("Erreur : " + e.message, true);
