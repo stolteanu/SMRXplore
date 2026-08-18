@@ -9,15 +9,13 @@ const SOURCES = {
     short: "RHS",
     table: "rhs_groupe r",
     sql: `SELECT r.*, gme.libelle_long AS lib_gme, gn.libelle_long AS lib_gn,
-                 cm.libelle_long AS lib_cm, gr.libelle_long AS lib_gr, gl.libelle_long AS lib_gl,
+                 cm.libelle_long AS lib_cm,
                  err.libelle AS lib_erreur, err.type AS type_erreur,
                  dp.libelle_complet AS lib_dp, ae.libelle_complet AS lib_ae
           FROM rhs_groupe r
           LEFT JOIN nomenclature_gme gme ON gme.code = r.code_gme AND gme.kind = 'GME'
           LEFT JOIN nomenclature_gme gn ON gn.code = substr(r.code_gme,1,4) AND gn.kind = 'GN'
           LEFT JOIN nomenclature_gme cm ON cm.code = substr(r.code_gme,1,2) AND cm.kind = 'CM'
-          LEFT JOIN nomenclature_gme gr ON gr.code = substr(r.code_gme,1,5) AND gr.kind = 'GR'
-          LEFT JOIN nomenclature_gme gl ON gl.code = substr(r.code_gme,1,6) AND gl.kind = 'GL'
           LEFT JOIN nomenclature_gme_erreurs err
                  ON err.code = CASE WHEN r.code_retour_groupage GLOB '[0-9]*'
                                      THEN CAST(CAST(r.code_retour_groupage AS INTEGER) AS TEXT)
@@ -34,14 +32,19 @@ const SOURCES = {
       { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
       { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
       { id: "gme", label: "GME", col: "code_gme", libCol: "lib_gme" },
-      // Hiérarchie GME (nomenclature_gme, plate CM->GN->GR->GL->GME) : chaque niveau est une
-      // troncature du code GME 7 caractères (longueurs fixes CM=2, GN=4, GR=5, GL=6, GME=7 — cf.
-      // config/nomenclatures/gme.schema.json) ; le libellé de chaque niveau est résolu par jointure
-      // sur son "kind" plutôt que reconstruit en JS, pour rester fidèle à la nomenclature ATIH.
+      // Hiérarchie GME (nomenclature_gme, plate CM->GN->GR->GL->GME) : CM et GN restent le code
+      // cumulé (troncature du code GME, longueurs fixes CM=2, GN=4 — cf. gme.schema.json), avec
+      // libellé résolu par jointure sur nomenclature_gme. GR/GL/Sévérité, en revanche, ne sont PAS
+      // les codes cumulés (5/6/7 caractères) mais le seul CARACTÈRE ajouté à ce niveau (le "type"
+      // GR ex. S/T/U, le "type" GL ex. A/B/C, le chiffre de sévérité ex. 0/1/2) — comparable d'un GN
+      // à l'autre, contrairement au code cumulé qui inclut le GN et n'est donc jamais le même d'un
+      // groupe à l'autre. Pas de libellé possible : la nomenclature ATIH ne référence que les codes
+      // cumulés complets, pas ces caractères isolés.
       { id: "cm", label: "CM (catégorie majeure)", derive: r => (r.code_gme || "").substring(0, 2), libCol: "lib_cm" },
       { id: "gn", label: "GN (groupe nosologique)", derive: r => (r.code_gme || "").substring(0, 4), libCol: "lib_gn" },
-      { id: "gr", label: "GR (groupe racine)", derive: r => (r.code_gme || "").substring(0, 5), libCol: "lib_gr" },
-      { id: "gl", label: "GL (niveau de sévérité/lourdeur)", derive: r => (r.code_gme || "").substring(0, 6), libCol: "lib_gl" },
+      { id: "gr", label: "Type GR", derive: r => (r.code_gme || "").charAt(4) || null },
+      { id: "gl", label: "GL", derive: r => (r.code_gme || "").charAt(5) || null },
+      { id: "severite", label: "Sévérité (GME)", derive: r => (r.code_gme || "").charAt(6) || null },
       { id: "erreur", label: "Erreur de groupage", col: "code_retour_groupage",
         libDerive: r => r.lib_erreur || (r.code_retour_groupage === "0" || r.code_retour_groupage === "000" ? "Aucune" : null) },
       { id: "erreur_type", label: "Erreur de groupage (bloquant/non)", col: "type_erreur" },
@@ -124,10 +127,9 @@ const SOURCES = {
     label: "Valorisation",
     short: "Valo",
     table: "valorisation_sejour va",
-    sql: `SELECT va.*, cm.libelle_long AS lib_cm, gl.libelle_long AS lib_gl
+    sql: `SELECT va.*, cm.libelle_long AS lib_cm
           FROM valorisation_sejour va
           LEFT JOIN nomenclature_gme cm ON cm.code = substr(va.code_gme,1,2) AND cm.kind = 'CM'
-          LEFT JOIN nomenclature_gme gl ON gl.code = substr(va.code_gme,1,6) AND gl.kind = 'GL'
           WHERE va.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
     periodKind: "campagne", // filtre par colonne campagne = année
     dims: [
@@ -143,8 +145,14 @@ const SOURCES = {
       { id: "gme", label: "GME", col: "code_gme", libCol: "libelle_gme" },
       { id: "cm", label: "CM (catégorie majeure)", derive: r => (r.code_gme || "").substring(0, 2), libCol: "lib_cm" },
       { id: "gn", label: "GN", col: "code_gn", libCol: "libelle_gn" },
-      { id: "gr", label: "GR", col: "code_gr", libCol: "libelle_gr" },
-      { id: "gl", label: "GL (niveau de sévérité/lourdeur)", derive: r => (r.code_gme || "").substring(0, 6), libCol: "lib_gl" },
+      // Type GR/GL/Sévérité = le seul caractère ajouté à ce niveau (comparable d'un GN à l'autre),
+      // pas le code cumulé — même principe que côté RHS (voir le commentaire équivalent plus haut).
+      // "niveau_lourdeur" (déjà présent dans le fichier Valo) EST le type GL : même valeur, vérifié
+      // (ex. code_gme "0145JA0" -> niveau_lourdeur "A" = le 6e caractère) — pas de dérivation propre
+      // à refaire, c'est directement la bonne colonne.
+      { id: "gr", label: "Type GR", derive: r => (r.code_gr || "").slice(-1) || null },
+      { id: "gl", label: "GL", col: "niveau_lourdeur" },
+      { id: "severite", label: "Sévérité (GME)", derive: r => (r.code_gme || "").charAt(6) || null },
       { id: "niveau_lourdeur", label: "Niveau de lourdeur (GR)", col: "niveau_lourdeur" },
       { id: "code_gmt", label: "Code GMT", col: "code_gmt" },
       { id: "code_gmth", label: "Code GMTH (> 90j)", col: "code_gmth" },
