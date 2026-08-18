@@ -206,18 +206,42 @@ def _period_filter(
     return clause, params
 
 
+def _all_presence_days_by_sejour(conn: sqlite3.Connection, finess: str) -> dict[str, int]:
+    """Jours de présence RHS, TOTAL sur toute la durée du séjour (pas restreint à une période),
+    par numero_admin_sejour — clé de la "vraie" durée moyenne de séjour (2026-08-18, demande
+    utilisateur). Contrairement à `dmh` (jours de présence SEULEMENT dans la période choisie, ce
+    qui tronque un séjour à cheval sur plusieurs campagnes/années), cette version reflète la durée
+    réelle du séjour dans son ensemble — dès lors qu'il a au moins une ligne RHS dans la période
+    observée (le filtre "au moins une ligne dans la période" identifie QUELS séjours entrent dans
+    la moyenne, mais leur contribution au numérateur n'est plus tronquée à cette période)."""
+    rows = conn.execute(
+        "SELECT numero_admin_sejour, jours_hors_weekend, jours_weekend FROM rhs_groupe WHERE finess_epmsi = ?",
+        [finess],
+    ).fetchall()
+    out: dict[str, int] = {}
+    for r in rows:
+        out[r["numero_admin_sejour"]] = out.get(r["numero_admin_sejour"], 0) + _count_present_days(r)
+    return out
+
+
 def section_sejours(
     conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
 ) -> dict:
+    all_presence = _all_presence_days_by_sejour(conn, finess)  # calculé une fois, hors boucle périodes
     out = {}
     for period in periods:
         clause, params = _period_filter(period, finess, axis_filter)
         rows = conn.execute(f"SELECT * FROM rhs_groupe WHERE {clause}", params).fetchall()
         nb_rhs = len(rows)
-        nb_ssr = len({r["numero_admin_sejour"] for r in rows})
+        sejours_periode = {r["numero_admin_sejour"] for r in rows}
+        nb_ssr = len(sejours_periode)
         nb_journees = sum(_count_present_days(r) for r in rows)
         nb_semaines = len({r["numero_semaine"] for r in rows})
         dmh = nb_journees / nb_ssr if nb_ssr else 0
+        # Vraie DMS : jours de présence sur la durée COMPLÈTE de chaque séjour identifié dans la
+        # période (pas seulement ses jours dans la période) — voir _all_presence_days_by_sejour.
+        nb_journees_pleines = sum(all_presence.get(s, 0) for s in sejours_periode)
+        dms_vraie = nb_journees_pleines / nb_ssr if nb_ssr else 0
         nb_lits_moy = nb_journees / (nb_semaines * 7) if nb_semaines else 0
         nb_sans_erreur = sum(
             1 for r in rows if not (r["indicateur_erreur"] or "").strip()
@@ -228,6 +252,8 @@ def section_sejours(
             "nb_rhs": nb_rhs,
             "nb_journees": nb_journees,
             "dmh": dmh,
+            "nb_journees_pleines": nb_journees_pleines,
+            "dms_vraie": dms_vraie,
             "nb_lits_moy": nb_lits_moy,
             "exh": exh,
         }
