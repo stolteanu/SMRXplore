@@ -172,6 +172,8 @@ const SOURCES = {
       { id: "coeff_spe", label: "Coefficient de spécialisation", col: "coeff_spe", numeric: true },
       { id: "nb_supplements", label: "Nombre de suppléments", col: "nb_supplements", numeric: true },
       { id: "reste_a_charge", label: "Reste à charge détenu (€)", col: "reste_a_charge_detenu", numeric: true },
+      { id: "montant_am_med", label: "Montant molécules onéreuses (AM) (€)", col: "montant_am_med", numeric: true },
+      { id: "montant_am_trans", label: "Montant transport (AM) (€)", col: "montant_am_trans", numeric: true },
     ],
   },
 

@@ -6,6 +6,7 @@ let db = null;
 // fichier, donc ce choix n'affecte plus les résultats, seulement quelle table initie la requête.
 let activeSource = "rhs";
 let lastResult = null; // { titleText, metaText, tableHtml }
+let lastGraphResult = null; // { titleText, metaText, panels: [{ title, fragment, tableHtml }] }
 let uidCounter = 0;
 
 let rowDimRows = [];  // { uid, srcKey, dimId, mode: 'code'|'libelle'|'both' }
@@ -77,12 +78,18 @@ function weekOfDate(year, month, day) {
   return null;
 }
 
-// Parse "JJ/MM" (séparateur / - ou .) saisi dans les champs de plage personnalisée.
+// Nombre de jours du mois `month` (1-12) — 29 toléré pour février (année bissextile possible parmi
+// les années sélectionnées ; weekOfDate se charge de retomber sur la bonne semaine année par année).
+const JOURS_PAR_MOIS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+// Parse "JJ/MM" (séparateur / - ou .) saisi dans les champs de plage personnalisée — rejette les
+// dates calendaires impossibles (31/04, 30/02…), pas seulement les valeurs hors 1-31/1-12.
 function parseJourMois(s) {
   const m = String(s || "").trim().match(/^(\d{1,2})[/\-.](\d{1,2})$/);
   if (!m) return null;
   const day = Number(m[1]), month = Number(m[2]);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  if (month < 1 || month > 12) return null;
+  if (day < 1 || day > JOURS_PAR_MOIS[month - 1]) return null;
   return { day, month };
 }
 
@@ -353,6 +360,22 @@ function renderDimsList(containerId, arr, minCount) {
     container.appendChild(div);
   });
   updateGraphAddButtons();
+  if (containerId === "rowDimsList") updateRowSubtotalUI(arr);
+}
+
+// Case à cocher "Sous-totaux" (section Lignes du tableau croisé) : visible seulement dès qu'il y a
+// plusieurs variables de regroupement en lignes (sinon un sous-total serait identique au total).
+function updateRowSubtotalUI(arr) {
+  const wrap = document.getElementById("rowSubtotalWrap");
+  if (!wrap) return;
+  if (arr.length > 1) {
+    wrap.style.display = "flex";
+    const lbl = labelForDimRow(arr[0]);
+    wrap.lastChild.textContent = ` Sous-totaux par ${lbl}`;
+  } else {
+    wrap.style.display = "none";
+    document.getElementById("chkRowSubtotal").checked = false;
+  }
 }
 
 // Boutons "+ Ajouter une variable" de l'axe X / Série / Vignettes du graphique : plafonnés à 3.
@@ -480,6 +503,28 @@ function updateRecap() {
     <dt>Expressions</dt><dd>${exprRows.map(e => esc(exprLabel(e))).join(", ")}</dd>
   </dl>`;
   document.getElementById("panelRecap").style.display = "block";
+}
+
+// Contrôle en direct des champs "Du (JJ/MM) au (JJ/MM)" : marque en rouge tout champ non vide dont
+// la date n'est pas calendairement valide (ex. 30/02) plutôt que de la laisser silencieusement
+// écartée par computeSelectedPeriods. Un champ vide n'est pas signalé comme une erreur.
+function validatePeriodePerso() {
+  const debutEl = document.getElementById("inpPeriodeDebut");
+  const finEl = document.getElementById("inpPeriodeFin");
+  const msgEl = document.getElementById("periodePersoErrMsg");
+  if (!debutEl || !finEl || !msgEl) return true;
+
+  const debutOk = !debutEl.value.trim() || !!parseJourMois(debutEl.value);
+  const finOk = !finEl.value.trim() || !!parseJourMois(finEl.value);
+  debutEl.classList.toggle("champ-err", !debutOk);
+  finEl.classList.toggle("champ-err", !finOk);
+
+  if (!debutOk || !finOk) {
+    msgEl.textContent = "Date invalide — format attendu JJ/MM (ex. 03/01).";
+    return false;
+  }
+  msgEl.textContent = "";
+  return true;
 }
 
 // ---------- Requête + agrégation ----------
@@ -770,13 +815,18 @@ function extractValues(cellRows, measure, expr, foreignIdx, baseSrcKey) {
   return vals;
 }
 
-function computeExprPivot(cells, rowKeys, colKeys, expr, measure, aggId, foreignIdx, baseSrcKey) {
+function computeExprPivot(cells, rowKeys, colKeys, expr, measure, aggId, foreignIdx, baseSrcKey, subtotalGroups) {
   const isDistinct = !!measure.distinctKey;
   const isPct = aggId === "pct_total" || aggId === "pct_row" || aggId === "pct_col";
   const grid = {}, rowTotal = {}, colTotal = {};
   let grandTotal = null;
+  const subtotals = {};
 
   function cellValues(rk, ck) { return extractValues(cells.get(cellKeyStr(rk, ck)) || [], measure, expr, foreignIdx, baseSrcKey); }
+  // Concatène les valeurs brutes de tout un groupe de lignes (sous-total) pour une colonne donnée —
+  // toujours recalculé depuis les valeurs sources (comme rowTotal/colTotal), jamais en sommant des
+  // cellules déjà agrégées, pour rester correct avec les mesures non additives (moyenne, distinct…).
+  function groupValues(rks, ck) { let v = []; for (const rk of rks) v = v.concat(cellValues(rk, ck)); return v; }
 
   if (!isPct) {
     for (const rk of rowKeys) {
@@ -793,6 +843,14 @@ function computeExprPivot(cells, rowKeys, colKeys, expr, measure, aggId, foreign
     }
     let all = []; for (const rk of rowKeys) for (const ck of colKeys) all = all.concat(cellValues(rk, ck));
     grandTotal = agFn(all, isDistinct, aggId);
+    if (subtotalGroups) {
+      for (const g of subtotalGroups) {
+        const grid_g = {};
+        for (const ck of colKeys) grid_g[ck] = agFn(groupValues(g.rowKeys, ck), isDistinct, aggId);
+        let allG = []; for (const ck of colKeys) allG = allG.concat(groupValues(g.rowKeys, ck));
+        subtotals[g.key] = { grid: grid_g, rowTotal: agFn(allG, isDistinct, aggId) };
+      }
+    }
   } else {
     const baseAgg = vals => isDistinct ? new Set(vals).size : vals.reduce((a, b) => a + b, 0);
     const base = {}, baseRow = {}, baseCol = {};
@@ -822,9 +880,27 @@ function computeExprPivot(cells, rowKeys, colKeys, expr, measure, aggId, foreign
     for (const rk of rowKeys) rowTotal[rk] = aggId === "pct_row" ? (baseRow[rk] ? 100 : null) : (baseGrand ? 100 * baseRow[rk] / baseGrand : null);
     for (const ck of colKeys) colTotal[ck] = aggId === "pct_col" ? (baseCol[ck] ? 100 : null) : (baseGrand ? 100 * baseCol[ck] / baseGrand : null);
     grandTotal = 100;
+    if (subtotalGroups) {
+      for (const g of subtotalGroups) {
+        const groupBaseCol = {};
+        for (const ck of colKeys) groupBaseCol[ck] = baseAgg(groupValues(g.rowKeys, ck));
+        let allG = []; for (const ck of colKeys) allG = allG.concat(groupValues(g.rowKeys, ck));
+        const groupBaseRow = baseAgg(allG);
+        const grid_g = {};
+        for (const ck of colKeys) {
+          const num = groupBaseCol[ck];
+          const den = aggId === "pct_total" ? baseGrand : aggId === "pct_row" ? groupBaseRow : baseCol[ck];
+          grid_g[ck] = den ? (100 * num / den) : (num === 0 ? 0 : null);
+        }
+        subtotals[g.key] = {
+          grid: grid_g,
+          rowTotal: aggId === "pct_row" ? (groupBaseRow ? 100 : null) : (baseGrand ? 100 * groupBaseRow / baseGrand : null)
+        };
+      }
+    }
   }
 
-  return { grid, rowTotal, colTotal, grandTotal, isPct };
+  return { grid, rowTotal, colTotal, grandTotal, isPct, subtotals };
 }
 
 // Chaque expression est désormais comptée/sommée sur les lignes réelles de SON PROPRE fichier
@@ -853,7 +929,7 @@ function ownRowsFor(srcKey, baseSrcKey, baseRows, foreignIdx) {
   return applyGlobalFilters(flattenIdx(foreignIdx[srcKey]), srcKey, foreignIdx);
 }
 
-function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, baseSrcKey) {
+function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, baseSrcKey, subtotal) {
   function iterSrcKeyOf(expr) { return iterSrcKeyFor(expr, baseSrcKey, [rowDimsCfg, colDimsCfg]); }
 
   function bucket(srcKey) {
@@ -898,14 +974,27 @@ function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, b
   const rowKeys = [...rowKeysSet].sort();
   const colKeys = [...colKeysSet].sort();
 
+  // Sous-totaux : un groupe par valeur de la 1ère variable de regroupement en lignes — seulement
+  // pertinent dès qu'il y en a une 2e, sinon le sous-total serait identique au total de la ligne.
+  let subtotalGroups = null;
+  if (subtotal && rowDimsCfg.length > 1) {
+    const groupsMap = new Map();
+    for (const rk of rowKeys) {
+      const g0 = rowPartsByKey.get(rk)[0];
+      if (!groupsMap.has(g0)) groupsMap.set(g0, []);
+      groupsMap.get(g0).push(rk);
+    }
+    subtotalGroups = [...groupsMap.entries()].map(([key, rks]) => ({ key, rowKeys: rks }));
+  }
+
   const perExpr = {};
   for (const expr of exprsCfg) {
     const measure = measureOf(expr);
     const iterSrcKey = iterSrcKeyOf(expr);
-    perExpr[expr.uid] = computeExprPivot(bucketOf[expr.uid].cells, rowKeys, colKeys, expr, measure, expr.aggId, foreignIdx, iterSrcKey);
+    perExpr[expr.uid] = computeExprPivot(bucketOf[expr.uid].cells, rowKeys, colKeys, expr, measure, expr.aggId, foreignIdx, iterSrcKey, subtotalGroups);
   }
 
-  return { rowKeys, colKeys, perExpr, rowPartsByKey, colPartsByKey };
+  return { rowKeys, colKeys, perExpr, rowPartsByKey, colPartsByKey, subtotalGroups };
 }
 
 // Calcule, pour une liste de clés déjà triée (tableau de tableaux de valeurs, une entrée par
@@ -1002,6 +1091,29 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       html += '<td class="totalcol">' + fmtVal(pr.rowTotal[rk], pr.isPct) + "</td>";
     }
     html += "</tr>";
+
+    // Sous-total : après la dernière ligne d'un groupe (même valeur de la 1ère variable) —
+    // les rowKeys étant triées, un groupe est toujours contigu.
+    if (pivot.subtotalGroups) {
+      const groupKey = rowsParts[i][0];
+      const isLastOfGroup = i === pivot.rowKeys.length - 1 || rowsParts[i + 1][0] !== groupKey;
+      if (isLastOfGroup) {
+        html += `<tr class="subtotalrow"><td class="rowhead" colspan="${nDims}">Sous-total — ${esc(groupKey)}</td>`;
+        for (const ck of pivot.colKeys) {
+          for (const e of exprsCfg) {
+            const pr = pivot.perExpr[e.uid];
+            const sub = pr.subtotals && pr.subtotals[groupKey];
+            html += "<td>" + fmtVal(sub ? sub.grid[ck] : null, pr.isPct) + "</td>";
+          }
+        }
+        for (const e of exprsCfg) {
+          const pr = pivot.perExpr[e.uid];
+          const sub = pr.subtotals && pr.subtotals[groupKey];
+          html += '<td class="totalcol">' + fmtVal(sub ? sub.rowTotal : null, pr.isPct) + "</td>";
+        }
+        html += "</tr>";
+      }
+    }
   });
 
   html += `<tr class="totalrow"><td class="rowhead" colspan="${nDims}">Total</td>`;
@@ -1026,6 +1138,9 @@ function generer() {
     const finessList = selectedFiness();
     const periods = computeSelectedPeriods();
     if (!finessList.length) { status("Sélectionnez au moins un établissement.", true); return; }
+    if (document.getElementById("selPeriodeMode").value === "perso" && !validatePeriodePerso()) {
+      status("Corrigez la période personnalisée (date invalide).", true); return;
+    }
     if (!periods.length) { status("Sélectionnez au moins une année valide pour le mois choisi.", true); return; }
     if (!rowDimRows.length) { status("Ajoutez au moins une variable en lignes.", true); return; }
     if (!exprRows.length) { status("Ajoutez au moins une expression.", true); return; }
@@ -1054,7 +1169,9 @@ function generer() {
     rows = applyGlobalFilters(rows, activeSource, foreignIdx);
     annotateValoCoverage(foreignIdx, activeSource, rows);
 
-    const pivot = computeMultiPivot(rows, rowDimRows, colDimRows, exprRows, foreignIdx, activeSource);
+    const chkSubtotal = document.getElementById("chkRowSubtotal");
+    const subtotal = !!(chkSubtotal && chkSubtotal.checked && rowDimRows.length > 1);
+    const pivot = computeMultiPivot(rows, rowDimRows, colDimRows, exprRows, foreignIdx, activeSource, subtotal);
     const rowLabel = rowDimRows.map(r => labelForDimRow(r)).join(" / ");
     const tableHtml = renderMultiPivotTable(pivot, rowDimRows, colDimRows, exprRows);
 
@@ -1066,8 +1183,9 @@ function generer() {
     document.getElementById("panelResult").style.display = "block";
     document.getElementById("resultMeta").textContent = metaText;
     document.getElementById("resultWrap").innerHTML = tableHtml;
-    lastResult = { titleText, metaText, tableHtml };
-    ["btnExportHtml", "btnExportPdf", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
+    const nCols = rowDimRows.length + pivot.colKeys.length * exprRows.length + exprRows.length;
+    lastResult = { titleText, metaText, tableHtml, nCols, nRows: pivot.rowKeys.length };
+    ["btnExportHtml", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
     status(`Tableau généré (${pivot.rowKeys.length} ligne(s) × ${pivot.colKeys.length} colonne(s) × ${exprRows.length} expression(s)).`);
   } catch (e) {
     status("Erreur : " + e.message, true);
@@ -1492,6 +1610,9 @@ function genererListe() {
     const finessList = selectedFiness();
     const periods = computeSelectedPeriods();
     if (!finessList.length) { setSt("Sélectionnez au moins un établissement.", true); return; }
+    if (document.getElementById("selPeriodeMode").value === "perso" && !validatePeriodePerso()) {
+      setSt("Corrigez la période personnalisée (date invalide).", true); return;
+    }
     if (!periods.length) { setSt("Sélectionnez au moins une année valide pour le mois choisi.", true); return; }
     if (!listeColRows.length) { setSt("Ajoutez au moins une colonne à afficher.", true); return; }
 
@@ -1560,7 +1681,7 @@ function genererListe() {
     document.getElementById("resultMeta").textContent = metaText;
     document.getElementById("resultWrap").innerHTML = html;
     lastResult = { titleText, metaText, tableHtml: html };
-    ["btnExportHtml", "btnExportPdf", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
+    ["btnExportHtml", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
     setSt(`${total} ligne(s) trouvée(s)${total > LISTE_ROW_CAP ? `, ${LISTE_ROW_CAP} affichée(s)` : ""}.`);
   } catch (e) {
     setSt("Erreur : " + e.message, true);
@@ -1837,6 +1958,42 @@ function fmtAxisNum(v) {
   return v.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
 }
 function truncLabel(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+// Découpe un libellé en plusieurs lignes (retour à la ligne aux espaces, comme du texte normal) au
+// lieu de le tronquer sur une seule ligne — utilisé là où la place verticale le permet. `maxChars`
+// est une largeur de coupe en caractères (approximation suffisante en SVG, pas de mesure au pixel),
+// `maxLines` plafonne le nombre de lignes ; l'éventuel reste est fusionné et tronqué sur la dernière.
+function wrapLabelLines(text, maxChars, maxLines) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  if (!words.length) return [""];
+  const lines = [];
+  let cur = "";
+  for (const w of words) {
+    if (!cur) { cur = w; continue; }
+    const candidate = cur + " " + w;
+    if (candidate.length <= maxChars) cur = candidate;
+    else { lines.push(cur); cur = w; }
+  }
+  if (cur) lines.push(cur);
+  if (lines.length <= maxLines) return lines.map(l => truncLabel(l, maxChars));
+  const kept = lines.slice(0, maxLines - 1);
+  kept.push(truncLabel(lines.slice(maxLines - 1).join(" "), maxChars));
+  return kept.map(l => truncLabel(l, maxChars));
+}
+
+// Construit le <text> multi-lignes (un <tspan> par ligne) centré verticalement sur `yCenter` —
+// remplace un simple <text> à une ligne là où wrapLabelLines a produit plusieurs lignes.
+function wrappedLabelSvg(x, yCenter, text, opts) {
+  const fontSize = (opts && opts.fontSize) || CH_FS_CAT;
+  const anchor = (opts && opts.anchor) || "end";
+  const fill = (opts && opts.fill) || CH_INK;
+  const maxChars = opts.maxChars, maxLines = opts.maxLines;
+  const lines = wrapLabelLines(text, maxChars, maxLines);
+  const lineHeight = fontSize + 2.2;
+  const startY = yCenter - (lines.length - 1) * lineHeight / 2 + fontSize * 0.32;
+  const tspans = lines.map((l, i) => `<tspan x="${x.toFixed(1)}" y="${(startY + i * lineHeight).toFixed(1)}">${esc(l)}</tspan>`).join("");
+  return `<text font-size="${fontSize}" fill="${fill}" text-anchor="${anchor}">${tspans}</text>`;
+}
 function legendHtml(series) {
   if (!series || series.length <= 1) return "";
   return `<div class="chart-legend">${series.map(s => `<span class="legend-item"><span class="legend-swatch" style="background:${s.color}"></span>${esc(s.label)}</span>`).join("")}</div>`;
@@ -2002,9 +2159,15 @@ function renderBarSvgH(categories, series, valueAxisTitle) {
   }
   svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
 
+  // Libellé de catégorie sur plusieurs lignes quand la hauteur de la ligne (une par catégorie) le
+  // permet, plutôt qu'une troncature systématique sur une seule ligne — la marge de gauche (ML) et
+  // la hauteur de ligne (rowH) sont fixes pour tout le graphique, donc calculées une seule fois.
+  const catMaxChars = Math.max(4, Math.floor((ML - 16) / (CH_FS_CAT * 0.56)));
+  const catMaxLines = Math.max(1, Math.min(3, Math.floor(rowH / (CH_FS_CAT + 2.2))));
+
   categories.forEach((cat, i) => {
     const gy = MT + i * rowH + barGap / 2;
-    svg += `<text x="${ML - 8}" y="${(gy + barsAreaH / 2 + 3.5).toFixed(1)}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end">${esc(truncLabel(cat, 24))}</text>`;
+    svg += wrappedLabelSvg(ML - 8, gy + barsAreaH / 2, cat, { maxChars: catMaxChars, maxLines: catMaxLines });
     series.forEach((ser, si) => {
       const v = ser.values[i];
       if (v === null || v === undefined) return;
@@ -2854,6 +3017,9 @@ function prepareGraphData(setSt) {
   const finessList = selectedFiness();
   const periods = computeSelectedPeriods();
   if (!finessList.length) { setSt("Sélectionnez au moins un établissement.", true); return null; }
+  if (document.getElementById("selPeriodeMode").value === "perso" && !validatePeriodePerso()) {
+    setSt("Corrigez la période personnalisée (date invalide).", true); return null;
+  }
   if (!periods.length) { setSt("Sélectionnez au moins une année valide pour le mois choisi.", true); return null; }
   if (!graphXDimRows.length) { setSt("Ajoutez au moins une variable en axe X.", true); return null; }
   if (!graphExprRows.length) { setSt("Ajoutez au moins une expression (mesure).", true); return null; }
@@ -2936,7 +3102,7 @@ function genererGraphique() {
 
     const chartTitle = buildChartTitle(chartType, exprsUsed);
     const panels = facetsShown.map(g => {
-      let fragment;
+      let fragment, tableHtml = null;
       if (chartType === "sunburst" || (chartType === "camembert" && graphSeriesDimRows.length)) {
         fragment = renderNestedPieFromRows(g.rows, foreignIdx, exprsUsed[0]);
       } else if (chartType === "treemap") {
@@ -2948,17 +3114,32 @@ function genererGraphique() {
         const { bins, series } = buildHistogramSeries(g.rows, graphSeriesDimRows[0] || null, exprsUsed[0], foreignIdx, activeSourceGraph);
         fragment = renderHistogramSvg(bins, series, measureAxisTitle(exprsUsed));
       } else {
+        // Types "en grille" (barres/lignes/aires/camembert simple/nuage/bulles/carte de chaleur/
+        // radar/sankey) : même pivot que le graphique -> la table exportée en Excel reflète
+        // exactement les valeurs dessinées, pas un recalcul indépendant.
         const pivot = computeMultiPivot(g.rows, graphXDimRows, graphSeriesDimRows, exprsUsed, foreignIdx, activeSourceGraph);
         fragment = renderChartFragment(chartType, pivot, graphSeriesDimRows, exprsUsed);
+        tableHtml = renderMultiPivotTable(pivot, graphXDimRows, graphSeriesDimRows, exprsUsed);
       }
       const panelTitle = g.label ? `${chartTitle} — ${g.label}` : chartTitle;
-      return `<div class="chart-panel"><h4>${esc(panelTitle)}</h4>${fragment}</div>`;
+      return { title: panelTitle, fragment, tableHtml };
     });
 
+    const metaText = graphResultMetaText(chartType, exprsUsed, facetGroups, facetsShown, activeGF);
     document.getElementById("panelGraphResult").style.display = "block";
-    document.getElementById("graphResultMeta").textContent = graphResultMetaText(chartType, exprsUsed, facetGroups, facetsShown, activeGF);
-    document.getElementById("graphResultWrap").innerHTML = panels.join("");
+    document.getElementById("graphResultMeta").textContent = metaText;
+    document.getElementById("graphResultWrap").innerHTML =
+      panels.map(p => `<div class="chart-panel"><h4>${esc(p.title)}</h4>${p.fragment}</div>`).join("");
     setSt(`Graphique généré (${facetsShown.length} vignette(s)).`);
+
+    lastGraphResult = { titleText: chartTitle, metaText, panels };
+    ["btnGraphExportPng", "btnGraphExportSvg", "btnGraphExportHtml"].forEach(id => {
+      document.getElementById(id).disabled = false;
+    });
+    const xlsBtn = document.getElementById("btnGraphExportXls");
+    const xlsOk = panels.every(p => p.tableHtml);
+    xlsBtn.disabled = !xlsOk;
+    xlsBtn.title = xlsOk ? "" : "Non disponible pour ce type de graphique (structure hiérarchique ou statistique sans table plate équivalente).";
   } catch (e) {
     setSt("Erreur : " + e.message, true);
     console.error(e);
@@ -3070,7 +3251,12 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
         marker: { color: ser.color },
       };
     });
-    const layout = { ...baseLayout, boxmode: "group", xaxis: { title: xLabel, automargin: true }, yaxis: { title: exprLabelFor(expr0), automargin: true } };
+    // type:"category" explicite : sans ça, Plotly détecte tout seul le type d'axe depuis les
+    // valeurs, et des catégories qui ressemblent à des nombres (codes d'erreur, GME, semaines…)
+    // basculent en axe numérique — mauvais ordre (tri numérique au lieu de l'ordre des catégories)
+    // et surtout un espacement proportionnel à la valeur plutôt qu'un slot par catégorie (une seule
+    // valeur élevée, ex. code "90", isole tout le reste tassé près de zéro).
+    const layout = { ...baseLayout, boxmode: "group", xaxis: { title: xLabel, type: "category", automargin: true }, yaxis: { title: exprLabelFor(expr0), automargin: true } };
     return { label, data: traces, layout };
   }
 
@@ -3139,8 +3325,8 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     const pr = pivot.perExpr[exprsUsed[0].uid];
     const z = pivot.rowKeys.map(rk => pivot.colKeys.map(ck => pr.grid[rk][ck]));
     const y = pivot.rowKeys.map(rk => pivot.rowPartsByKey.get(rk).join(" / "));
-    const heatLayout = { ...baseLayout, yaxis: { title: xLabel, automargin: true } };
-    if (serieLabel) heatLayout.xaxis = { title: serieLabel, automargin: true };
+    const heatLayout = { ...baseLayout, yaxis: { title: xLabel, type: "category", automargin: true } };
+    heatLayout.xaxis = { title: serieLabel || undefined, type: "category", automargin: true };
     return { label, data: [{ type: "heatmap", x: pivot.colKeys, y, z, colorscale: "Blues", hoverongaps: false }], layout: heatLayout };
   }
 
@@ -3184,11 +3370,13 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
         : { type: "bar", x: categories, y: s.values, name: s.label, marker: { color: s.color }, ...textOpts };
     });
     const layout = { ...baseLayout, barmode: chartType === "barres_empilees" ? "stack" : "group" };
+    // type:"category" explicite (cf. remarque détaillée sur le boxplot ci-dessus) : sans ça, des
+    // catégories numériques (codes d'erreur, GME…) basculent l'axe en numérique chez Plotly.
     if (horiz) {
-      layout.yaxis = { title: xLabel, automargin: true };
+      layout.yaxis = { title: xLabel, type: "category", automargin: true };
       layout.xaxis = { title: valueAxisTitle, automargin: true };
     } else {
-      layout.xaxis = { title: xLabel, tickangle: -40, automargin: true };
+      layout.xaxis = { title: xLabel, type: "category", tickangle: -40, automargin: true };
       layout.yaxis = { title: valueAxisTitle, automargin: true };
     }
     return { label, data: traces, layout };
@@ -3222,7 +3410,7 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
   }));
   return {
     label, data: traces,
-    layout: { ...baseLayout, xaxis: { title: xLabel, tickangle: -40, automargin: true }, yaxis: { title: valueAxisTitle, automargin: true } },
+    layout: { ...baseLayout, xaxis: { title: xLabel, type: "category", tickangle: -40, automargin: true }, yaxis: { title: valueAxisTitle, automargin: true } },
   };
 }
 // Éclaircissage par décimation régulière (pas par pixels, la figure Plotly étant redimensionnable) :
@@ -3515,8 +3703,16 @@ function download(filename, content, mime) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+// L'export HTML est aussi le chemin d'impression/PDF : "Enregistrer en PDF" se fait depuis le
+// navigateur (Ctrl+P) une fois le fichier ouvert, plutôt qu'un bouton PDF séparé dans l'appli — la
+// page exportée embarque donc sa propre règle @page (orientation par défaut choisie selon le
+// nombre de colonnes, ajustable via la barre d'outils) et ses couleurs d'impression, pour cadrer
+// correctement sur une page A4 sans dépendre de l'appli d'origine.
 function exportHtml() {
   if (!lastResult) return;
+  // Heuristique portrait/paysage : au-delà de ~6 colonnes un tableau croisé déborde presque
+  // toujours d'une page A4 portrait (ajustable ensuite via le sélecteur d'orientation intégré).
+  const orient = (lastResult.nCols || 0) > 6 ? "landscape" : "portrait";
   const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>${esc(lastResult.titleText)}</title>
 <style>
 body{font-family:Arial,sans-serif;color:#212f3c;margin:24px;}
@@ -3525,20 +3721,29 @@ p{color:#7f8c8d;font-size:0.9em;}
 table{border-collapse:collapse;width:100%;font-size:0.9em;}
 th,td{border:1px solid #d5dbdb;padding:6px 10px;text-align:right;}
 td:first-child,th:first-child{text-align:left;}
-th{background:#eaf2f8;}
-tr:last-child td{background:#eaf2f8;font-weight:700;}
-</style></head><body>
+th{background:#eaf2f8;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+tr:last-child td{background:#eaf2f8;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+body.gris{filter:grayscale(100%);}
+.toolbar{margin-bottom:18px;padding:10px 14px;background:#f4f6f7;border:1px solid #d5dbdb;border-radius:6px;display:flex;gap:16px;align-items:center;font-size:0.85em;}
+.toolbar button{background:#1a5276;color:#fff;border:none;border-radius:4px;padding:7px 14px;cursor:pointer;font-weight:600;}
+@media print{ .toolbar{display:none;} body{margin:0;} table{font-size:${orient === "landscape" ? 10 : 11}px;} }
+</style>
+<style id="pageStyle">@page{size:A4 ${orient};margin:${orient === "landscape" ? "10mm" : "12mm"};}</style>
+</head><body>
+<div class="toolbar">
+  <button onclick="window.print()">Imprimer / Enregistrer en PDF</button>
+  <label><input type="checkbox" onchange="document.body.classList.toggle('gris', this.checked)"> Nuances de gris</label>
+  <label>Orientation :
+    <select onchange="document.getElementById('pageStyle').textContent = '@page{size:A4 ' + this.value + ';margin:' + (this.value==='landscape'?'10mm':'12mm') + ';}'">
+      <option value="portrait" ${orient === "portrait" ? "selected" : ""}>Portrait</option>
+      <option value="landscape" ${orient === "landscape" ? "selected" : ""}>Paysage</option>
+    </select>
+  </label>
+</div>
 <h1>${esc(lastResult.titleText)}</h1><p>${esc(lastResult.metaText)}</p>
 ${lastResult.tableHtml}
 </body></html>`;
   download("tdb_export.html", html, "text/html;charset=utf-8");
-}
-
-function exportPdf() {
-  if (!lastResult) return;
-  document.getElementById("printExport").innerHTML =
-    `<h2>${esc(lastResult.titleText)}</h2><p>${esc(lastResult.metaText)}</p>${lastResult.tableHtml}`;
-  window.print();
 }
 
 function exportXls() {
@@ -3571,6 +3776,145 @@ tr:last-child td{background:#eaf2f8;font-weight:bold;}
   download("tdb_export.doc", docHtml, "application/msword");
 }
 
+// ---------- Exports du graphique ----------
+// Chaque vignette est déjà un fragment SVG autonome (viewBox propre) — les exports image
+// combinent toutes les vignettes affichées en un seul visuel empilé verticalement, plutôt que de
+// forcer un choix entre "un fichier par vignette" et "une seule vignette exportable".
+
+function graphPanelsCombinedHtml() {
+  return lastGraphResult.panels.map(p => `<div class="chart-panel"><h4>${esc(p.title)}</h4>${p.fragment}</div>`).join("");
+}
+
+function svgViewBoxDims(fragmentHtml) {
+  const m = fragmentHtml.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
+  return m ? { w: Number(m[1]), h: Number(m[2]) } : { w: 560, h: 360 };
+}
+
+function extractSvgInner(fragmentHtml) {
+  const m = fragmentHtml.match(/<svg[^>]*>([\s\S]*)<\/svg>/);
+  return m ? m[1] : "";
+}
+
+// Empile les vignettes (déjà en SVG) dans un unique SVG combiné — un titre en <text> au-dessus de
+// chacune, translatée verticalement — réutilisé par l'export SVG direct et par l'export PNG
+// (rendu ensuite sur un <canvas> pour rasteriser).
+function buildCombinedGraphSvg() {
+  const gap = 24, titleH = 22;
+  let totalW = 0, totalH = 0;
+  const placed = lastGraphResult.panels.map(p => {
+    const dims = svgViewBoxDims(p.fragment);
+    totalW = Math.max(totalW, dims.w);
+    const y = totalH;
+    totalH += titleH + dims.h + gap;
+    return { ...dims, y, title: p.title, inner: extractSvgInner(p.fragment) };
+  });
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${totalW} ${totalH}" width="${totalW}" height="${totalH}" font-family="Arial,sans-serif">`;
+  svg += `<rect x="0" y="0" width="${totalW}" height="${totalH}" fill="#ffffff"/>`;
+  placed.forEach(p => {
+    svg += `<text x="8" y="${p.y + 15}" font-size="13" font-weight="700" fill="#1a5276">${esc(p.title)}</text>`;
+    svg += `<g transform="translate(0, ${p.y + titleH})">${p.inner}</g>`;
+  });
+  svg += `</svg>`;
+  return { svg, totalW, totalH };
+}
+
+function exportGraphSvg() {
+  if (!lastGraphResult) return;
+  const { svg } = buildCombinedGraphSvg();
+  download("graphique_export.svg", svg, "image/svg+xml;charset=utf-8");
+}
+
+// PNG : rasterisé à 2x la résolution du viewBox pour rester net à l'impression/zoom (le SVG reste
+// néanmoins le choix le plus fidèle et le plus léger — cf. le bouton dédié).
+function exportGraphPng() {
+  if (!lastGraphResult) return;
+  const { svg, totalW, totalH } = buildCombinedGraphSvg();
+  const scale = 2;
+  const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(svgBlob);
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(totalW * scale));
+    canvas.height = Math.max(1, Math.round(totalH * scale));
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(scale, scale);
+    ctx.drawImage(img, 0, 0, totalW, totalH);
+    URL.revokeObjectURL(url);
+    canvas.toBlob(blob => {
+      const a = document.createElement("a");
+      const dlUrl = URL.createObjectURL(blob);
+      a.href = dlUrl; a.download = "graphique_export.png";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(dlUrl), 4000);
+    }, "image/png");
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); alert("Échec de l'export PNG."); };
+  img.src = url;
+}
+
+// Comme exportHtml (tableau) : c'est la page exportée elle-même qui sert de chemin d'impression/PDF
+// (Ctrl+P depuis le navigateur), avec sa propre règle @page et son correctif d'impression pour
+// .chart-panel (display:flex à l'écran pour centrer, mais Chrome n'honore pas page-break-inside
+// sur une boîte flex — on repasse en display:block seulement à l'impression, cf. la même remarque
+// historique dans les styles de l'appli).
+function exportGraphHtml() {
+  if (!lastGraphResult) return;
+  const { totalW, totalH } = buildCombinedGraphSvg();
+  const orient = totalW > totalH ? "landscape" : "portrait";
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>${esc(lastGraphResult.titleText)}</title>
+<style>
+body{font-family:Arial,sans-serif;color:#212f3c;margin:24px;}
+h1{color:#1a5276;font-size:1.2em;} h4{color:#1a5276;font-size:1em;margin:20px 0 8px;}
+p{color:#7f8c8d;font-size:0.9em;}
+.chart-panel{margin-bottom:24px;display:flex;flex-direction:column;align-items:center;}
+svg{max-width:100%;height:auto;}
+body.gris{filter:grayscale(100%);}
+.toolbar{margin-bottom:18px;padding:10px 14px;background:#f4f6f7;border:1px solid #d5dbdb;border-radius:6px;display:flex;gap:16px;align-items:center;font-size:0.85em;}
+.toolbar button{background:#1a5276;color:#fff;border:none;border-radius:4px;padding:7px 14px;cursor:pointer;font-weight:600;}
+@media print{
+  .toolbar{display:none;} body{margin:0;}
+  .chart-panel{display:block !important;page-break-inside:avoid;break-inside:avoid;text-align:center;}
+  .chart-panel>div{display:block !important;}
+  h1,h4{page-break-after:avoid;break-after:avoid;}
+}
+</style>
+<style id="pageStyle">@page{size:A4 ${orient};margin:${orient === "landscape" ? "10mm" : "12mm"};}</style>
+</head><body>
+<div class="toolbar">
+  <button onclick="window.print()">Imprimer / Enregistrer en PDF</button>
+  <label><input type="checkbox" onchange="document.body.classList.toggle('gris', this.checked)"> Nuances de gris</label>
+  <label>Orientation :
+    <select onchange="document.getElementById('pageStyle').textContent = '@page{size:A4 ' + this.value + ';margin:' + (this.value==='landscape'?'10mm':'12mm') + ';}'">
+      <option value="portrait" ${orient === "portrait" ? "selected" : ""}>Portrait</option>
+      <option value="landscape" ${orient === "landscape" ? "selected" : ""}>Paysage</option>
+    </select>
+  </label>
+</div>
+<h1>${esc(lastGraphResult.titleText)}</h1><p>${esc(lastGraphResult.metaText)}</p>
+${graphPanelsCombinedHtml()}
+</body></html>`;
+  download("graphique_export.html", html, "text/html;charset=utf-8");
+}
+
+function exportGraphXls() {
+  if (!lastGraphResult || !lastGraphResult.panels.every(p => p.tableHtml)) return;
+  const tablesHtml = lastGraphResult.panels.map(p => `<h3>${esc(p.title)}</h3>${p.tableHtml}`).join("<br/>");
+  const xlsHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>${esc(lastGraphResult.titleText)}</title>
+<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+<x:Name>Graphique</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+<style>
+table{border-collapse:collapse;} td,th{border:1px solid #999;padding:4px 9px;} th{background:#eaf2f8;font-weight:bold;}
+tr:last-child td{background:#eaf2f8;font-weight:bold;}
+</style></head>
+<body><table><tr><td colspan="2"><b>${esc(lastGraphResult.titleText)}</b></td></tr><tr><td colspan="2">${esc(lastGraphResult.metaText)}</td></tr></table>${tablesHtml}</body></html>`;
+  download("graphique_export.xls", xlsHtml, "application/vnd.ms-excel");
+}
+
 // ---------- Câblage évènements ----------
 
 function wireEvents() {
@@ -3582,8 +3926,8 @@ function wireEvents() {
     document.getElementById("champPeriodePerso").style.display = perso ? "" : "none";
     updateRecap(); renderGlobalFilterList();
   });
-  document.getElementById("inpPeriodeDebut").addEventListener("input", () => { updateRecap(); renderGlobalFilterList(); });
-  document.getElementById("inpPeriodeFin").addEventListener("input", () => { updateRecap(); renderGlobalFilterList(); });
+  document.getElementById("inpPeriodeDebut").addEventListener("input", () => { validatePeriodePerso(); updateRecap(); renderGlobalFilterList(); });
+  document.getElementById("inpPeriodeFin").addEventListener("input", () => { validatePeriodePerso(); updateRecap(); renderGlobalFilterList(); });
 
   document.getElementById("btnAddRowDim").addEventListener("click", () => {
     const src = SOURCES[activeSource];
@@ -3606,7 +3950,6 @@ function wireEvents() {
 
   document.getElementById("btnGenerer").addEventListener("click", generer);
   document.getElementById("btnExportHtml").addEventListener("click", exportHtml);
-  document.getElementById("btnExportPdf").addEventListener("click", exportPdf);
   document.getElementById("btnExportDoc").addEventListener("click", exportDoc);
   document.getElementById("btnExportXls").addEventListener("click", exportXls);
 
@@ -3735,6 +4078,10 @@ function wireEvents() {
   document.getElementById("chkSpline").addEventListener("change", e => { graphSpline = e.target.checked; });
   document.getElementById("btnGenererGraph").addEventListener("click", genererGraphique);
   document.getElementById("btnOuvrirPlotly").addEventListener("click", ouvrirGraphiquePlotly);
+  document.getElementById("btnGraphExportPng").addEventListener("click", exportGraphPng);
+  document.getElementById("btnGraphExportSvg").addEventListener("click", exportGraphSvg);
+  document.getElementById("btnGraphExportHtml").addEventListener("click", exportGraphHtml);
+  document.getElementById("btnGraphExportXls").addEventListener("click", exportGraphXls);
 
   refreshDimUI();
 }

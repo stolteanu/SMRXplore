@@ -34,6 +34,8 @@
   .dims-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   #status { font-size: 0.85em; color: var(--gris); margin-top: 10px; min-height: 1.2em; }
   #status.err { color: #c0392b; font-weight: 600; }
+  input.champ-err { border-color: #c0392b !important; background: #fdecea; }
+  .champ-err-msg { font-size: 0.78em; color: #c0392b; margin-top: 4px; min-height: 1.1em; }
   .var-list { display: flex; flex-direction: column; gap: 8px; }
   .var-row { display: flex; gap: 6px; align-items: center; background: #fafcfd; border: 1px solid var(--bordure); border-radius: 4px; padding: 6px; }
   .var-row select { min-width: 0; flex: 1 1 auto; }
@@ -56,6 +58,7 @@
   table.pivot td.rowhead.rowhead-nested { position: static; left: auto; }
   table.pivot tr:nth-child(even) td:not(.rowhead) { background: #fbfcfc; }
   table.pivot tr.totalrow td { background: #eaf2f8 !important; font-weight: 700; border-top: 2px solid var(--bleu); }
+  table.pivot tr.subtotalrow td { background: #f2f6f4 !important; font-weight: 600; border-top: 1px solid var(--bleu-clair); font-style: italic; }
   table.pivot td.totalcol { background: #eaf2f8 !important; font-weight: 700; border-left: 2px solid var(--bleu); }
   .export-bar { display: flex; gap: 10px; margin-top: 14px; }
   .meta-line { font-size: 0.82em; color: var(--gris); margin-bottom: 10px; }
@@ -101,9 +104,10 @@
     body * { visibility: hidden; }
     #printExport, #printExport * { visibility: visible; }
     #printExport { display: block; position: absolute; top: 0; left: 0; width: 100%; }
-    #printExport table { border-collapse: collapse; width: 100%; font-size: 11px; }
-    #printExport th, #printExport td { border: 1px solid #999; padding: 4px 7px; }
+    #printExport table { border-collapse: collapse; width: 100%; font-size: 11px; table-layout: auto; }
+    #printExport th, #printExport td { border: 1px solid #999; padding: 4px 7px; word-break: break-word; }
     #printExport th { background: #eaf2f8 !important; -webkit-print-color-adjust: exact; }
+    #printExport img, #printExport svg { max-width: 100%; height: auto; display: block; margin: 0 auto 12px; }
   }
 </style>
 </head>
@@ -166,10 +170,11 @@
       <div class="field" id="champPeriodePerso" style="display:none">
         <label>Du (JJ/MM) au (JJ/MM)</label>
         <div class="row" style="gap:6px;">
-          <input type="text" id="inpPeriodeDebut" placeholder="03/01" size="6">
+          <input type="text" id="inpPeriodeDebut" placeholder="JJ/MM" size="6" maxlength="5">
           <span style="align-self:center;">→</span>
-          <input type="text" id="inpPeriodeFin" placeholder="26/06" size="6">
+          <input type="text" id="inpPeriodeFin" placeholder="JJ/MM" size="6" maxlength="5">
         </div>
+        <div class="champ-err-msg" id="periodePersoErrMsg"></div>
       </div>
     </div>
     <div class="field" style="width:100%; margin-top:14px;">
@@ -220,6 +225,9 @@
         <label>Lignes</label>
         <div class="var-list" id="rowDimsList"></div>
         <button class="btn-add" id="btnAddRowDim">+ Ajouter une variable</button>
+        <label id="rowSubtotalWrap" style="display:none; margin-top:8px; font-size:0.85em; align-items:center; gap:6px;">
+          <input type="checkbox" id="chkRowSubtotal"> Sous-totaux par 1ère variable de regroupement
+        </label>
       </div>
       <div class="field" style="flex:1; min-width:320px;">
         <label>Colonnes (facultatif)</label>
@@ -285,8 +293,7 @@
     <div class="meta-line" id="resultMeta"></div>
     <div id="resultWrap"></div>
     <div class="export-bar">
-      <button class="secondary" id="btnExportHtml" disabled>Exporter en HTML</button>
-      <button class="secondary" id="btnExportPdf" disabled>Exporter en PDF</button>
+      <button class="secondary" id="btnExportHtml" disabled title="L'impression/export PDF se fait depuis ce fichier HTML (bouton Imprimer intégré)">Exporter en HTML</button>
       <button class="secondary" id="btnExportDoc" disabled>Exporter en Word (.doc)</button>
       <button class="secondary" id="btnExportXls" disabled>Exporter en Excel (.xls)</button>
     </div>
@@ -398,6 +405,12 @@
     <h2>4. Résultat</h2>
     <div class="meta-line" id="graphResultMeta"></div>
     <div id="graphResultWrap" class="chart-grid"></div>
+    <div class="export-bar">
+      <button class="secondary" id="btnGraphExportPng" disabled>Exporter en PNG</button>
+      <button class="secondary" id="btnGraphExportSvg" disabled title="Vectoriel — meilleure fidélité et le plus souvent le plus léger">Exporter en SVG</button>
+      <button class="secondary" id="btnGraphExportHtml" disabled title="L'impression/export PDF se fait depuis ce fichier HTML (bouton Imprimer intégré)">Exporter en HTML</button>
+      <button class="secondary" id="btnGraphExportXls" disabled>Exporter en Excel (données)</button>
+    </div>
   </div>
   </div>
   </div>
@@ -430,6 +443,7 @@
 </main>
 
 <div id="printExport"></div>
+<style id="printPageStyle">@page { size: A4 portrait; margin: 12mm; }</style>
 
 <script src="lib/sql-wasm.js"></script>
 <script src="catalogue.js"></script>

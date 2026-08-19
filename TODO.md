@@ -11,6 +11,17 @@
   "séjours en erreur" de la section 5 (voir mémoire `project-pmsi-smr-extractor`, séjour
   024909882 / erreur 0028 découvert le 2026-07-28).
 
+## Variables à ajouter (fichier VisualValoSejours)
+
+- [x] **Montant molécules onéreuses** (`montant_am_med`, alias CSV `MNT_AM_MED`) et
+  **montant transport** (`montant_am_trans`, alias CSV `MNT_AM_TRANS`) — exposées comme
+  mesures dans le catalogue de l'Explorateur (`SOURCES.valo.measures`, `app/catalogue.js`),
+  2026-08-19. Les deux colonnes existaient déjà dans le schéma
+  (`config/formats/valorisation_sejour.schema.json`), seule l'exposition au catalogue
+  manquait.
+- [ ] Même ajout côté tableaux de bord simples (`src/viz/valorisation.py` /
+  `render_dashboard.py`) si besoin — pas fait pour l'instant, seul l'Explorateur les propose.
+
 ## Autres pistes ouvertes (voir mémoire du projet pour le détail)
 
 - [ ] `Nb CSARR` (section 4, indicateur cumulatif) : formule encore approximative
