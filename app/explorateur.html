@@ -253,6 +253,7 @@
     <div class="row" style="margin-top:14px;">
       <div class="field" style="flex:1; min-width:420px;">
         <label>Expressions (mesure × fonction — plusieurs possibles)</label>
+        <p style="font-size:0.82em;color:var(--gris);margin:0 0 6px;">"Formule (par ligne)" : combine des mesures brutes de la même ligne (+ − × ÷, ex. montant_br_tot - montant_am_tot), puis s'agrège normalement. "Ratio (expressions)" : combine le résultat déjà agrégé d'autres expressions de cette liste, référencées par position E1/E2/… (ex. E1/E2 = coût moyen par séjour). Une division par zéro donne une case vide, pas une erreur.</p>
         <div class="var-list" id="exprList"></div>
         <button class="btn-add" id="btnAddExpr">+ Ajouter une expression</button>
       </div>
@@ -347,6 +348,7 @@
     <div class="row" style="margin-top:14px;">
       <div class="field" style="flex:1; min-width:320px;">
         <label>Mesure(s) Y (mesure × fonction)</label>
+        <p style="font-size:0.82em;color:var(--gris);margin:0 0 6px;">"Formule (par ligne)" disponible ici (combine des mesures brutes de la même ligne, ex. montant_br_tot - montant_am_tot, puis s'agrège normalement) — le ratio entre expressions n'est proposé que dans le Tableau croisé.</p>
         <div class="var-list" id="graphExprList"></div>
         <button class="btn-add" id="btnAddGraphExpr">+ Ajouter une expression</button>
       </div>
@@ -399,6 +401,10 @@
         <label style="display:flex;align-items:center;gap:6px;font-weight:normal;text-transform:none;letter-spacing:normal;">
           <input type="checkbox" id="chkSpline" style="width:auto;"> Lignes arrondies (spline)
         </label>
+      </div>
+      <div class="field" id="movAvgField" style="display:none;">
+        <label>Moyenne mobile <span style="text-transform:none;font-weight:normal;">(points, vide/0 = désactivée)</span></label>
+        <input type="number" id="inpMovAvg" min="2" step="1" style="width:90px;" placeholder="ex. 5">
       </div>
       <div class="field" id="donutField" style="display:none;">
         <label style="display:flex;align-items:center;gap:6px;font-weight:normal;text-transform:none;letter-spacing:normal;">
