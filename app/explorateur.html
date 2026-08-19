@@ -49,11 +49,25 @@
   #recapBox dl { display: grid; grid-template-columns: 160px 1fr; gap: 4px 12px; margin: 0; }
   #recapBox dt { color: var(--gris); font-weight: 600; }
   #recapBox dd { margin: 0; }
-  th.exprhead { white-space: normal; max-width: 130px; font-weight: 600; font-size: 0.85em; }
+  th.exprhead { font-weight: 600; font-size: 0.85em; }
   #resultWrap { overflow: auto; max-height: 70vh; }
-  table.pivot { border-collapse: collapse; width: 100%; font-size: 0.88em; }
+  /* width:auto (pas 100%) : chaque colonne se calibre sur son propre contenu (table-layout auto par
+     défaut) plutôt que d'être étirée uniformément sur toute la largeur du conteneur — une colonne
+     à libellé/valeurs courts (ex. sexe) reste étroite, une colonne à libellé long en profite pour
+     s'élargir un peu au lieu que toutes se partagent la largeur à égalité. */
+  table.pivot { border-collapse: collapse; width: auto; font-size: 0.88em; }
   table.pivot th, table.pivot td { border: 1px solid var(--bordure); padding: 6px 10px; text-align: right; white-space: nowrap; }
-  table.pivot th { background: var(--bleu-clair); position: sticky; top: 0; text-align: center; }
+  table.pivot th { background: var(--bleu-clair); position: sticky; top: 0; text-align: center; white-space: normal; }
+  /* Libellé d'en-tête : retour à la ligne dans la largeur calibrée par le contenu (pas de troncature
+     à une seule ligne), jusqu'à 3 lignes — au-delà, coupé avec une ellipse plutôt que d'élargir la
+     colonne à l'infini pour un seul libellé démesuré. display:-webkit-box (nécessaire pour
+     -webkit-line-clamp) est posé sur ce span interne, pas sur le <th> lui-même, pour ne pas casser
+     son display:table-cell natif (indispensable à la mise en page du tableau). */
+  table.pivot th .th-label {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+    overflow: hidden; text-overflow: ellipsis;
+    white-space: normal; word-break: break-word; max-width: 150px; margin: 0 auto;
+  }
   table.pivot td.rowhead { text-align: left; font-weight: 600; background: #fafcfd; position: sticky; left: 0; }
   table.pivot td.rowhead.rowhead-nested { position: static; left: auto; }
   table.pivot tr:nth-child(even) td:not(.rowhead) { background: #fbfcfc; }

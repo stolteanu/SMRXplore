@@ -234,11 +234,15 @@ function populateMoisSelect() {
   const noms = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
   const sel = document.getElementById("selMois");
   sel.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "— Choisir un mois —";
+  placeholder.selected = true;
+  sel.appendChild(placeholder);
   noms.forEach((n, i) => {
     const opt = document.createElement("option");
     opt.value = i + 1;
     opt.textContent = n;
-    if (i === 11) opt.selected = true;
     sel.appendChild(opt);
   });
 }
@@ -283,10 +287,9 @@ function defaultModeFor(dim) {
 }
 
 function refreshDimUI() {
-  const src = SOURCES[activeSource];
-  rowDimRows = [{ uid: ++uidCounter, srcKey: activeSource, dimId: src.dims[0].id, mode: defaultModeFor(src.dims[0]) }];
+  rowDimRows = [{ uid: ++uidCounter, srcKey: activeSource, dimId: null, mode: undefined }];
   colDimRows = [];
-  exprRows = [{ uid: ++uidCounter, srcKey: activeSource, measureId: src.measures[0].id, aggId: "count", label: "" }];
+  exprRows = [{ uid: ++uidCounter, srcKey: activeSource, measureId: null, aggId: "count", label: "" }];
   renderDimsList("rowDimsList", rowDimRows, 1);
   renderDimsList("colDimsList", colDimRows, 0);
   renderExprList();
@@ -311,6 +314,11 @@ function renderDimsList(containerId, arr, minCount) {
     div.className = "var-row";
 
     const sel = document.createElement("select");
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "— Choisir une variable —";
+    if (!row.dimId) placeholder.selected = true;
+    sel.appendChild(placeholder);
     SOURCE_ORDER.forEach(srcKey => {
       const src = SOURCES[srcKey];
       const group = document.createElement("optgroup");
@@ -325,6 +333,7 @@ function renderDimsList(containerId, arr, minCount) {
       sel.appendChild(group);
     });
     sel.addEventListener("change", () => {
+      if (!sel.value) { row.dimId = null; row.mode = undefined; renderDimsList(containerId, arr, minCount); updateRecap(); return; }
       const [srcKey, dimId] = sel.value.split("::");
       row.srcKey = srcKey; row.dimId = dimId;
       row.mode = defaultModeFor(dimDefOf(row));
@@ -407,6 +416,11 @@ function renderExprListGeneric(containerId, arr, minCount) {
     div.className = "var-row";
 
     const measSel = document.createElement("select");
+    const measPlaceholder = document.createElement("option");
+    measPlaceholder.value = "";
+    measPlaceholder.textContent = "— Choisir une mesure —";
+    if (!row.measureId) measPlaceholder.selected = true;
+    measSel.appendChild(measPlaceholder);
     SOURCE_ORDER.forEach(srcKey => {
       const src = SOURCES[srcKey];
       const group = document.createElement("optgroup");
@@ -421,36 +435,45 @@ function renderExprListGeneric(containerId, arr, minCount) {
       measSel.appendChild(group);
     });
 
-    const aggSel = document.createElement("select");
-    function fillAgg() {
-      aggSel.innerHTML = "";
-      const measure = measureOf(row);
-      // Une mesure "distincte" (ex. nb de séjours) n'a pas de valeur numérique par ligne :
-      // count et les % (basés sur un compte d'éléments distincts) restent valides, pas sum/avg/médiane/min/max.
-      const DISTINCT_OK = ["count", "pct_total", "pct_row", "pct_col"];
-      const opts = (measure && measure.distinctKey) ? AGG_DEFS.filter(a => DISTINCT_OK.includes(a.id)) : AGG_DEFS;
-      if (measure && measure.distinctKey && !DISTINCT_OK.includes(row.aggId)) row.aggId = "count";
-      opts.forEach(a => {
-        const o = document.createElement("option");
-        o.value = a.id; o.textContent = a.label;
-        if (a.id === row.aggId) o.selected = true;
-        aggSel.appendChild(o);
-      });
-    }
-    fillAgg();
-
     measSel.addEventListener("change", () => {
+      if (!measSel.value) { row.measureId = null; renderExprListGeneric(containerId, arr, minCount); updateRecap(); return; }
       const [srcKey, measureId] = measSel.value.split("::");
       row.srcKey = srcKey; row.measureId = measureId;
-      fillAgg(); updateRecap();
+      renderExprListGeneric(containerId, arr, minCount);
+      updateRecap();
     });
-    aggSel.addEventListener("change", () => { row.aggId = aggSel.value; updateRecap(); });
+    div.appendChild(measSel);
 
-    const labelInput = document.createElement("input");
-    labelInput.className = "expr-label";
-    labelInput.placeholder = "Libellé personnalisé (optionnel)";
-    labelInput.value = row.label || "";
-    labelInput.addEventListener("input", () => { row.label = labelInput.value; updateRecap(); });
+    // Agrégation et libellé n'ont de sens qu'une fois une mesure choisie (sinon rien à agréger) —
+    // évite aussi de suggérer une agrégation par défaut sur une mesure implicite.
+    if (row.measureId) {
+      const aggSel = document.createElement("select");
+      function fillAgg() {
+        aggSel.innerHTML = "";
+        const measure = measureOf(row);
+        // Une mesure "distincte" (ex. nb de séjours) n'a pas de valeur numérique par ligne :
+        // count et les % (basés sur un compte d'éléments distincts) restent valides, pas sum/avg/médiane/min/max.
+        const DISTINCT_OK = ["count", "pct_total", "pct_row", "pct_col"];
+        const opts = (measure && measure.distinctKey) ? AGG_DEFS.filter(a => DISTINCT_OK.includes(a.id)) : AGG_DEFS;
+        if (measure && measure.distinctKey && !DISTINCT_OK.includes(row.aggId)) row.aggId = "count";
+        opts.forEach(a => {
+          const o = document.createElement("option");
+          o.value = a.id; o.textContent = a.label;
+          if (a.id === row.aggId) o.selected = true;
+          aggSel.appendChild(o);
+        });
+      }
+      fillAgg();
+      aggSel.addEventListener("change", () => { row.aggId = aggSel.value; updateRecap(); });
+      div.appendChild(aggSel);
+
+      const labelInput = document.createElement("input");
+      labelInput.className = "expr-label";
+      labelInput.placeholder = "Libellé personnalisé (optionnel)";
+      labelInput.value = row.label || "";
+      labelInput.addEventListener("input", () => { row.label = labelInput.value; updateRecap(); });
+      div.appendChild(labelInput);
+    }
 
     const rm = document.createElement("button");
     rm.className = "btn-remove"; rm.textContent = "✕"; rm.title = "Retirer";
@@ -462,8 +485,8 @@ function renderExprListGeneric(containerId, arr, minCount) {
       renderExprListGeneric(containerId, arr, minCount);
       updateRecap();
     });
+    div.appendChild(rm);
 
-    div.appendChild(measSel); div.appendChild(aggSel); div.appendChild(labelInput); div.appendChild(rm);
     container.appendChild(div);
   });
 }
@@ -483,6 +506,7 @@ function labelForDimRow(row) {
 }
 
 function exprLabelFor(expr) {
+  if (!expr.measureId) return "(mesure non choisie)";
   const src = SOURCES[expr.srcKey];
   const measure = measureOf(expr);
   const agg = AGG_DEFS.find(a => a.id === expr.aggId);
@@ -564,6 +588,7 @@ function computeSelectedPeriods() {
     return periods;
   }
 
+  if (!moisEl.value) return []; // aucun mois choisi ("— Choisir un mois —") : pas de période implicite
   const mois = Number(moisEl.value);
   for (const y of checked) {
     const yearNum = Number(y);
@@ -675,6 +700,13 @@ function resolveForeignRow(idx, baseRow) {
   if (baseYear != null) {
     const match = candidates.find(r => String(r._periode_annee) === String(baseYear));
     if (match) return match;
+    // Aucune ligne du fichier tiers pour l'année de baseRow (ex. séjour SMR encore ouvert dont la
+    // campagne Valo de l'année en cours n'a pas encore été transmise/close) : "hors périmètre" pour
+    // cette année, pas de repli arbitraire sur une autre année — retomber sur candidates[0] ferait
+    // pointer vers une ligne d'une année différente et, avec la répartition au jour de présence
+    // (extractValues), lui ferait attribuer une fraction de son montant à la mauvaise année (bug
+    // constaté 2026-08-19 : ~5 145 € de MO 2025 comptés en 2026 pour des séjours encore en cours).
+    return null;
   }
   return candidates[0];
 }
@@ -1033,6 +1065,11 @@ function fmtVal(v, isPct) {
   return v.toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
+// En-tête <th> : le libellé est enveloppé dans un span dédié (plutôt que posé en texte direct dans
+// le <th>) pour que le retour à la ligne/l'ellipse à 3 lignes (CSS .th-label, -webkit-line-clamp)
+// s'applique sans changer le display:table-cell du <th> lui-même — cf. commentaire CSS associé.
+function thLabelHtml(text) { return `<span class="th-label">${esc(text)}</span>`; }
+
 function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
   const n = exprsCfg.length;
   const nDims = rowDimsCfg.length;
@@ -1053,24 +1090,24 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
 
     for (let level = 0; level < nDimsCol; level++) {
       html += "<tr>";
-      if (level === 0) rowLabels.forEach(lbl => { html += `<th rowspan="${headerRows}">${esc(lbl)}</th>`; });
+      if (level === 0) rowLabels.forEach(lbl => { html += `<th rowspan="${headerRows}">${thLabelHtml(lbl)}</th>`; });
       pivot.colKeys.forEach((ck, i) => {
-        if (colShow[i][level]) html += `<th colspan="${colSpan[i][level] * n}">${esc(colsParts[i][level])}</th>`;
+        if (colShow[i][level]) html += `<th colspan="${colSpan[i][level] * n}">${thLabelHtml(colsParts[i][level])}</th>`;
       });
       if (level === 0) html += `<th colspan="${n}" rowspan="${nDimsCol}" class="totalcol">Total</th>`;
       html += "</tr>";
     }
     html += "<tr>";
-    for (const ck of pivot.colKeys) for (const e of exprsCfg) html += `<th class="exprhead">${esc(exprLabel(e))}</th>`;
-    for (const e of exprsCfg) html += `<th class="exprhead totalcol">${esc(exprLabel(e))}</th>`;
+    for (const ck of pivot.colKeys) for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
+    for (const e of exprsCfg) html += `<th class="exprhead totalcol">${thLabelHtml(exprLabel(e))}</th>`;
     html += "</tr></thead><tbody>";
   } else {
     html += '<tr>';
-    rowLabels.forEach(lbl => { html += `<th rowspan="2">${esc(lbl)}</th>`; });
-    for (const ck of pivot.colKeys) html += `<th colspan="${n}">${esc(ck)}</th>`;
+    rowLabels.forEach(lbl => { html += `<th rowspan="2">${thLabelHtml(lbl)}</th>`; });
+    for (const ck of pivot.colKeys) html += `<th colspan="${n}">${thLabelHtml(ck)}</th>`;
     html += `<th colspan="${n}" class="totalcol">Total</th></tr><tr>`;
-    for (const ck of pivot.colKeys) for (const e of exprsCfg) html += `<th class="exprhead">${esc(exprLabel(e))}</th>`;
-    for (const e of exprsCfg) html += `<th class="exprhead totalcol">${esc(exprLabel(e))}</th>`;
+    for (const ck of pivot.colKeys) for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
+    for (const e of exprsCfg) html += `<th class="exprhead totalcol">${thLabelHtml(exprLabel(e))}</th>`;
     html += "</tr></thead><tbody>";
   }
 
@@ -1143,9 +1180,12 @@ function generer() {
     if (document.getElementById("selPeriodeMode").value === "perso" && !validatePeriodePerso()) {
       status("Corrigez la période personnalisée (date invalide).", true); return;
     }
-    if (!periods.length) { status("Sélectionnez au moins une année valide pour le mois choisi.", true); return; }
+    if (!periods.length) { status("Choisissez un mois et sélectionnez au moins une année valide pour cette période.", true); return; }
     if (!rowDimRows.length) { status("Ajoutez au moins une variable en lignes.", true); return; }
     if (!exprRows.length) { status("Ajoutez au moins une expression.", true); return; }
+    if (rowDimRows.some(r => !r.dimId)) { status("Choisissez une variable pour chaque ligne (ou retirez la ligne vide).", true); return; }
+    if (colDimRows.some(r => !r.dimId)) { status("Choisissez une variable pour chaque colonne (ou retirez la colonne vide).", true); return; }
+    if (exprRows.some(r => !r.measureId)) { status("Choisissez une mesure pour chaque expression (ou retirez l'expression vide).", true); return; }
 
     status("Interrogation de la base…");
     const { sql, params } = buildQuery(activeSource, finessList, periods);
@@ -1210,6 +1250,11 @@ function measureOf(expr) { return catalogEntry(expr.srcKey, "measure", expr.meas
 // filtre/colonne, couvrant les 7 sources (mêmes catalogues que le pivot).
 function buildEntryOptions(sel, currentSrcKey, currentKind, currentId) {
   sel.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "— Choisir une variable —";
+  if (!currentId) placeholder.selected = true;
+  sel.appendChild(placeholder);
   SOURCE_ORDER.forEach(srcKey => {
     const src = SOURCES[srcKey];
     const gDim = document.createElement("optgroup");
@@ -1392,6 +1437,7 @@ function renderGlobalFilterList() {
     const sel = document.createElement("select");
     buildEntryOptions(sel, f.srcKey, f.kind, f.id);
     sel.addEventListener("change", () => {
+      if (!sel.value) { f.id = null; renderGlobalFilterList(); return; }
       const [srcKey, kind, id] = sel.value.split("::");
       f.srcKey = srcKey; f.kind = kind; f.id = id;
       if (kind === "measure") { f.op = "between"; f.val = ""; f.val2 = ""; }
@@ -1402,7 +1448,12 @@ function renderGlobalFilterList() {
 
     const entry = catalogEntry(f.srcKey, f.kind, f.id);
 
-    if (f.kind === "dim") {
+    // Tant qu'aucune variable n'est choisie (id null), pas de contrôle de valeurs à afficher —
+    // la note "variable calculée" ne doit apparaître que pour une variable réellement choisie et
+    // réellement sans colonne filtrable, pas pour un sélecteur encore vide.
+    if (!f.id) {
+      // rien de plus tant que la variable n'est pas choisie
+    } else if (f.kind === "dim") {
       if (entry && entry.col) {
         const msel = document.createElement("select");
         msel.multiple = true;
@@ -1459,10 +1510,8 @@ function renderGlobalFilterList() {
 }
 
 function refreshListeUI() {
-  const src = SOURCES[activeSourceListe];
   filterRows = [];
-  listeColRows = src.dims.slice(0, Math.min(5, src.dims.length))
-    .map(d => ({ uid: ++uidCounter, srcKey: activeSourceListe, kind: "dim", id: d.id, mode: defaultModeFor(d) }));
+  listeColRows = [{ uid: ++uidCounter, srcKey: activeSourceListe, kind: "dim", id: null, mode: undefined }];
   renderFilterList();
   renderListeColsList();
 }
@@ -1477,6 +1526,7 @@ function renderFilterList() {
     const sel = document.createElement("select");
     buildEntryOptions(sel, f.srcKey, f.kind, f.id);
     sel.addEventListener("change", () => {
+      if (!sel.value) { f.id = null; renderFilterList(); return; }
       const [srcKey, kind, id] = sel.value.split("::");
       f.srcKey = srcKey; f.kind = kind; f.id = id;
       f.op = kind === "measure" ? "between" : "eq";
@@ -1485,38 +1535,42 @@ function renderFilterList() {
     });
     div.appendChild(sel);
 
-    const opSel = document.createElement("select");
-    opSel.className = "op-sel";
-    opsFor(f.kind).forEach(([v, t]) => {
-      const o = document.createElement("option");
-      o.value = v; o.textContent = t;
-      if (f.op === v) o.selected = true;
-      opSel.appendChild(o);
-    });
-    opSel.addEventListener("change", () => { f.op = opSel.value; renderFilterList(); });
-    div.appendChild(opSel);
+    // Tant qu'aucune variable n'est choisie (id null), pas de sens à proposer un opérateur/une
+    // valeur — évite de suggérer un filtre sur une variable implicite (la 1ʳᵉ de la liste).
+    if (f.id) {
+      const opSel = document.createElement("select");
+      opSel.className = "op-sel";
+      opsFor(f.kind).forEach(([v, t]) => {
+        const o = document.createElement("option");
+        o.value = v; o.textContent = t;
+        if (f.op === v) o.selected = true;
+        opSel.appendChild(o);
+      });
+      opSel.addEventListener("change", () => { f.op = opSel.value; renderFilterList(); });
+      div.appendChild(opSel);
 
-    const val1 = document.createElement("input");
-    val1.className = "filter-val";
-    val1.placeholder = f.kind === "measure" ? (f.op === "between" ? "min" : "valeur") : "valeur (texte)";
-    val1.value = f.val || "";
-    val1.addEventListener("input", () => { f.val = val1.value; });
-    div.appendChild(val1);
+      const val1 = document.createElement("input");
+      val1.className = "filter-val";
+      val1.placeholder = f.kind === "measure" ? (f.op === "between" ? "min" : "valeur") : "valeur (texte)";
+      val1.value = f.val || "";
+      val1.addEventListener("input", () => { f.val = val1.value; });
+      div.appendChild(val1);
 
-    const entryForList = catalogEntry(f.srcKey, f.kind, f.id);
-    if (f.kind === "dim" && entryForList && entryForList.col) {
-      const dlId = `dl_filter_${f.uid}`;
-      val1.setAttribute("list", dlId);
-      fillFilterDatalist(dlId, f.srcKey, entryForList);
-    }
+      const entryForList = catalogEntry(f.srcKey, f.kind, f.id);
+      if (f.kind === "dim" && entryForList && entryForList.col) {
+        const dlId = `dl_filter_${f.uid}`;
+        val1.setAttribute("list", dlId);
+        fillFilterDatalist(dlId, f.srcKey, entryForList);
+      }
 
-    if (f.kind === "measure" && f.op === "between") {
-      const val2 = document.createElement("input");
-      val2.className = "filter-val2";
-      val2.placeholder = "max";
-      val2.value = f.val2 || "";
-      val2.addEventListener("input", () => { f.val2 = val2.value; });
-      div.appendChild(val2);
+      if (f.kind === "measure" && f.op === "between") {
+        const val2 = document.createElement("input");
+        val2.className = "filter-val2";
+        val2.placeholder = "max";
+        val2.value = f.val2 || "";
+        val2.addEventListener("input", () => { f.val2 = val2.value; });
+        div.appendChild(val2);
+      }
     }
 
     const rm = document.createElement("button");
@@ -1542,6 +1596,7 @@ function renderListeColsList() {
     const sel = document.createElement("select");
     buildEntryOptions(sel, c.srcKey, c.kind, c.id);
     sel.addEventListener("change", () => {
+      if (!sel.value) { c.id = null; c.mode = undefined; renderListeColsList(); return; }
       const [srcKey, kind, id] = sel.value.split("::");
       c.srcKey = srcKey; c.kind = kind; c.id = id;
       c.mode = defaultModeFor(catalogEntry(srcKey, kind, id));
@@ -1615,8 +1670,10 @@ function genererListe() {
     if (document.getElementById("selPeriodeMode").value === "perso" && !validatePeriodePerso()) {
       setSt("Corrigez la période personnalisée (date invalide).", true); return;
     }
-    if (!periods.length) { setSt("Sélectionnez au moins une année valide pour le mois choisi.", true); return; }
+    if (!periods.length) { setSt("Choisissez un mois et sélectionnez au moins une année valide pour cette période.", true); return; }
     if (!listeColRows.length) { setSt("Ajoutez au moins une colonne à afficher.", true); return; }
+    if (listeColRows.some(c => !c.id)) { setSt("Choisissez une variable pour chaque colonne (ou retirez la colonne vide).", true); return; }
+    if (filterRows.some(f => !f.id)) { setSt("Choisissez une variable pour chaque filtre local (ou retirez le filtre vide).", true); return; }
 
     setSt("Interrogation de la base…");
     const { sql, params } = buildQuery(activeSourceListe, finessList, periods);
@@ -1661,7 +1718,7 @@ function genererListe() {
     const { show, span } = computeMerge(partsList);
 
     let html = '<table class="pivot"><thead><tr>';
-    listeColRows.forEach(c => { html += `<th>${esc(listeColLabel(c))}</th>`; });
+    listeColRows.forEach(c => { html += `<th>${thLabelHtml(listeColLabel(c))}</th>`; });
     html += "</tr></thead><tbody>";
     shownOrder.forEach((_, i) => {
       html += "<tr>";
@@ -1959,9 +2016,8 @@ function renderChartOptionsUI() {
 }
 
 function refreshGraphUI() {
-  const src = SOURCES[activeSourceGraph];
-  if (!graphXDimRows.length) graphXDimRows = [{ uid: ++uidCounter, srcKey: activeSourceGraph, dimId: src.dims[0].id, mode: defaultModeFor(src.dims[0]) }];
-  if (!graphExprRows.length) graphExprRows = [{ uid: ++uidCounter, srcKey: activeSourceGraph, measureId: src.measures[0].id, aggId: "count", label: "" }];
+  if (!graphXDimRows.length) graphXDimRows = [{ uid: ++uidCounter, srcKey: activeSourceGraph, dimId: null, mode: undefined }];
+  if (!graphExprRows.length) graphExprRows = [{ uid: ++uidCounter, srcKey: activeSourceGraph, measureId: null, aggId: "count", label: "" }];
   renderDimsList("graphXDimsList", graphXDimRows, 1);
   renderDimsList("graphSeriesDimsList", graphSeriesDimRows, 0);
   renderDimsList("graphFacetDimsList", graphFacetDimRows, 0);
@@ -3185,9 +3241,13 @@ function prepareGraphData(setSt) {
   if (document.getElementById("selPeriodeMode").value === "perso" && !validatePeriodePerso()) {
     setSt("Corrigez la période personnalisée (date invalide).", true); return null;
   }
-  if (!periods.length) { setSt("Sélectionnez au moins une année valide pour le mois choisi.", true); return null; }
+  if (!periods.length) { setSt("Choisissez un mois et sélectionnez au moins une année valide pour cette période.", true); return null; }
   if (!graphXDimRows.length) { setSt("Ajoutez au moins une variable en axe X.", true); return null; }
   if (!graphExprRows.length) { setSt("Ajoutez au moins une expression (mesure).", true); return null; }
+  if (graphXDimRows.some(r => !r.dimId)) { setSt("Choisissez une variable pour chaque ligne d'axe X (ou retirez la ligne vide).", true); return null; }
+  if (graphSeriesDimRows.some(r => !r.dimId)) { setSt("Choisissez une variable pour chaque ligne de Série (ou retirez la ligne vide).", true); return null; }
+  if (graphFacetDimRows.some(r => !r.dimId)) { setSt("Choisissez une variable pour chaque ligne de Vignettes (ou retirez la ligne vide).", true); return null; }
+  if (graphExprRows.some(r => !r.measureId)) { setSt("Choisissez une mesure pour chaque expression (ou retirez l'expression vide).", true); return null; }
 
   let chartType = activeChartType;
   if (!chartType) {
@@ -4170,20 +4230,17 @@ function wireEvents() {
   document.getElementById("inpPeriodeFin").addEventListener("input", () => { validatePeriodePerso(); updateRecap(); renderGlobalFilterList(); });
 
   document.getElementById("btnAddRowDim").addEventListener("click", () => {
-    const src = SOURCES[activeSource];
-    rowDimRows.push({ uid: ++uidCounter, srcKey: activeSource, dimId: src.dims[0].id, mode: defaultModeFor(src.dims[0]) });
+    rowDimRows.push({ uid: ++uidCounter, srcKey: activeSource, dimId: null, mode: undefined });
     renderDimsList("rowDimsList", rowDimRows, 1);
     updateRecap();
   });
   document.getElementById("btnAddColDim").addEventListener("click", () => {
-    const src = SOURCES[activeSource];
-    colDimRows.push({ uid: ++uidCounter, srcKey: activeSource, dimId: src.dims[0].id, mode: defaultModeFor(src.dims[0]) });
+    colDimRows.push({ uid: ++uidCounter, srcKey: activeSource, dimId: null, mode: undefined });
     renderDimsList("colDimsList", colDimRows, 0);
     updateRecap();
   });
   document.getElementById("btnAddExpr").addEventListener("click", () => {
-    const src = SOURCES[activeSource];
-    exprRows.push({ uid: ++uidCounter, srcKey: activeSource, measureId: src.measures[0].id, aggId: "count", label: "" });
+    exprRows.push({ uid: ++uidCounter, srcKey: activeSource, measureId: null, aggId: "count", label: "" });
     renderExprList();
     updateRecap();
   });
@@ -4203,14 +4260,11 @@ function wireEvents() {
     });
   });
   document.getElementById("btnAddFilter").addEventListener("click", () => {
-    const src = SOURCES[activeSourceListe];
-    filterRows.push({ uid: ++uidCounter, srcKey: activeSourceListe, kind: "dim", id: src.dims[0].id, op: "eq", val: "", val2: "" });
+    filterRows.push({ uid: ++uidCounter, srcKey: activeSourceListe, kind: "dim", id: null, op: "eq", val: "", val2: "" });
     renderFilterList();
   });
   document.getElementById("btnAddListeCol").addEventListener("click", () => {
-    const src = SOURCES[activeSourceListe];
-    const d = src.dims[0];
-    listeColRows.push({ uid: ++uidCounter, srcKey: activeSourceListe, kind: "dim", id: d.id, mode: defaultModeFor(d) });
+    listeColRows.push({ uid: ++uidCounter, srcKey: activeSourceListe, kind: "dim", id: null, mode: undefined });
     renderListeColsList();
   });
   document.getElementById("btnGenererListe").addEventListener("click", genererListe);
@@ -4274,34 +4328,28 @@ function wireEvents() {
 
   // ---- Filtres globaux (section "1. Filtres") ----
   document.getElementById("btnAddGlobalFilter").addEventListener("click", () => {
-    const srcKey = SOURCE_ORDER[0];
-    const src = SOURCES[srcKey];
-    globalFilterRows.push({ uid: ++uidCounter, srcKey, kind: "dim", id: src.dims[0].id, values: [], op: "between", val: "", val2: "" });
+    globalFilterRows.push({ uid: ++uidCounter, srcKey: SOURCE_ORDER[0], kind: "dim", id: null, values: [], op: "between", val: "", val2: "" });
     renderGlobalFilterList();
   });
 
   // ---- Mode "Graphique" ----
   document.getElementById("btnAddGraphXDim").addEventListener("click", () => {
     if (graphXDimRows.length >= 3) return;
-    const src = SOURCES[activeSourceGraph];
-    graphXDimRows.push({ uid: ++uidCounter, srcKey: activeSourceGraph, dimId: src.dims[0].id, mode: defaultModeFor(src.dims[0]) });
+    graphXDimRows.push({ uid: ++uidCounter, srcKey: activeSourceGraph, dimId: null, mode: undefined });
     renderDimsList("graphXDimsList", graphXDimRows, 1);
   });
   document.getElementById("btnAddGraphSeriesDim").addEventListener("click", () => {
     if (graphSeriesDimRows.length >= 3) return;
-    const src = SOURCES[activeSourceGraph];
-    graphSeriesDimRows.push({ uid: ++uidCounter, srcKey: activeSourceGraph, dimId: src.dims[0].id, mode: defaultModeFor(src.dims[0]) });
+    graphSeriesDimRows.push({ uid: ++uidCounter, srcKey: activeSourceGraph, dimId: null, mode: undefined });
     renderDimsList("graphSeriesDimsList", graphSeriesDimRows, 0);
   });
   document.getElementById("btnAddGraphFacetDim").addEventListener("click", () => {
     if (graphFacetDimRows.length >= 3) return;
-    const src = SOURCES[activeSourceGraph];
-    graphFacetDimRows.push({ uid: ++uidCounter, srcKey: activeSourceGraph, dimId: src.dims[0].id, mode: defaultModeFor(src.dims[0]) });
+    graphFacetDimRows.push({ uid: ++uidCounter, srcKey: activeSourceGraph, dimId: null, mode: undefined });
     renderDimsList("graphFacetDimsList", graphFacetDimRows, 0);
   });
   document.getElementById("btnAddGraphExpr").addEventListener("click", () => {
-    const src = SOURCES[activeSourceGraph];
-    graphExprRows.push({ uid: ++uidCounter, srcKey: activeSourceGraph, measureId: src.measures[0].id, aggId: "count", label: "" });
+    graphExprRows.push({ uid: ++uidCounter, srcKey: activeSourceGraph, measureId: null, aggId: "count", label: "" });
     renderExprListGeneric("graphExprList", graphExprRows, 1);
   });
   document.querySelectorAll("#chartTypeTabs button").forEach(btn => {
