@@ -37,6 +37,8 @@ let graphRingColors = [];    // couleur de base (hex) par anneau du camembert : 
 let graphSeriesColors = [];  // couleur (hex) par position de série, override positionnel de CHART_PALETTE — barres/lignes/aires/radar
 let graphDataLabelsMode = "aucune"; // 'aucune' | 'valeurs' | 'pct_col' | 'pct_ligne' | 'pct_total' — barres/lignes/aires/radar
 let graphSpline = false;     // lignes/aires : interpoler la ligne en courbe lissée (spline) plutôt qu'en segments droits
+let graphDonut = false;      // camembert simple (sans Série) : trou central façon anneau plutôt que disque plein
+let graph3d = false;         // nuage/bulles/carte de chaleur, uniquement dans "Ouvrir en interactif" (Plotly) : scatter3d / surface
 
 // ---------- Utilitaires date / semaine ISO ----------
 
@@ -1705,7 +1707,7 @@ const CHART_CAT_CAP = CHART_PALETTE.length;
 const CHART_OTHER_COLOR = "#9a9990"; // gris neutre partagé par tout ce qui est replié dans "Autres"
 const CHART_TYPE_LABELS = {
   barres: "Barres", barres_horiz: "Barres horizontales", barres_empilees: "Barres empilées",
-  lignes: "Lignes", aires: "Aires",
+  lignes: "Lignes", aires: "Aires", combo: "Barres + lignes (mixte)",
   camembert: "Camembert", sunburst: "Sunburst", nuage: "Nuage de points", bulles: "Bulles (bubble chart)",
   carte_chaleur: "Carte de chaleur", boxplot: "Boîte à moustaches", histogramme: "Histogramme",
   treemap: "Treemap", sankey: "Diagramme de Sankey (flux)", radar: "Radar",
@@ -1715,7 +1717,7 @@ const CHART_TYPE_LABELS = {
 // même construction `chartSeriesData`). Le camembert/sunburst/treemap affichent déjà un % natif ;
 // nuage/bulles/carte de chaleur/boxplot/histogramme/sankey ont une sémantique différente.
 const CHART_TYPES_WITH_LABELS = new Set(["barres", "barres_horiz", "barres_empilees", "lignes", "aires", "radar"]);
-const CHART_TYPES_WITH_SPLINE = new Set(["lignes", "aires"]);
+const CHART_TYPES_WITH_SPLINE = new Set(["lignes", "aires", "combo"]);
 // Dimensions "temporelles" au sens large (année/semaine/campagne) : un axe X sur l'une d'elles
 // suggère un graphique en lignes plutôt qu'en barres.
 const TEMPORAL_DIM_IDS = new Set(["annee_periode", "semaine", "campagne"]);
@@ -1905,12 +1907,55 @@ function renderSeriesColorsUI() {
 
 // Étiquettes de données + spline : un seul menu déroulant pour toute la famille barres/lignes/aires/
 // radar (voir CHART_TYPES_WITH_LABELS) ; la case spline n'apparaît que pour lignes/aires.
+// Nuage n'a que 2 mesures (X/Y) — pas assez pour une 3e dimension utile. Bulles a déjà 3 mesures
+// (X/Y/taille) : en 3D, la taille devient l'axe Z. Carte de chaleur : équivalent naturel = surface.
+// Barres : Plotly n'a pas de trace "bar3d" native — chaque barre est reconstruite comme un
+// parallélépipède (mesh3d), voir pushMeshBox/buildBar3dTraces plus bas.
+const CHART_TYPES_WITH_3D = new Set(["barres", "bulles", "carte_chaleur"]);
+
+// Ajoute un parallélépipède (une barre 3D) à un accumulateur mesh3d — 8 sommets + 12 triangles
+// (2 par face), indices repris de l'exemple "cube" officiel de Plotly, décalés du nombre de
+// sommets déjà accumulés pour pouvoir empiler plusieurs barres dans une seule trace mesh3d.
+function pushMeshBox(acc, x0, x1, y0, y1, z0, z1) {
+  const base = acc.x.length;
+  acc.x.push(x0, x0, x1, x1, x0, x0, x1, x1);
+  acc.y.push(y0, y1, y1, y0, y0, y1, y1, y0);
+  acc.z.push(z0, z0, z0, z0, z1, z1, z1, z1);
+  const I = [7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2], J = [3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3], K = [0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6];
+  for (let n = 0; n < I.length; n++) { acc.i.push(base + I[n]); acc.j.push(base + J[n]); acc.k.push(base + K[n]); }
+}
+
+// Une trace mesh3d par série : catégories en X (position = index), séries en Y (profondeur),
+// valeur en Z (hauteur) — même lecture qu'un histogramme 3D façon QlikView/Excel.
+function buildBar3dTraces(categories, series) {
+  const hw = 0.35;
+  return series.map((s, si) => {
+    const acc = { x: [], y: [], z: [], i: [], j: [], k: [] };
+    categories.forEach((cat, ci) => {
+      const v = s.values[ci];
+      if (!v) return;
+      pushMeshBox(acc, ci - hw, ci + hw, si - hw, si + hw, 0, v);
+    });
+    return { type: "mesh3d", x: acc.x, y: acc.y, z: acc.z, i: acc.i, j: acc.j, k: acc.k, color: s.color, flatshading: true, opacity: 1, name: s.label, showlegend: series.length > 1, showscale: false };
+  });
+}
+
 function renderChartOptionsUI() {
   const field = document.getElementById("chartOptionsField");
   const splineField = document.getElementById("splineField");
+  const donutField = document.getElementById("donutField");
+  const graph3dField = document.getElementById("graph3dField");
   if (!field) return;
-  field.style.display = CHART_TYPES_WITH_LABELS.has(activeChartType) ? "flex" : "none";
-  if (splineField) splineField.style.display = CHART_TYPES_WITH_SPLINE.has(activeChartType) ? "block" : "none";
+  const showLabels = CHART_TYPES_WITH_LABELS.has(activeChartType);
+  const showSpline = CHART_TYPES_WITH_SPLINE.has(activeChartType);
+  const showDonut = activeChartType === "camembert" && !graphSeriesDimRows.length;
+  const show3d = CHART_TYPES_WITH_3D.has(activeChartType);
+  field.style.display = (showLabels || showSpline || showDonut || show3d) ? "flex" : "none";
+  const labelsField = document.getElementById("selDataLabelsMode")?.closest(".field");
+  if (labelsField) labelsField.style.display = showLabels ? "" : "none";
+  if (splineField) splineField.style.display = showSpline ? "block" : "none";
+  if (donutField) donutField.style.display = showDonut ? "block" : "none";
+  if (graph3dField) graph3dField.style.display = show3d ? "block" : "none";
 }
 
 function refreshGraphUI() {
@@ -2050,27 +2095,39 @@ function dataLabelText(mode, v, ser, catIdx, series) {
 // le DOM (le rendu SVG est généré en chaîne de caractères, hors DOM, avant d'être inséré).
 function estTextWidth(text, fontSize) { return String(text).length * fontSize * 0.58; }
 
-function renderBarSvg(categories, series, stacked, valueAxisTitle) {
+// dualAxis : plusieurs mesures hétérogènes tracées comme séries (pas via une Série — dans ce cas
+// elles partagent toutes la même mesure/unité) risquent des échelles très différentes (ex. nombre
+// de RHS vs somme de valorisation) où la petite mesure devient invisible sur l'échelle de la
+// grande. Quand actif (et pas empilé — additionner des unités différentes n'aurait pas de sens),
+// la 1ʳᵉ série garde l'axe de gauche, les suivantes partagent un axe de droite indépendant.
+function renderBarSvg(categories, series, stacked, valueAxisTitle, dualAxis) {
   series = foldSeriesList(series, CHART_CAT_CAP);
+  const useDual = dualAxis && !stacked && series.length > 1;
   const n = categories.length;
-  const H = 320, ML = 68, MR = 16, MT = 16, MB = 96;
+  const H = 320, ML = 68, MR = useDual ? 70 : 16, MT = 16, MB = 96;
   const perCat = stacked ? 46 : 34 * Math.max(1, series.length);
   const BASE_W = 560; // largeur de base classique, magnifiée librement par le conteneur (voir svgScrollWrap)
   const scrollable = n * perCat > 1700; // au-delà, même magnifié le texte resterait tassé : défilement à police fixe
   const W = scrollable ? n * perCat : BASE_W;
   const plotW = W - ML - MR, plotH = H - MT - MB;
-  let maxV = 0;
+  let maxV = 0, maxRight = 0;
   if (stacked) {
     for (let i = 0; i < n; i++) {
       let s = 0;
       for (const ser of series) s += Math.max(0, ser.values[i] || 0);
       maxV = Math.max(maxV, s);
     }
+  } else if (useDual) {
+    for (const v of series[0].values) maxV = Math.max(maxV, v || 0);
+    for (const ser of series.slice(1)) for (const v of ser.values) maxRight = Math.max(maxRight, v || 0);
   } else {
     for (const ser of series) for (const v of ser.values) maxV = Math.max(maxV, v || 0);
   }
   const niceMax = niceCeil(maxV || 1);
+  const niceMaxRight = niceCeil(maxRight || 1);
   const y = v => MT + plotH - (v / niceMax) * plotH;
+  const yRight = v => MT + plotH - (v / niceMaxRight) * plotH;
+  const yFor = (si, v) => (useDual && si > 0) ? yRight(v) : y(v);
   const groupW = plotW / Math.max(1, n);
   const barGap = groupW * 0.15;
   const barsAreaW = groupW - barGap;
@@ -2082,9 +2139,14 @@ function renderBarSvg(categories, series, stacked, valueAxisTitle) {
   for (let t = 0; t <= ticks; t++) {
     const v = niceMax * t / ticks, yy = y(v);
     svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="${CH_GRID}" stroke-width="1"/>`;
-    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
+    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${useDual ? series[0].color : CH_MUTED}" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
+    if (useDual) {
+      const vr = niceMaxRight * t / ticks;
+      svg += `<text x="${W - MR + 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="start">${esc(fmtAxisNum(vr))}</text>`;
+    }
   }
   svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+  if (useDual) svg += `<line x1="${W - MR}" y1="${MT}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
   svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
 
   categories.forEach((cat, i) => {
@@ -2110,7 +2172,7 @@ function renderBarSvg(categories, series, stacked, valueAxisTitle) {
       series.forEach((ser, si) => {
         const v = ser.values[i];
         if (v === null || v === undefined) return;
-        const y0 = MT + plotH, y1 = y(v);
+        const y0 = MT + plotH, y1 = yFor(si, v);
         const bx = gx + si * barW;
         svg += `<rect x="${bx.toFixed(1)}" y="${y1.toFixed(1)}" width="${(barW * 0.9).toFixed(1)}" height="${(y0 - y1).toFixed(1)}" fill="${ser.color}"><title>${esc(cat)} — ${esc(ser.label)} : ${esc(fmtVal(v, false))}</title></rect>`;
         // Étiquette au-dessus de la barre, seulement si le texte tient dans la largeur de la barre
@@ -2124,7 +2186,11 @@ function renderBarSvg(categories, series, stacked, valueAxisTitle) {
     const lx = ML + i * groupW + groupW / 2;
     svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
   });
-  svg += svgAxisTitleTags(graphXDimRows.map(r => labelForDimRow(r)).join(" / "), valueAxisTitle, ML, MT, plotW, plotH, H);
+  svg += svgAxisTitleTags(graphXDimRows.map(r => labelForDimRow(r)).join(" / "), useDual ? series[0].label : valueAxisTitle, ML, MT, plotW, plotH, H);
+  if (useDual) {
+    const rightTitle = series.length === 2 ? series[1].label : "Valeur";
+    svg += `<text x="${W - 14}" y="${(MT + plotH / 2).toFixed(1)}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle" transform="rotate(90 ${W - 14} ${(MT + plotH / 2).toFixed(1)})">${esc(rightTitle)}</text>`;
+  }
 
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series);
@@ -2208,40 +2274,54 @@ function smoothPathD(pts) {
   }
   return d.trim();
 }
-function renderLineAreaSvg(categories, series, filled, valueAxisTitle) {
+// dualAxis : voir la note sur renderBarSvg — mêmes raisons (mesures hétérogènes tracées comme
+// séries), même repli (1ʳᵉ série sur l'axe de gauche, les suivantes sur un axe de droite partagé).
+function renderLineAreaSvg(categories, series, filled, valueAxisTitle, dualAxis) {
   series = foldSeriesList(series, CHART_CAT_CAP);
+  const useDual = dualAxis && series.length > 1;
   const n = categories.length;
-  const H = 320, ML = 68, MR = 16, MT = 16, MB = 96;
+  const H = 320, ML = 68, MR = useDual ? 70 : 16, MT = 16, MB = 96;
   const BASE_W = 560;
   const scrollable = n * 30 > 1700;
   const W = scrollable ? n * 30 : BASE_W;
   const plotW = W - ML - MR, plotH = H - MT - MB;
-  let maxV = 0, minV = 0;
-  for (const ser of series) for (const v of ser.values) { if (v !== null && v !== undefined) { maxV = Math.max(maxV, v); minV = Math.min(minV, v); } }
+  let maxV = 0, minV = 0, maxRight = 0, minRight = 0;
+  const leftSeries = useDual ? series.slice(0, 1) : series;
+  const rightSeries = useDual ? series.slice(1) : [];
+  for (const ser of leftSeries) for (const v of ser.values) { if (v !== null && v !== undefined) { maxV = Math.max(maxV, v); minV = Math.min(minV, v); } }
+  for (const ser of rightSeries) for (const v of ser.values) { if (v !== null && v !== undefined) { maxRight = Math.max(maxRight, v); minRight = Math.min(minRight, v); } }
   const niceMax = niceCeil(maxV || 1);
+  const niceMaxRight = niceCeil(maxRight || 1);
   const x = i => n <= 1 ? ML + plotW / 2 : ML + (i / (n - 1)) * plotW;
   const y = v => MT + plotH - ((v - minV) / ((niceMax - minV) || 1)) * plotH;
+  const yRight = v => MT + plotH - ((v - minRight) / ((niceMaxRight - minRight) || 1)) * plotH;
+  const yFor = (si, v) => (useDual && si > 0) ? yRight(v) : y(v);
 
   let svg = "";
   const ticks = 4;
   for (let t = 0; t <= ticks; t++) {
     const v = niceMax * t / ticks, yy = y(v);
     svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="${CH_GRID}" stroke-width="1"/>`;
-    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
+    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${useDual ? series[0].color : CH_MUTED}" text-anchor="end">${esc(fmtAxisNum(v))}</text>`;
+    if (useDual) {
+      const vr = minRight + (niceMaxRight - minRight) * t / ticks;
+      svg += `<text x="${W - MR + 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="start">${esc(fmtAxisNum(vr))}</text>`;
+    }
   }
   svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+  if (useDual) svg += `<line x1="${W - MR}" y1="${MT}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
   svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
   categories.forEach((cat, i) => {
     const lx = x(i);
     svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
   });
-  series.forEach(ser => {
+  series.forEach((ser, si) => {
     const idxs = []; // indices (dans `categories`) réellement tracés, alignés avec `pts`
-    const pts = ser.values.map((v, i) => { if (v === null || v === undefined) return null; idxs.push(i); return [x(i), y(v)]; }).filter(Boolean);
+    const pts = ser.values.map((v, i) => { if (v === null || v === undefined) return null; idxs.push(i); return [x(i), yFor(si, v)]; }).filter(Boolean);
     if (!pts.length) return;
     const pathD = graphSpline ? smoothPathD(pts) : pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
     if (filled && pts.length > 1) {
-      const baseY = y(Math.max(minV, 0));
+      const baseY = yFor(si, Math.max(si > 0 ? minRight : minV, 0));
       const areaD = pathD + ` L${pts[pts.length - 1][0].toFixed(1)},${baseY.toFixed(1)} L${pts[0][0].toFixed(1)},${baseY.toFixed(1)} Z`;
       svg += `<path d="${areaD}" fill="${ser.color}" fill-opacity="0.12" stroke="none"/>`;
     }
@@ -2265,7 +2345,85 @@ function renderLineAreaSvg(categories, series, filled, valueAxisTitle) {
       });
     }
   });
-  svg += svgAxisTitleTags(graphXDimRows.map(r => labelForDimRow(r)).join(" / "), valueAxisTitle, ML, MT, plotW, plotH, H);
+  svg += svgAxisTitleTags(graphXDimRows.map(r => labelForDimRow(r)).join(" / "), useDual ? series[0].label : valueAxisTitle, ML, MT, plotW, plotH, H);
+  if (useDual) {
+    const rightTitle = series.length === 2 ? series[1].label : "Valeur";
+    svg += `<text x="${W - 14}" y="${(MT + plotH / 2).toFixed(1)}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle" transform="rotate(90 ${W - 14} ${(MT + plotH / 2).toFixed(1)})">${esc(rightTitle)}</text>`;
+  }
+  const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
+  return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series);
+}
+
+// ---- Combo (mixte barres + lignes) : la 1ʳᵉ mesure en barres (échelle à gauche), les mesures
+// suivantes en lignes (échelle à droite, partagée entre elles) — convention BI standard, utile
+// quand les échelles diffèrent trop pour partager un seul axe (ex. nombre de séjours vs durée
+// moyenne). Toujours construit à partir des expressions (pas de Série ici, cf. chartSeriesData
+// appelé avec seriesDimsCfg=[] côté appelant) : une barre + N lignes, pas une Série de barres.
+function renderComboSvg(categories, series, valueAxisTitle) {
+  if (series.length < 2) return renderBarSvg(categories, series, false, valueAxisTitle);
+  const barSeries = series[0];
+  const lineSeries = series.slice(1);
+  const n = categories.length;
+  const H = 320, ML = 68, MR = 70, MT = 16, MB = 96; // MR élargi : axe secondaire à droite
+  const BASE_W = 560;
+  const scrollable = n * 40 > 1700;
+  const W = scrollable ? n * 40 : BASE_W;
+  const plotW = W - ML - MR, plotH = H - MT - MB;
+
+  let maxBar = 0;
+  for (const v of barSeries.values) maxBar = Math.max(maxBar, v || 0);
+  const niceMaxBar = niceCeil(maxBar || 1);
+  const yBar = v => MT + plotH - (v / niceMaxBar) * plotH;
+
+  let maxLine = 0, minLine = 0;
+  for (const ser of lineSeries) for (const v of ser.values) { if (v !== null && v !== undefined) { maxLine = Math.max(maxLine, v); minLine = Math.min(minLine, v); } }
+  const niceMaxLine = niceCeil(maxLine || 1);
+  const yLine = v => MT + plotH - ((v - minLine) / ((niceMaxLine - minLine) || 1)) * plotH;
+
+  const groupW = plotW / Math.max(1, n);
+  const barW = groupW * 0.5;
+
+  let svg = "";
+  const ticks = 4;
+  for (let t = 0; t <= ticks; t++) {
+    const vb = niceMaxBar * t / ticks, yy = yBar(vb);
+    svg += `<line x1="${ML}" y1="${yy.toFixed(1)}" x2="${W - MR}" y2="${yy.toFixed(1)}" stroke="${CH_GRID}" stroke-width="1"/>`;
+    svg += `<text x="${ML - 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${barSeries.color}" text-anchor="end">${esc(fmtAxisNum(vb))}</text>`;
+    const vl = minLine + (niceMaxLine - minLine) * t / ticks;
+    svg += `<text x="${W - MR + 6}" y="${(yy + 3).toFixed(1)}" font-size="${CH_FS_AXIS}" fill="${CH_MUTED}" text-anchor="start">${esc(fmtAxisNum(vl))}</text>`;
+  }
+  svg += `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+  svg += `<line x1="${W - MR}" y1="${MT}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+  svg += `<line x1="${ML}" y1="${MT + plotH}" x2="${W - MR}" y2="${MT + plotH}" stroke="${CH_AXIS}" stroke-width="1"/>`;
+
+  categories.forEach((cat, i) => {
+    const v = barSeries.values[i];
+    if (v !== null && v !== undefined) {
+      const bx = ML + i * groupW + (groupW - barW) / 2;
+      const y0 = MT + plotH, y1 = yBar(v);
+      svg += `<rect x="${bx.toFixed(1)}" y="${y1.toFixed(1)}" width="${barW.toFixed(1)}" height="${(y0 - y1).toFixed(1)}" fill="${barSeries.color}"><title>${esc(cat)} — ${esc(barSeries.label)} : ${esc(fmtVal(v, false))}</title></rect>`;
+    }
+    const lx = ML + i * groupW + groupW / 2;
+    svg += `<text x="${lx.toFixed(1)}" y="${MT + plotH + 14}" font-size="${CH_FS_CAT}" fill="${CH_INK}" text-anchor="end" transform="rotate(-40 ${lx.toFixed(1)} ${MT + plotH + 14})">${esc(truncLabel(cat, 18))}</text>`;
+  });
+
+  lineSeries.forEach(ser => {
+    const idxs = [];
+    const pts = ser.values.map((v, i) => { if (v === null || v === undefined) return null; idxs.push(i); return [ML + i * groupW + groupW / 2, yLine(v)]; }).filter(Boolean);
+    if (!pts.length) return;
+    const pathD = graphSpline ? smoothPathD(pts) : pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+    if (pts.length > 1) svg += `<path d="${pathD}" fill="none" stroke="${ser.color}" stroke-width="2.5"/>`;
+    pts.forEach((p, i) => {
+      svg += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.5" fill="${ser.color}" stroke="#fff" stroke-width="1.5"><title>${esc(categories[idxs[i]])} — ${esc(ser.label)} : ${esc(fmtVal(ser.values[idxs[i]], false))}</title></circle>`;
+    });
+  });
+
+  svg += svgAxisTitleTags(graphXDimRows.map(r => labelForDimRow(r)).join(" / "), barSeries.label, ML, MT, plotW, plotH, H);
+  if (lineSeries.length) {
+    const rightTitle = lineSeries.length === 1 ? lineSeries[0].label : "Valeur";
+    svg += `<text x="${W - 14}" y="${(MT + plotH / 2).toFixed(1)}" font-size="${CH_FS_AXIS + 0.5}" fill="${CH_INK}" text-anchor="middle" transform="rotate(90 ${W - 14} ${(MT + plotH / 2).toFixed(1)})">${esc(rightTitle)}</text>`;
+  }
+
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:${scrollable ? W + "px" : "100%"};height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   return svgScrollWrap(svgTag, W, scrollable) + legendHtml(series);
 }
@@ -2336,12 +2494,13 @@ function textColorForBg(hex) {
   return lum > 0.6 ? "#1b2631" : "#ffffff";
 }
 
-function renderPieSvg(categories, values, baseColor) {
+function renderPieSvg(categories, values, baseColor, donut) {
   ({ labels: categories, values } = foldTopN(categories, values, CHART_CAT_CAP));
   // Un camembert n'a pas besoin de s'étirer sur toute la largeur d'un écran large comme un
   // graphique en barres (un cercle immense est disproportionné) : plafond généreux mais borné,
   // plus haut qu'avant (320→460) pour rester lisible sur grand écran sans devenir excessif.
   const W = 460, H = 460, cx = W / 2, cy = H / 2 - 12, r = Math.min(W, H) / 2 - 56;
+  const rIn = donut ? r * 0.55 : 0;
   const total = values.reduce((a, b) => a + (b || 0), 0);
   if (!total) {
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;${CH_FONT}"><text x="${cx}" y="${cy}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg>`;
@@ -2354,13 +2513,10 @@ function renderPieSvg(categories, values, baseColor) {
     if (!v) return;
     const frac = v / total;
     const a2 = angle + frac * 2 * Math.PI;
-    const x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
-    const x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2);
-    const large = frac > 0.5 ? 1 : 0;
     const color = colorFor(i);
-    svg += `<path d="M${cx},${cy} L${x1.toFixed(1)},${y1.toFixed(1)} A${r},${r} 0 ${large} 1 ${x2.toFixed(1)},${y2.toFixed(1)} Z" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(cat)} : ${esc(fmtVal(v, false))} (${(frac * 100).toFixed(1)} %)</title></path>`;
+    svg += `<path d="${annulusPath(cx, cy, rIn, r, angle, a2)}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(cat)} : ${esc(fmtVal(v, false))} (${(frac * 100).toFixed(1)} %)</title></path>`;
     if (frac >= 0.08) { // étiquette directe (%) seulement sur les parts assez grandes pour l'accueillir
-      const mid = angle + (a2 - angle) / 2, lr = r * 0.66;
+      const mid = angle + (a2 - angle) / 2, lr = (rIn + r) / 2;
       const lx = cx + lr * Math.cos(mid), ly = cy + lr * Math.sin(mid);
       svg += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="${CH_FS_VAL}" font-weight="600" fill="${textColorForBg(color)}" text-anchor="middle" dominant-baseline="middle">${(frac * 100).toFixed(0)}%</text>`;
     }
@@ -2987,7 +3143,7 @@ function renderChartFragment(chartType, pivot, seriesDimsCfg, exprsUsed) {
     // Série, pas via le pivot qui combinerait les variables de Série en une seule clé.
     const { categories, series } = chartSeriesData(pivot, [], exprsUsed);
     syncGraphRingColors();
-    return renderPieSvg(categories, series[0].values, graphRingColors[0]);
+    return renderPieSvg(categories, series[0].values, graphRingColors[0], graphDonut);
   }
   if (chartType === "nuage") {
     return renderScatterSvg(pivot, seriesDimsCfg, exprsUsed);
@@ -2998,14 +3154,23 @@ function renderChartFragment(chartType, pivot, seriesDimsCfg, exprsUsed) {
   if (chartType === "sankey") {
     return renderSankeySvg(pivot, exprsUsed[0]);
   }
+  if (chartType === "combo") {
+    // Toujours construit à partir des expressions (1re = barres, suivantes = lignes), jamais d'une
+    // Série — mélanger les deux n'aurait pas de sens (quelle mesure appliquer à quelle série ?).
+    const { categories, series } = chartSeriesData(pivot, [], exprsUsed);
+    return renderComboSvg(categories, series, measureAxisTitle(exprsUsed));
+  }
   const { categories, series } = chartSeriesData(pivot, seriesDimsCfg, exprsUsed);
   const valueAxisTitle = measureAxisTitle(exprsUsed);
+  // Séries construites à partir de plusieurs expressions (pas d'une Série, qui partagerait toujours
+  // la même mesure) : échelles potentiellement hétérogènes, cf. renderBarSvg/renderLineAreaSvg.
+  const dualAxis = !seriesDimsCfg.length && exprsUsed.length > 1;
   if (chartType === "barres_horiz") return renderBarSvgH(categories, series, valueAxisTitle);
   if (chartType === "barres_empilees") return renderBarSvg(categories, series, true, valueAxisTitle);
-  if (chartType === "lignes") return renderLineAreaSvg(categories, series, false, valueAxisTitle);
-  if (chartType === "aires") return renderLineAreaSvg(categories, series, true, valueAxisTitle);
+  if (chartType === "lignes") return renderLineAreaSvg(categories, series, false, valueAxisTitle, dualAxis);
+  if (chartType === "aires") return renderLineAreaSvg(categories, series, true, valueAxisTitle, dualAxis);
   if (chartType === "radar") return renderRadarSvg(categories, series, valueAxisTitle);
-  return renderBarSvg(categories, series, false, valueAxisTitle);
+  return renderBarSvg(categories, series, false, valueAxisTitle, dualAxis);
 }
 
 // Étape commune à la vignette SVG intégrée (genererGraphique) et à l'ouverture interactive
@@ -3040,6 +3205,10 @@ function prepareGraphData(setSt) {
   }
   if (chartType === "bulles" && graphExprRows.length < 3) {
     setSt("Le bubble chart nécessite 3 expressions (mesure en X, en Y, puis la taille des bulles).", true);
+    return null;
+  }
+  if (chartType === "combo" && graphExprRows.length < 2) {
+    setSt("Le graphique mixte nécessite 2 expressions (la 1ʳᵉ en barres, la/les suivante(s) en ligne(s)).", true);
     return null;
   }
   if (chartType === "sankey" && !graphSeriesDimRows.length) {
@@ -3230,7 +3399,7 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     const rawLabels = pivot.rowKeys.map(rk => pivot.rowPartsByKey.get(rk).join(" / "));
     const rawValues = pivot.rowKeys.map(rk => pivot.perExpr[exprsUsed[0].uid].rowTotal[rk] || 0);
     const { labels: pieLabels, values: pieValues } = foldTopN(rawLabels, rawValues, CHART_CAT_CAP);
-    return { label, data: [{ type: "pie", labels: pieLabels, values: pieValues, marker: { colors: CHART_PALETTE }, textinfo: "label+percent" }], layout: baseLayout };
+    return { label, data: [{ type: "pie", labels: pieLabels, values: pieValues, hole: graphDonut ? 0.55 : 0, marker: { colors: CHART_PALETTE }, textinfo: "label+percent" }], layout: baseLayout };
   }
 
   // Boîte à moustaches / histogramme : mêmes statistiques que l'aperçu SVG (buildBoxplotGroups /
@@ -3325,6 +3494,18 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     const pr = pivot.perExpr[exprsUsed[0].uid];
     const z = pivot.rowKeys.map(rk => pivot.colKeys.map(ck => pr.grid[rk][ck]));
     const y = pivot.rowKeys.map(rk => pivot.rowPartsByKey.get(rk).join(" / "));
+    if (graph3d) {
+      // Surface 3D : équivalent naturel de la carte de chaleur, mêmes données (z), hauteur = valeur.
+      const surfLayout = {
+        ...baseLayout,
+        scene: {
+          xaxis: { title: serieLabel || undefined },
+          yaxis: { title: xLabel },
+          zaxis: { title: measureAxisTitle(exprsUsed) },
+        },
+      };
+      return { label, data: [{ type: "surface", x: pivot.colKeys, y, z, colorscale: "Blues" }], layout: surfLayout };
+    }
     const heatLayout = { ...baseLayout, yaxis: { title: xLabel, type: "category", automargin: true } };
     heatLayout.xaxis = { title: serieLabel || undefined, type: "category", automargin: true };
     return { label, data: [{ type: "heatmap", x: pivot.colKeys, y, z, colorscale: "Blues", hoverongaps: false }], layout: heatLayout };
@@ -3334,20 +3515,55 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     const exX = exprsUsed[0], exY = exprsUsed[1], exSize = exprsUsed[2];
     const prX = pivot.perExpr[exX.uid], prY = pivot.perExpr[exY.uid], prSize = exSize ? pivot.perExpr[exSize.uid] : null;
     const groups = graphSeriesDimRows.length ? pivot.colKeys : ["Total"];
+    const use3d = chartType === "bulles" && graph3d && exSize;
     const traces = groups.slice(0, CHART_CAT_CAP).map((ck, i) => {
       const rks = pivot.rowKeys.filter(rk => { const v = prX.grid[rk][ck]; return v !== null && v !== undefined; });
       const xs = rks.map(rk => prX.grid[rk][ck]);
       const ys = rks.map(rk => prY.grid[rk][ck]);
       const text = rks.map(rk => pivot.rowPartsByKey.get(rk).join(" / "));
+      const name = graphSeriesDimRows.length ? ck : undefined;
+      if (use3d) {
+        // La taille des bulles devient l'axe Z : mêmes 3 mesures (X, Y, taille), lues comme un
+        // vrai point 3D plutôt qu'un rayon de bulle.
+        const zs = rks.map(rk => prSize.grid[rk][ck] || 0);
+        const marker = { color: CHART_PALETTE[i % CHART_PALETTE.length], size: 5, line: { color: "#fff", width: 0.5 } };
+        return { type: "scatter3d", mode: "markers", x: xs, y: ys, z: zs, text, name, marker };
+      }
       const marker = { color: CHART_PALETTE[i % CHART_PALETTE.length], size: 10, line: { color: "#fff", width: 1 } };
       if (exSize) {
         const sizes = rks.map(rk => prSize.grid[rk][ck] || 0);
         const sizeMax = Math.max(1, ...sizes);
         marker.size = sizes; marker.sizemode = "area"; marker.sizeref = (2 * sizeMax) / (40 ** 2); marker.sizemin = 4;
       }
-      return { type: "scatter", mode: "markers", x: xs, y: ys, text, name: graphSeriesDimRows.length ? ck : undefined, marker };
+      return { type: "scatter", mode: "markers", x: xs, y: ys, text, name, marker };
     });
-    return { label, data: traces, layout: { ...baseLayout, xaxis: { title: exprLabelFor(exX) }, yaxis: { title: exprLabelFor(exY) } } };
+    const layout = use3d
+      ? { ...baseLayout, scene: { xaxis: { title: exprLabelFor(exX) }, yaxis: { title: exprLabelFor(exY) }, zaxis: { title: exprLabelFor(exSize) } } }
+      : { ...baseLayout, xaxis: { title: exprLabelFor(exX) }, yaxis: { title: exprLabelFor(exY) } };
+    return { label, data: traces, layout };
+  }
+
+  if (chartType === "combo") {
+    // Comme en SVG (renderComboSvg) : toujours construit à partir des expressions, jamais d'une
+    // Série (chartSeriesData avec seriesDimsCfg=[]) — 1re expression en barres, les suivantes en
+    // lignes sur un axe Y secondaire (échelles potentiellement très différentes).
+    const { categories: cboCats, series: cboSeries } = chartSeriesData(pivot, [], exprsUsed);
+    const barSeries = cboSeries[0], lineSeries = cboSeries.slice(1);
+    const traces = [
+      { type: "bar", x: cboCats, y: barSeries.values, name: barSeries.label, marker: { color: barSeries.color }, yaxis: "y" },
+      ...lineSeries.map(s => ({
+        type: "scatter", mode: "lines+markers", x: cboCats, y: s.values, name: s.label,
+        line: { color: s.color, width: 2, shape: graphSpline ? "spline" : "linear" }, marker: { color: s.color },
+        yaxis: "y2",
+      })),
+    ];
+    const layout = {
+      ...baseLayout,
+      xaxis: { title: xLabel, type: "category", tickangle: -40, automargin: true },
+      yaxis: { title: barSeries.label, automargin: true },
+      yaxis2: { title: lineSeries.length === 1 ? lineSeries[0].label : "Valeur", overlaying: "y", side: "right", automargin: true },
+    };
+    return { label, data: traces, layout };
   }
 
   const { categories, series } = chartSeriesData(pivot, graphSeriesDimRows, exprsUsed);
@@ -3355,9 +3571,27 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
   // Axe des valeurs : le libellé de la mesure si une seule, sinon un titre générique (plusieurs
   // mesures hétérogènes tracées côte à côte via des expressions distinctes plutôt qu'une Série).
   const valueAxisTitle = exprsUsed.length === 1 ? exprLabelFor(exprsUsed[0]) : "Valeur";
+  // Séries construites à partir de plusieurs expressions (pas d'une Série, qui partagerait toujours
+  // la même mesure) : échelles potentiellement hétérogènes (ex. nombre de RHS vs valorisation) —
+  // 1re série sur l'axe de gauche, les suivantes sur un axe de droite indépendant (cf. combo).
+  const dualAxis = !graphSeriesDimRows.length && exprsUsed.length > 1;
+
+  if (chartType === "barres" && graph3d) {
+    const traces = buildBar3dTraces(categories, series);
+    const scene = {
+      xaxis: { title: xLabel, tickvals: categories.map((_, i) => i), ticktext: categories },
+      yaxis: { title: serieLabel || "", tickvals: series.map((_, i) => i), ticktext: series.map(s => s.label), showticklabels: series.length > 1 },
+      zaxis: { title: valueAxisTitle },
+    };
+    return { label, data: traces, layout: { ...baseLayout, scene } };
+  }
 
   if (chartType === "barres" || chartType === "barres_empilees" || chartType === "barres_horiz") {
     const horiz = chartType === "barres_horiz";
+    // Barres empilées : additionner des unités différentes n'a pas de sens, donc pas de double axe
+    // (comme en SVG). Barres horizontales : le double axe (droite/gauche) n'a pas d'équivalent
+    // naturel en horizontal (les deux axes de valeur seraient superposés) — hors périmètre ici.
+    const useDual = dualAxis && chartType === "barres";
     const labelsMode = graphDataLabelsMode;
     const traces = series.map((s, si) => {
       // textposition:'auto' laisse Plotly décider (à l'intérieur/à l'extérieur de la barre) et
@@ -3365,9 +3599,10 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
       // contrairement aux lignes/radar où Plotly ne le fait pas tout seul (cf. plus bas).
       const text = labelsMode === "aucune" ? undefined : s.values.map((v, i) => dataLabelText(labelsMode, v, s, i, series) || "");
       const textOpts = labelsMode === "aucune" ? {} : { text, textposition: "auto", textfont: { size: 11 }, cliponaxis: false };
+      const axisOpt = useDual && si > 0 ? { yaxis: "y2" } : {};
       return horiz
         ? { type: "bar", orientation: "h", y: categories, x: s.values, name: s.label, marker: { color: s.color }, ...textOpts }
-        : { type: "bar", x: categories, y: s.values, name: s.label, marker: { color: s.color }, ...textOpts };
+        : { type: "bar", x: categories, y: s.values, name: s.label, marker: { color: s.color }, ...textOpts, ...axisOpt };
     });
     const layout = { ...baseLayout, barmode: chartType === "barres_empilees" ? "stack" : "group" };
     // type:"category" explicite (cf. remarque détaillée sur le boxplot ci-dessus) : sans ça, des
@@ -3377,7 +3612,8 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
       layout.xaxis = { title: valueAxisTitle, automargin: true };
     } else {
       layout.xaxis = { title: xLabel, type: "category", tickangle: -40, automargin: true };
-      layout.yaxis = { title: valueAxisTitle, automargin: true };
+      layout.yaxis = { title: useDual ? series[0].label : valueAxisTitle, automargin: true };
+      if (useDual) layout.yaxis2 = { title: series.length === 2 ? series[1].label : "Valeur", overlaying: "y", side: "right", automargin: true };
     }
     return { label, data: traces, layout };
   }
@@ -3401,17 +3637,21 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
   // lignes / aires — Plotly ne masque pas de lui-même le texte qui se chevauche (contrairement aux
   // barres, cf. ci-dessus) : on applique donc le même éclaircissage que le rendu SVG maison, ici
   // fondé sur le nombre de points plutôt que sur des pixels (la figure Plotly est redimensionnable).
-  const traces = series.map(s => ({
+  const traces = series.map((s, si) => ({
     type: "scatter", mode: graphDataLabelsMode === "aucune" ? "lines+markers" : "lines+markers+text", x: categories, y: s.values, name: s.label,
     line: { color: s.color, width: 2, shape: graphSpline ? "spline" : "linear" }, marker: { color: s.color },
     text: graphDataLabelsMode === "aucune" ? undefined : plotlyThinnedTexts(s.values, graphDataLabelsMode, s, series, 25),
     textposition: "top center", textfont: { size: 11 },
     fill: chartType === "aires" ? "tozeroy" : undefined,
+    yaxis: dualAxis && si > 0 ? "y2" : undefined,
   }));
-  return {
-    label, data: traces,
-    layout: { ...baseLayout, xaxis: { title: xLabel, type: "category", tickangle: -40, automargin: true }, yaxis: { title: valueAxisTitle, automargin: true } },
+  const layout = {
+    ...baseLayout,
+    xaxis: { title: xLabel, type: "category", tickangle: -40, automargin: true },
+    yaxis: { title: dualAxis ? series[0].label : valueAxisTitle, automargin: true },
   };
+  if (dualAxis) layout.yaxis2 = { title: series.length === 2 ? series[1].label : "Valeur", overlaying: "y", side: "right", automargin: true };
+  return { label, data: traces, layout };
 }
 // Éclaircissage par décimation régulière (pas par pixels, la figure Plotly étant redimensionnable) :
 // au-delà de `maxLabels` points valorisés, n'en garde qu'un sur N réparti uniformément — cohérent
@@ -4076,6 +4316,8 @@ function wireEvents() {
   });
   document.getElementById("selDataLabelsMode").addEventListener("change", e => { graphDataLabelsMode = e.target.value; });
   document.getElementById("chkSpline").addEventListener("change", e => { graphSpline = e.target.checked; });
+  document.getElementById("chkDonut").addEventListener("change", e => { graphDonut = e.target.checked; });
+  document.getElementById("chk3d").addEventListener("change", e => { graph3d = e.target.checked; });
   document.getElementById("btnGenererGraph").addEventListener("click", genererGraphique);
   document.getElementById("btnOuvrirPlotly").addEventListener("click", ouvrirGraphiquePlotly);
   document.getElementById("btnGraphExportPng").addEventListener("click", exportGraphPng);
