@@ -733,6 +733,35 @@ function dimValue(dim, mode, row) {
   return libStr || codeStr; // mode "libelle" par défaut, repli sur le code si aucun libellé résolu
 }
 
+// Clé de tri d'une valeur de dimension pour l'axe X/lignes/colonnes d'un pivot : celle du catalogue
+// (dim.sortKey, ex. la semaine en AAAASS plutôt que sur son libellé affiché "S05-2024", qui
+// mélangerait les années en triant alphabétiquement) quand elle existe, sinon la valeur affichée
+// elle-même — comportement alphabétique inchangé pour toute dimension sans tri dédié.
+function dimSortValue(dim, displayValue, row) {
+  if (dim && dim.sortKey && row) {
+    const v = dim.sortKey(row);
+    if (v !== null && v !== undefined) return v;
+  }
+  return displayValue;
+}
+
+// Comparateur pour rowKeys/colKeys : compare les clés de tri niveau par niveau (une par variable de
+// regroupement), numériquement si les deux valeurs sont des nombres, sinon en chaîne — permet à une
+// dimension numériquement triable (ex. semaine en AAAASS) de coexister avec d'autres dimensions
+// purement alphabétiques dans un même regroupement imbriqué.
+function compareSortKeys(a, b) {
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const av = a[i], bv = b[i];
+    if (av === bv) continue;
+    if (av === undefined) return -1;
+    if (bv === undefined) return 1;
+    const cmp = (typeof av === "number" && typeof bv === "number") ? av - bv : (av < bv ? -1 : av > bv ? 1 : 0);
+    if (cmp) return cmp;
+  }
+  return 0;
+}
+
 const CELL_SEP = "";
 function cellKeyStr(rk, ck) { return rk + CELL_SEP + ck; }
 
@@ -970,18 +999,27 @@ function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, b
     const srcRows = ownRowsFor(srcKey, baseSrcKey, rows, foreignIdx);
     const cells = new Map();
     const rowPartsByKey = new Map(), colPartsByKey = new Map();
+    const rowSortByKey = new Map(), colSortByKey = new Map();
     for (const row of srcRows) {
-      const rParts = rowDimsCfg.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, srcKey)));
-      const cParts = colDimsCfg.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, srcKey)));
+      const rSrcRows = rowDimsCfg.map(cfg => sourceRowFor(cfg, row, foreignIdx, srcKey));
+      const cSrcRows = colDimsCfg.map(cfg => sourceRowFor(cfg, row, foreignIdx, srcKey));
+      const rParts = rowDimsCfg.map((cfg, i) => dimValue(dimDefOf(cfg), cfg.mode, rSrcRows[i]));
+      const cParts = colDimsCfg.map((cfg, i) => dimValue(dimDefOf(cfg), cfg.mode, cSrcRows[i]));
       const rk = rParts.join(" | ");
       const ck = colDimsCfg.length ? cParts.join(" | ") : "Total";
-      if (!rowPartsByKey.has(rk)) rowPartsByKey.set(rk, rParts);
-      if (!colPartsByKey.has(ck)) colPartsByKey.set(ck, cParts);
+      if (!rowPartsByKey.has(rk)) {
+        rowPartsByKey.set(rk, rParts);
+        rowSortByKey.set(rk, rowDimsCfg.map((cfg, i) => dimSortValue(dimDefOf(cfg), rParts[i], rSrcRows[i])));
+      }
+      if (!colPartsByKey.has(ck)) {
+        colPartsByKey.set(ck, cParts);
+        colSortByKey.set(ck, colDimsCfg.map((cfg, i) => dimSortValue(dimDefOf(cfg), cParts[i], cSrcRows[i])));
+      }
       const key = cellKeyStr(rk, ck);
       if (!cells.has(key)) cells.set(key, []);
       cells.get(key).push(row);
     }
-    return { cells, rowPartsByKey, colPartsByKey };
+    return { cells, rowPartsByKey, colPartsByKey, rowSortByKey, colSortByKey };
   }
 
   const bucketCache = new Map();
@@ -994,6 +1032,7 @@ function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, b
   // une valeur absente d'un fichier pour une cellule donnée y affichera "—"/0 comme avant.
   const rowKeysSet = new Set(), colKeysSet = new Set();
   const rowPartsByKey = new Map(), colPartsByKey = new Map();
+  const rowSortByKey = new Map(), colSortByKey = new Map();
   const bucketOf = {};
   for (const expr of exprsCfg) {
     const iterSrcKey = iterSrcKeyOf(expr);
@@ -1003,10 +1042,12 @@ function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, b
     for (const ck of b.colPartsByKey.keys()) colKeysSet.add(ck);
     for (const [k, v] of b.rowPartsByKey) if (!rowPartsByKey.has(k)) rowPartsByKey.set(k, v);
     for (const [k, v] of b.colPartsByKey) if (!colPartsByKey.has(k)) colPartsByKey.set(k, v);
+    for (const [k, v] of b.rowSortByKey) if (!rowSortByKey.has(k)) rowSortByKey.set(k, v);
+    for (const [k, v] of b.colSortByKey) if (!colSortByKey.has(k)) colSortByKey.set(k, v);
   }
 
-  const rowKeys = [...rowKeysSet].sort();
-  const colKeys = [...colKeysSet].sort();
+  const rowKeys = [...rowKeysSet].sort((a, b) => compareSortKeys(rowSortByKey.get(a), rowSortByKey.get(b)));
+  const colKeys = [...colKeysSet].sort((a, b) => compareSortKeys(colSortByKey.get(a), colSortByKey.get(b)));
 
   // Sous-totaux : un groupe par valeur de la 1ère variable de regroupement en lignes — seulement
   // pertinent dès qu'il y en a une 2e, sinon le sous-total serait identique au total de la ligne.
@@ -1657,6 +1698,22 @@ function listeColValue(c, baseRow, foreignIdx) {
   return String(v);
 }
 
+// Clé de tri d'une colonne de la Liste filtrée : dim.sortKey (ex. Semaine en AAAASS, cf.
+// computeMultiPivot/dimSortValue) pour une dimension, ou la valeur numérique brute pour une mesure
+// (le tri par défaut compare listeColValue, une chaîne déjà mise en forme — "1 234" — pas comparable
+// numériquement) — sinon la valeur affichée elle-même, comme avant.
+function listeColSortValue(c, baseRow, foreignIdx) {
+  const entry = catalogEntry(c.srcKey, c.kind, c.id);
+  if (!entry) return "";
+  const srcRow = c.srcKey === activeSourceListe ? baseRow : resolveForeignRow(foreignIdx[c.srcKey], baseRow);
+  if (c.kind === "dim") return dimSortValue(entry, dimValue(entry, c.mode || defaultModeFor(entry), srcRow), srcRow);
+  if (!srcRow) return "—";
+  let v = entry.derive ? entry.derive(srcRow) : srcRow[entry.col];
+  if (v === null || v === undefined || v === "") return "—";
+  const n = Number(v);
+  return isNaN(n) ? String(v) : (entry.scale ? n * entry.scale : n);
+}
+
 const LISTE_ROW_CAP = 3000;
 
 function genererListe() {
@@ -1706,13 +1763,8 @@ function genererListe() {
     // mécanisme (computeMerge) que la fusion des lignes du tableau croisé : une valeur commune
     // n'est présentée qu'une seule fois, pas répétée sur chaque ligne source qui la partage.
     const partsAll = rows.map(row => listeColRows.map(c => listeColValue(c, row, foreignIdx)));
-    const order = rows.map((_, i) => i).sort((i, j) => {
-      const a = partsAll[i], b = partsAll[j];
-      for (let k = 0; k < a.length; k++) {
-        if (a[k] !== b[k]) return a[k] < b[k] ? -1 : 1;
-      }
-      return 0;
-    });
+    const sortAll = rows.map(row => listeColRows.map(c => listeColSortValue(c, row, foreignIdx)));
+    const order = rows.map((_, i) => i).sort((i, j) => compareSortKeys(sortAll[i], sortAll[j]));
     const shownOrder = order.slice(0, LISTE_ROW_CAP);
     const partsList = shownOrder.map(i => partsAll[i]);
     const { show, span } = computeMerge(partsList);
@@ -2035,13 +2087,18 @@ function suggestChartType(xDimsCfg, seriesDimsCfg, exprsCfg) {
 function splitByFacets(rows, facetDimsCfg, foreignIdx, baseSrcKey) {
   if (!facetDimsCfg.length) return [{ label: null, rows }];
   const groups = new Map();
+  const sortByKey = new Map();
   for (const row of rows) {
-    const parts = facetDimsCfg.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, baseSrcKey)));
+    const srcRows = facetDimsCfg.map(cfg => sourceRowFor(cfg, row, foreignIdx, baseSrcKey));
+    const parts = facetDimsCfg.map((cfg, i) => dimValue(dimDefOf(cfg), cfg.mode, srcRows[i]));
     const key = parts.join(" / ");
-    if (!groups.has(key)) groups.set(key, { label: key, rows: [] });
+    if (!groups.has(key)) {
+      groups.set(key, { label: key, rows: [] });
+      sortByKey.set(key, facetDimsCfg.map((cfg, i) => dimSortValue(dimDefOf(cfg), parts[i], srcRows[i])));
+    }
     groups.get(key).rows.push(row);
   }
-  return [...groups.values()].sort((a, b) => a.label < b.label ? -1 : a.label > b.label ? 1 : 0);
+  return [...groups.values()].sort((a, b) => compareSortKeys(sortByKey.get(a.label), sortByKey.get(b.label)));
 }
 
 // ---- Rendu SVG (aucune dépendance externe : l'application reste 100% locale) ----
@@ -2872,18 +2929,29 @@ function buildBoxplotGroups(baseRows, xDimsCfg, serieDimCfg, expr, foreignIdx, b
   const iterSrcKey = iterSrcKeyFor(expr, baseSrcKey, dimsCfgLists);
   const rows = ownRowsFor(iterSrcKey, baseSrcKey, baseRows, foreignIdx);
   const groups = new Map();
+  const xSortByKey = new Map(), sSortByKey = new Map();
   for (const row of rows) {
-    const xKey = xDimsCfg.map(cfg => dimValue(dimDefOf(cfg), cfg.mode, sourceRowFor(cfg, row, foreignIdx, iterSrcKey))).join(" / ");
-    const sKey = serieDimCfg ? dimValue(dimDefOf(serieDimCfg), serieDimCfg.mode, sourceRowFor(serieDimCfg, row, foreignIdx, iterSrcKey)) : "Total";
+    const xSrcRows = xDimsCfg.map(cfg => sourceRowFor(cfg, row, foreignIdx, iterSrcKey));
+    const xParts = xDimsCfg.map((cfg, i) => dimValue(dimDefOf(cfg), cfg.mode, xSrcRows[i]));
+    const xKey = xParts.join(" / ");
+    if (!xSortByKey.has(xKey)) xSortByKey.set(xKey, xDimsCfg.map((cfg, i) => dimSortValue(dimDefOf(cfg), xParts[i], xSrcRows[i])));
+    let sKey = "Total";
+    if (serieDimCfg) {
+      const sSrcRow = sourceRowFor(serieDimCfg, row, foreignIdx, iterSrcKey);
+      sKey = dimValue(dimDefOf(serieDimCfg), serieDimCfg.mode, sSrcRow);
+      if (!sSortByKey.has(sKey)) sSortByKey.set(sKey, [dimSortValue(dimDefOf(serieDimCfg), sKey, sSrcRow)]);
+    }
     if (!groups.has(xKey)) groups.set(xKey, new Map());
     const sub = groups.get(xKey);
     if (!sub.has(sKey)) sub.set(sKey, []);
     sub.get(sKey).push(row);
   }
-  const categories = [...groups.keys()].sort();
+  const categories = [...groups.keys()].sort((a, b) => compareSortKeys(xSortByKey.get(a), xSortByKey.get(b)));
   // Une boîte à moustaches n'est pas sommable (médiane/quartiles) : au-delà de CHART_CAT_CAP
   // séries, on tronque plutôt que de replier dans une "Autres" statistiquement dénuée de sens.
-  const serieKeys = (serieDimCfg ? [...new Set(categories.flatMap(xk => [...groups.get(xk).keys()]))].sort() : ["Total"]).slice(0, CHART_CAT_CAP);
+  const serieKeys = (serieDimCfg
+    ? [...new Set(categories.flatMap(xk => [...groups.get(xk).keys()]))].sort((a, b) => compareSortKeys(sSortByKey.get(a), sSortByKey.get(b)))
+    : ["Total"]).slice(0, CHART_CAT_CAP);
   const series = serieKeys.map((sk, i) => ({
     label: sk,
     color: CHART_PALETTE[i % CHART_PALETTE.length],
@@ -2964,12 +3032,16 @@ function buildHistogramSeries(baseRows, serieDimCfg, expr, foreignIdx, baseSrcKe
     return { bins, series: [{ label: "Total", color: CHART_PALETTE[0], counts: bins.counts }] };
   }
   const groups = new Map();
+  const sSortByKey = new Map();
   for (const row of rows) {
-    const sKey = dimValue(dimDefOf(serieDimCfg), serieDimCfg.mode, sourceRowFor(serieDimCfg, row, foreignIdx, iterSrcKey));
+    const sSrcRow = sourceRowFor(serieDimCfg, row, foreignIdx, iterSrcKey);
+    const sKey = dimValue(dimDefOf(serieDimCfg), serieDimCfg.mode, sSrcRow);
+    if (!sSortByKey.has(sKey)) sSortByKey.set(sKey, [dimSortValue(dimDefOf(serieDimCfg), sKey, sSrcRow)]);
     if (!groups.has(sKey)) groups.set(sKey, []);
     groups.get(sKey).push(row);
   }
-  const serieKeys = [...groups.keys()].sort().slice(0, CHART_CAT_CAP); // comptages non additifs entre classes : on tronque plutôt que replier
+  // comptages non additifs entre classes : on tronque plutôt que replier
+  const serieKeys = [...groups.keys()].sort((a, b) => compareSortKeys(sSortByKey.get(a), sSortByKey.get(b))).slice(0, CHART_CAT_CAP);
   const series = serieKeys.map((sk, i) => {
     const vals = extractValues(groups.get(sk), measure, expr, foreignIdx, iterSrcKey);
     const counts = new Array(bins.k).fill(0);

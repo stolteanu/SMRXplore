@@ -30,7 +30,10 @@ const SOURCES = {
       { id: "sexe", label: "Sexe", col: "sexe" },
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
       { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
-      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
+      // sortKey en AAAASS (année puis semaine, ex. 202405) : numero_semaine est stocké SSAAAA
+      // (semaine puis année) — trier dessus tel quel mélangerait les années (toutes les "S05" de
+      // chaque année se retrouveraient groupées avant les "S12", quelle que soit l'année).
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null, sortKey: r => r.numero_semaine ? Number(r.numero_semaine.slice(2, 6) + r.numero_semaine.slice(0, 2)) : null },
       { id: "gme", label: "GME", col: "code_gme", libCol: "lib_gme" },
       // Hiérarchie GME (nomenclature_gme, plate CM->GN->GR->GL->GME) : CM et GN restent le code
       // cumulé (troncature du code GME, longueurs fixes CM=2, GN=4 — cf. gme.schema.json), avec
@@ -197,7 +200,10 @@ const SOURCES = {
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
       { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
       { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
-      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
+      // sortKey en AAAASS (année puis semaine, ex. 202405) : numero_semaine est stocké SSAAAA
+      // (semaine puis année) — trier dessus tel quel mélangerait les années (toutes les "S05" de
+      // chaque année se retrouveraient groupées avant les "S12", quelle que soit l'année).
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null, sortKey: r => r.numero_semaine ? Number(r.numero_semaine.slice(2, 6) + r.numero_semaine.slice(0, 2)) : null },
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
       { id: "code_das", label: "Diagnostic associé (DAS)", col: "code_das", libCol: "lib_das" },
       { id: "das_chapitre", label: "Chapitre CIM-10 (DAS)", derive: r => { const n = diagAncestorOfKind(r.code_das, "chapter"); return n ? n.code : null; },
@@ -230,7 +236,10 @@ const SOURCES = {
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
       { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
       { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
-      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
+      // sortKey en AAAASS (année puis semaine, ex. 202405) : numero_semaine est stocké SSAAAA
+      // (semaine puis année) — trier dessus tel quel mélangerait les années (toutes les "S05" de
+      // chaque année se retrouveraient groupées avant les "S12", quelle que soit l'année).
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null, sortKey: r => r.numero_semaine ? Number(r.numero_semaine.slice(2, 6) + r.numero_semaine.slice(0, 2)) : null },
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
       { id: "code_csarr", label: "Acte CSARR (code principal)", col: "code_principal", libCol: "lib_csarr" },
       // Hiérarchie CSARR (nomenclature_csarr_hierarchie, codes pointés "07.01.01…") : le chapitre/
@@ -263,7 +272,10 @@ const SOURCES = {
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
       { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
       { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
-      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
+      // sortKey en AAAASS (année puis semaine, ex. 202405) : numero_semaine est stocké SSAAAA
+      // (semaine puis année) — trier dessus tel quel mélangerait les années (toutes les "S05" de
+      // chaque année se retrouveraient groupées avant les "S12", quelle que soit l'année).
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null, sortKey: r => r.numero_semaine ? Number(r.numero_semaine.slice(2, 6) + r.numero_semaine.slice(0, 2)) : null },
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
       { id: "code_csar", label: "Acte CSAR (code principal)", col: "code_principal", libCol: "lib_csar" },
       { id: "intervenant", label: "Type d'intervenant", col: "code_intervenant", libCol: "lib_intervenant" },
@@ -289,7 +301,10 @@ const SOURCES = {
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
       { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
       { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
-      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null },
+      // sortKey en AAAASS (année puis semaine, ex. 202405) : numero_semaine est stocké SSAAAA
+      // (semaine puis année) — trier dessus tel quel mélangerait les années (toutes les "S05" de
+      // chaque année se retrouveraient groupées avant les "S12", quelle que soit l'année).
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null, sortKey: r => r.numero_semaine ? Number(r.numero_semaine.slice(2, 6) + r.numero_semaine.slice(0, 2)) : null },
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
       { id: "code_ccam", label: "Acte CCAM (code)", col: "code_ccam", libCol: "lib_ccam" },
       { id: "code_activite", label: "Code activité", col: "code_activite" },
