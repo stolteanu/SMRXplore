@@ -11,6 +11,7 @@ data/
 # celui-ci déjà couvert par la règle data/ ci-dessus).
 app/*
 !app/index.html
+!app/admin.html
 !app/tdb-choix.html
 !app/explorateur.html
 !app/catalogue.js

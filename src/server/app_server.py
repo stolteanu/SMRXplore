@@ -34,6 +34,7 @@ if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.util.paths import project_root  # noqa: E402
+from src.server import upload as upload_mod  # noqa: E402
 
 ROOT = project_root()
 APP_DIR = (ROOT / "app").resolve()
@@ -195,6 +196,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, status=400)
             return
 
+        if parsed.path == "/api/upload/etat":
+            try:
+                self._send_json(upload_mod.list_staged())
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=500)
+            return
+
         target = self._resolve_static(parsed.path)
         if target is None:
             self.send_error(403, "Interdit")
@@ -208,6 +216,71 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"output": output})
             except Exception as exc:
                 self._send_json({"error": str(exc), "output": str(exc)}, status=500)
+            return
+
+        if self.path == "/api/upload":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                content_type = self.headers.get("Content-Type", "")
+                fields, files = upload_mod.parse_multipart(content_type, body)
+                categorie = fields.get("categorie", "")
+                if not files:
+                    raise upload_mod.ErreurUpload("Aucun fichier reçu.")
+                f = files[0]
+                meta = upload_mod.stage_file(categorie, f["filename"], f["content"])
+                self._send_json(meta)
+            except upload_mod.ErreurUpload as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=500)
+            return
+
+        if self.path == "/api/upload/meta":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                meta = upload_mod.set_meta(
+                    payload.get("categorie", ""),
+                    payload.get("id", ""),
+                    str(payload.get("finess", "")),
+                    int(payload.get("annee", 0)),
+                    int(payload.get("mois", 0)),
+                )
+                self._send_json(meta)
+            except upload_mod.ErreurUpload as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
+        if self.path == "/api/upload/confirmer-ecrasement":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                meta = upload_mod.confirmer_ecrasement(payload.get("categorie", ""), payload.get("id", ""))
+                self._send_json(meta)
+            except upload_mod.ErreurUpload as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
+        if self.path == "/api/upload/retirer":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                upload_mod.remove_staged(payload.get("categorie", ""), payload.get("id", ""))
+                self._send_json({"ok": True})
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
+        if self.path == "/api/upload/controler":
+            try:
+                self._send_json(upload_mod.controler())
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=500)
             return
 
         if self.path != "/api/generate":
