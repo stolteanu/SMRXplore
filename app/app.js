@@ -1420,7 +1420,7 @@ function generer() {
     document.getElementById("resultWrap").innerHTML = tableHtml;
     const nCols = rowDimRows.length + pivot.colKeys.length * exprRows.length + exprRows.length;
     lastResult = { titleText, metaText, tableHtml, nCols, nRows: pivot.rowKeys.length };
-    ["btnExportHtml", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
+    ["btnOuvrirTableauPage", "btnExportHtml", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
     status(`Tableau généré (${pivot.rowKeys.length} ligne(s) × ${pivot.colKeys.length} colonne(s) × ${exprRows.length} expression(s)).`);
   } catch (e) {
     status("Erreur : " + e.message, true);
@@ -2056,7 +2056,7 @@ function genererListe() {
     document.getElementById("resultMeta").textContent = metaText;
     document.getElementById("resultWrap").innerHTML = html;
     lastResult = { titleText, metaText, tableHtml: html };
-    ["btnExportHtml", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
+    ["btnOuvrirTableauPage", "btnExportHtml", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
     setSt(`${total} ligne(s) trouvée(s)${total > LISTE_ROW_CAP ? `, ${LISTE_ROW_CAP} affichée(s)` : ""}.`);
   } catch (e) {
     setSt("Erreur : " + e.message, true);
@@ -3738,7 +3738,7 @@ function genererGraphique() {
     setSt(`Graphique généré (${facetsShown.length} vignette(s)).`);
 
     lastGraphResult = { titleText: chartTitle, metaText, panels };
-    ["btnGraphExportPng", "btnGraphExportSvg", "btnGraphExportHtml"].forEach(id => {
+    ["btnOuvrirGraphPage", "btnGraphExportPng", "btnGraphExportSvg", "btnGraphExportHtml"].forEach(id => {
       document.getElementById(id).disabled = false;
     });
     const xlsBtn = document.getElementById("btnGraphExportXls");
@@ -4394,18 +4394,23 @@ function download(filename, content, mime) {
 // navigateur (Ctrl+P) une fois le fichier ouvert, plutôt qu'un bouton PDF séparé dans l'appli — la
 // page exportée embarque donc sa propre règle @page (orientation par défaut choisie selon le
 // nombre de colonnes, ajustable via la barre d'outils) et ses couleurs d'impression, pour cadrer
-// correctement sur une page A4 sans dépendre de l'appli d'origine.
-function exportHtml() {
-  if (!lastResult) return;
+// correctement sur une page A4 sans dépendre de l'appli d'origine. Cette même page sert aussi de
+// contenu à "Ouvrir dans une nouvelle page" (ouvrirTableauNouvellePage) : un seul générateur pour
+// les deux usages.
+function buildTableExportHtml() {
+  if (!lastResult) return null;
   // Heuristique portrait/paysage : au-delà de ~6 colonnes un tableau croisé déborde presque
   // toujours d'une page A4 portrait (ajustable ensuite via le sélecteur d'orientation intégré).
   const orient = (lastResult.nCols || 0) > 6 ? "landscape" : "portrait";
-  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>${esc(lastResult.titleText)}</title>
+  // width:auto (et non 100%) pour que le tableau se redimensionne à son contenu plutôt que
+  // d'étirer les colonnes sur toute la largeur de page — même comportement que l'affichage dans
+  // l'appli (table.pivot { width: auto }) et que l'export Word.
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>${esc(lastResult.titleText)}</title>
 <style>
 body{font-family:Arial,sans-serif;color:#212f3c;margin:24px;}
 h1{color:#1a5276;font-size:1.2em;}
 p{color:#7f8c8d;font-size:0.9em;}
-table{border-collapse:collapse;width:100%;font-size:0.9em;}
+table{border-collapse:collapse;width:auto;font-size:0.9em;}
 th,td{border:1px solid #d5dbdb;padding:6px 10px;text-align:right;}
 td:first-child,th:first-child{text-align:left;}
 th{background:#eaf2f8;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
@@ -4418,6 +4423,7 @@ body.gris{filter:grayscale(100%);}
 <style id="pageStyle">@page{size:A4 ${orient};margin:${orient === "landscape" ? "10mm" : "12mm"};}</style>
 </head><body>
 <div class="toolbar">
+  <button id="btnRetourExplorateur" style="display:none" onclick="retourExplorateur()">← Retour à l'explorateur</button>
   <button onclick="window.print()">Imprimer / Enregistrer en PDF</button>
   <label><input type="checkbox" onchange="document.body.classList.toggle('gris', this.checked)"> Nuances de gris</label>
   <label>Orientation :
@@ -4427,10 +4433,41 @@ body.gris{filter:grayscale(100%);}
     </select>
   </label>
 </div>
+<script>
+if (window.opener && !window.opener.closed) document.getElementById("btnRetourExplorateur").style.display = "";
+// Les navigateurs interdisent par sécurité qu'une page active de force un AUTRE onglet déjà
+// ouvert (protection anti tab-nabbing) — ni focus() direct ni relais postMessage ne peuvent
+// contourner ça. La seule action fiable est de fermer CET onglet (ouvert par script, donc
+// fermable par script) : le navigateur réactive alors nativement l'onglet qui était actif juste
+// avant, c'est-à-dire l'explorateur — sans toucher aux autres onglets rapport déjà ouverts.
+function retourExplorateur() {
+  if (window.opener && !window.opener.closed) window.close();
+}
+</script>
 <h1>${esc(lastResult.titleText)}</h1><p>${esc(lastResult.metaText)}</p>
 ${lastResult.tableHtml}
 </body></html>`;
+}
+
+function exportHtml() {
+  const html = buildTableExportHtml();
+  if (!html) return;
   download("tdb_export.html", html, "text/html;charset=utf-8");
+}
+
+// Ouvre le résultat (même page que l'export HTML) dans un nouvel onglet via une URL de Blob,
+// sans passer par un fichier téléchargé — cohérent avec "Ouvrir en interactif" pour le Plotly.
+function openHtmlInNewTab(html) {
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank");
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function ouvrirTableauNouvellePage() {
+  const html = buildTableExportHtml();
+  if (!html) return;
+  openHtmlInNewTab(html);
 }
 
 function exportXls() {
@@ -4547,8 +4584,8 @@ function exportGraphPng() {
 // .chart-panel (display:flex à l'écran pour centrer, mais Chrome n'honore pas page-break-inside
 // sur une boîte flex — on repasse en display:block seulement à l'impression, cf. la même remarque
 // historique dans les styles de l'appli).
-function exportGraphHtml() {
-  if (!lastGraphResult) return;
+function buildGraphExportHtml() {
+  if (!lastGraphResult) return null;
   const { totalW, totalH } = buildCombinedGraphSvg();
   const orient = totalW > totalH ? "landscape" : "portrait";
   const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>${esc(lastGraphResult.titleText)}</title>
@@ -4571,6 +4608,7 @@ body.gris{filter:grayscale(100%);}
 <style id="pageStyle">@page{size:A4 ${orient};margin:${orient === "landscape" ? "10mm" : "12mm"};}</style>
 </head><body>
 <div class="toolbar">
+  <button id="btnRetourExplorateur" style="display:none" onclick="retourExplorateur()">← Retour à l'explorateur</button>
   <button onclick="window.print()">Imprimer / Enregistrer en PDF</button>
   <label><input type="checkbox" onchange="document.body.classList.toggle('gris', this.checked)"> Nuances de gris</label>
   <label>Orientation :
@@ -4580,10 +4618,33 @@ body.gris{filter:grayscale(100%);}
     </select>
   </label>
 </div>
+<script>
+if (window.opener && !window.opener.closed) document.getElementById("btnRetourExplorateur").style.display = "";
+// Les navigateurs interdisent par sécurité qu'une page active de force un AUTRE onglet déjà
+// ouvert (protection anti tab-nabbing) — ni focus() direct ni relais postMessage ne peuvent
+// contourner ça. La seule action fiable est de fermer CET onglet (ouvert par script, donc
+// fermable par script) : le navigateur réactive alors nativement l'onglet qui était actif juste
+// avant, c'est-à-dire l'explorateur — sans toucher aux autres onglets rapport déjà ouverts.
+function retourExplorateur() {
+  if (window.opener && !window.opener.closed) window.close();
+}
+</script>
 <h1>${esc(lastGraphResult.titleText)}</h1><p>${esc(lastGraphResult.metaText)}</p>
 ${graphPanelsCombinedHtml()}
 </body></html>`;
+  return html;
+}
+
+function exportGraphHtml() {
+  const html = buildGraphExportHtml();
+  if (!html) return;
   download("graphique_export.html", html, "text/html;charset=utf-8");
+}
+
+function ouvrirGraphiqueNouvellePage() {
+  const html = buildGraphExportHtml();
+  if (!html) return;
+  openHtmlInNewTab(html);
 }
 
 function exportGraphXls() {
@@ -4633,6 +4694,7 @@ function wireEvents() {
   });
 
   document.getElementById("btnGenerer").addEventListener("click", generer);
+  document.getElementById("btnOuvrirTableauPage").addEventListener("click", ouvrirTableauNouvellePage);
   document.getElementById("btnExportHtml").addEventListener("click", exportHtml);
   document.getElementById("btnExportDoc").addEventListener("click", exportDoc);
   document.getElementById("btnExportXls").addEventListener("click", exportXls);
@@ -4756,6 +4818,7 @@ function wireEvents() {
   document.getElementById("chk3d").addEventListener("change", e => { graph3d = e.target.checked; });
   document.getElementById("btnGenererGraph").addEventListener("click", genererGraphique);
   document.getElementById("btnOuvrirPlotly").addEventListener("click", ouvrirGraphiquePlotly);
+  document.getElementById("btnOuvrirGraphPage").addEventListener("click", ouvrirGraphiqueNouvellePage);
   document.getElementById("btnGraphExportPng").addEventListener("click", exportGraphPng);
   document.getElementById("btnGraphExportSvg").addEventListener("click", exportGraphSvg);
   document.getElementById("btnGraphExportHtml").addEventListener("click", exportGraphHtml);
