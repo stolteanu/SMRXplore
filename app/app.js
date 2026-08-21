@@ -23,6 +23,11 @@ let listeColRows = []; // { uid, srcKey, kind:'dim'|'measure', id, mode }
 // Filtres globaux (section "1. Filtres") : s'appliquent à toute l'exploration (tableau croisé,
 // liste filtrée, graphique). Dimension -> choix multiple (values[]) ; mesure -> op/val/val2
 // (mêmes opérateurs que les filtres locaux de la liste filtrée, y compris "in" = liste de valeurs).
+// L'exclusion des séjours non valorisables (nv_chain/nv_attente_dts/nv_nonfactam) par défaut se
+// fait DIRECTEMENT dans SOURCES.valo.sql (catalogue.js), PAS ici comme filtre global cross-fichier —
+// abandonné après avoir constaté qu'un filtre global cross-fichier sur une dimension Valo fausse le
+// comptage RHS/VID-HOSP des séjours valorisés sous une AUTRE campagne que celle affichée (l'index
+// par séjour de buildForeignIndex est reconstruit PAR PÉRIODE, cf. commentaire dans catalogue.js).
 let globalFilterRows = []; // { uid, srcKey, kind:'dim'|'measure', id, values:[], op, val, val2 }
 
 // Mode "Graphique"
