@@ -12,6 +12,12 @@ Usage :
                                        (par défaut : le premier établissement trouvé en base)
     python pmsi.py publier            republie une copie de pmsi.db pour l'explorateur interactif
                                        (app/explorateur.html) — à relancer après chaque "charger"
+    python pmsi.py supprimer <FINESS> purge un établissement de pmsi.db + artefacts générés (app/)
+                                       (retirer ses fichiers de input/ ne suffit pas : "charger"
+                                       n'ajoute que ce qu'il trouve, il ne supprime jamais rien) ;
+                                       ajouter --fichiers-source pour aussi effacer ses fichiers
+                                       source dans input/ (définitif, non régénérable — pas
+                                       supprimé par défaut)
     python pmsi.py tout               enchaîne nomenclatures + charger + dashboard (tous les
                                        établissements) + publier, dans le bon ordre — la commande
                                        à utiliser au quotidien
@@ -58,6 +64,12 @@ def cmd_publier(args: list[str]) -> None:
     publier_main()
 
 
+def cmd_supprimer(args: list[str]) -> None:
+    from tools.supprimer_etablissement import main as supprimer_main
+
+    supprimer_main(args)
+
+
 def cmd_tout(args: list[str]) -> None:
     from src.viz.tableau_de_bord import connect, list_finess
     from src.util.progress import print_progress
@@ -85,6 +97,7 @@ COMMANDS = {
     "charger": cmd_charger,
     "dashboard": cmd_dashboard,
     "publier": cmd_publier,
+    "supprimer": cmd_supprimer,
     "tout": cmd_tout,
 }
 

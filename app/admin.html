@@ -93,6 +93,33 @@
     background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
     padding: 10px 12px; font-size: 11.5px; white-space: pre-wrap; font-family: ui-monospace, monospace;
   }
+
+  .zone.danger { border-color: color-mix(in srgb, var(--err) 35%, var(--border)); }
+  .supp-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .supp-form input.finess {
+    width: 140px; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--page); color: var(--ink); font-size: 13px; font-family: ui-monospace, monospace;
+  }
+  .supp-form label { font-size: 12.5px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
+  #supp-apercu-btn {
+    background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--ink);
+    font-size: 12.5px; padding: 7px 12px; cursor: pointer;
+  }
+  #supp-apercu-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  #supp-preview {
+    margin-top: 12px; display: none; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; background: var(--page); font-size: 12.5px;
+  }
+  #supp-preview h3 { font-size: 12.5px; margin: 0 0 6px; }
+  #supp-preview ul { margin: 4px 0 10px; padding-left: 18px; font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--ink-2); }
+  #supp-preview .warn { color: var(--err); font-weight: 600; }
+  #supp-confirmer-btn {
+    background: var(--err); color: #fff; border: none; border-radius: 6px;
+    padding: 8px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; margin-top: 4px;
+  }
+  #supp-status { margin-top: 10px; font-size: 12.5px; color: var(--ink-2); }
+  #supp-status.err { color: var(--err); }
+  #supp-status.ok { color: var(--ok); }
 </style>
 </head>
 <body>
@@ -112,6 +139,20 @@
     <button id="action-btn" disabled>Contrôler</button>
   </div>
   <pre id="charger-output"></pre>
+
+  <div class="zone danger">
+    <h2>Supprimer un établissement</h2>
+    <p class="hint">Purge toutes les données d'un établissement (base + tableaux de bord générés).
+       Retirer ses fichiers des zones ci-dessus ne suffit pas : « Mettre à jour » n'ajoute que ce
+       qu'il trouve, il ne supprime jamais rien.</p>
+    <div class="supp-form">
+      <input class="finess" id="supp-finess" placeholder="FINESS (9 chiffres)" maxlength="9">
+      <label><input type="checkbox" id="supp-fichiers-source"> aussi supprimer ses fichiers source dans les zones ci-dessus (définitif, non régénérable)</label>
+      <button id="supp-apercu-btn">Aperçu</button>
+    </div>
+    <div id="supp-preview"></div>
+    <div id="supp-status"></div>
+  </div>
 </div>
 
 <script>
@@ -385,6 +426,111 @@
   }
 
   refreshEtat();
+
+  // --- Suppression d'un établissement ---
+  var suppFiness = document.getElementById("supp-finess");
+  var suppFichiersSource = document.getElementById("supp-fichiers-source");
+  var suppApercuBtn = document.getElementById("supp-apercu-btn");
+  var suppPreview = document.getElementById("supp-preview");
+  var suppStatus = document.getElementById("supp-status");
+
+  function suppFinessValide() {
+    return /^\d{9}$/.test(suppFiness.value.trim());
+  }
+
+  suppApercuBtn.addEventListener("click", function () {
+    suppStatus.textContent = "";
+    suppStatus.className = "";
+    if (!suppFinessValide()) {
+      suppStatus.textContent = "FINESS invalide (9 chiffres attendus).";
+      suppStatus.className = "err";
+      return;
+    }
+    var finess = suppFiness.value.trim();
+    var avecSource = suppFichiersSource.checked;
+    suppApercuBtn.disabled = true;
+    suppPreview.style.display = "none";
+    fetch("/api/supprimer/apercu", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ finess: finess, fichiers_source: avecSource })
+    })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (res) {
+        suppApercuBtn.disabled = false;
+        if (!res.ok) { suppStatus.textContent = res.body.error || "Erreur."; suppStatus.className = "err"; return; }
+        renderSuppPreview(res.body, finess, avecSource);
+      })
+      .catch(function (err) {
+        suppApercuBtn.disabled = false;
+        suppStatus.textContent = "Erreur : " + err;
+        suppStatus.className = "err";
+      });
+  });
+
+  function ul(items) {
+    if (!items.length) return "";
+    return "<ul>" + items.map(function (f) { return "<li>" + escapeHtml(f) + "</li>"; }).join("") + "</ul>";
+  }
+
+  function renderSuppPreview(a, finess, avecSource) {
+    if (a.rien_a_supprimer) {
+      suppPreview.style.display = "none";
+      suppStatus.textContent = "Aucune trace trouvée pour " + finess + " — rien à supprimer.";
+      suppStatus.className = "";
+      return;
+    }
+    var html = "<h3>À supprimer pour " + escapeHtml(finess) + "</h3>";
+    html += "<div>Base pmsi.db :</div><ul>";
+    Object.keys(a.lignes).forEach(function (table) {
+      html += "<li>" + escapeHtml(table) + " — " + a.lignes[table] + " ligne(s)</li>";
+    });
+    html += "</ul>";
+    html += "<div>Artefacts générés (app/) : " + a.fichiers_generes.length + " fichier(s)</div>" + ul(a.fichiers_generes);
+    if (avecSource) {
+      html += '<div class="warn">Fichiers source (input/) : ' + a.fichiers_source.length + ' fichier(s) — SUPPRESSION DÉFINITIVE, non régénérable</div>' + ul(a.fichiers_source);
+    } else {
+      html += "<div>Fichiers source (input/) : conservés</div>";
+    }
+    html += '<button id="supp-confirmer-btn">Confirmer la suppression définitive de ' + escapeHtml(finess) + '</button>';
+    suppPreview.innerHTML = html;
+    suppPreview.style.display = "block";
+    suppStatus.textContent = "";
+    suppStatus.className = "";
+
+    document.getElementById("supp-confirmer-btn").addEventListener("click", function () {
+      lancerSuppression(finess, avecSource);
+    });
+  }
+
+  function lancerSuppression(finess, avecSource) {
+    var btn = document.getElementById("supp-confirmer-btn");
+    btn.disabled = true;
+    suppStatus.textContent = "Suppression en cours…";
+    suppStatus.className = "";
+    fetch("/api/supprimer/executer", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ finess: finess, fichiers_source: avecSource })
+    })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (res) {
+        if (!res.ok) {
+          suppStatus.textContent = res.body.error || "Erreur pendant la suppression.";
+          suppStatus.className = "err";
+          btn.disabled = false;
+          return;
+        }
+        suppPreview.style.display = "none";
+        suppFiness.value = "";
+        suppFichiersSource.checked = false;
+        suppStatus.textContent = finess + " supprimé et republié dans l'explorateur.";
+        suppStatus.className = "ok";
+      })
+      .catch(function (err) {
+        suppStatus.textContent = "Erreur réseau : " + err;
+        suppStatus.className = "err";
+        btn.disabled = false;
+      });
+  }
 })();
 </script>
 </body>

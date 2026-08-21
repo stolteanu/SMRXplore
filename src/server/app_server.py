@@ -106,6 +106,19 @@ def _generate(
     return reports
 
 
+def _supprimer_et_publier(finess: str, avec_fichiers_source: bool) -> dict:
+    """Exécute tools/supprimer_etablissement.executer() puis republie la copie
+    pour l'explorateur (même enchaînement que _charger_et_publier), pour que
+    la suppression déclenchée depuis la page admin soit immédiatement visible
+    sans étape manuelle supplémentaire."""
+    from tools.supprimer_etablissement import executer
+    from tools.publier_explorateur import main as publier_main
+
+    resultat = executer(finess, avec_fichiers_source)
+    publier_main()
+    return resultat
+
+
 def _charger_et_publier() -> str:
     """Enchaîne run.py (parse input/ -> data/processed/pmsi.db) puis
     tools/publier_explorateur.py (recopie pour l'explorateur, qui lit sa
@@ -279,6 +292,36 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/upload/controler":
             try:
                 self._send_json(upload_mod.controler())
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=500)
+            return
+
+        if self.path == "/api/supprimer/apercu":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                finess = str(payload.get("finess", ""))
+                if not _FINESS_RE.match(finess):
+                    raise ValueError("FINESS invalide (9 chiffres attendus).")
+                avec_fichiers_source = bool(payload.get("fichiers_source"))
+
+                from tools.supprimer_etablissement import apercu
+
+                self._send_json(apercu(finess, avec_fichiers_source))
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
+        if self.path == "/api/supprimer/executer":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                finess = str(payload.get("finess", ""))
+                if not _FINESS_RE.match(finess):
+                    raise ValueError("FINESS invalide (9 chiffres attendus).")
+                avec_fichiers_source = bool(payload.get("fichiers_source"))
+
+                self._send_json(_supprimer_et_publier(finess, avec_fichiers_source))
             except Exception as exc:
                 self._send_json({"error": str(exc)}, status=500)
             return

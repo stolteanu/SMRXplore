@@ -222,6 +222,34 @@ def list_staged() -> dict[str, list[dict]]:
     return result
 
 
+# Champs de liaison (natural_key, en tête d'enregistrement) sans lesquels un
+# RHS/VID-HOSP ne peut pas être rattaché aux deux autres fichiers d'une même
+# transmission — un enregistrement qui en manque un est bloquant, même si le
+# reste du fichier est par ailleurs conforme.
+_CHAMPS_LIAISON = {
+    "rhs_groupe": ["finess_epmsi", "numero_admin_sejour", "numero_semaine", "numero_unite_medicale"],
+    "vid_hosp": ["finess_epmsi", "numero_admin_sejour"],
+}
+# Numéro de sécurité sociale (VID-HOSP uniquement — absent du RHS) : requis
+# et strictement numérique, sinon bloquant.
+_CHAMP_SECU = {"vid_hosp": "numero_immatriculation_assure"}
+
+
+def _erreur_champ_critique(fmt: str, fixed: dict) -> str | None:
+    for champ in _CHAMPS_LIAISON.get(fmt, []):
+        valeur = fixed.get(champ)
+        if valeur in (None, ""):
+            return f"champ de liaison {champ!r} manquant (empêche le rattachement aux autres fichiers)"
+    champ_secu = _CHAMP_SECU.get(fmt)
+    if champ_secu:
+        valeur = fixed.get(champ_secu)
+        if valeur in (None, ""):
+            return "numéro de sécurité sociale absent"
+        if not str(valeur).strip().isdigit():
+            return f"numéro de sécurité sociale non numérique ({valeur!r})"
+    return None
+
+
 def _valider_rhs_vdh(fmt: str, path: Path) -> tuple[bool, str]:
     import run as run_module  # import tardif : évite tout cycle au chargement du serveur
 
@@ -239,10 +267,18 @@ def _valider_rhs_vdh(fmt: str, path: Path) -> tuple[bool, str]:
     ok = 0
     version_inconnue = 0
     with_errors = 0
-    for _line_no, _raw, version, parsed in parse_file_multi(path, schemas_by_version, version_slice):
+    critique = 0
+    premier_message_critique: str | None = None
+    for line_no, _raw, version, parsed in parse_file_multi(path, schemas_by_version, version_slice):
         total += 1
         if parsed is None:
             version_inconnue += 1
+            continue
+        erreur_critique = _erreur_champ_critique(fmt, parsed["fixed"])
+        if erreur_critique:
+            critique += 1
+            if premier_message_critique is None:
+                premier_message_critique = f"ligne {line_no} : {erreur_critique}"
             continue
         if parsed["errors"]:
             with_errors += 1
@@ -251,17 +287,28 @@ def _valider_rhs_vdh(fmt: str, path: Path) -> tuple[bool, str]:
 
     if total == 0:
         return False, "fichier vide."
-    if ok == 0 and with_errors == 0:
+    if ok == 0 and with_errors == 0 and critique == 0:
         return False, (
             f"aucune ligne avec un code de version reconnu — mauvais fichier déposé dans cette zone, "
             f"ou format non encore incorporé au projet ({total} ligne(s) ignorée(s))."
         )
-    if ok == 0:
-        return False, f"{total} ligne(s), toutes en erreur — vérifier qu'il s'agit bien d'un fichier {fmt}."
+    if critique:
+        return False, (
+            f"{critique}/{total} ligne(s) avec un champ bloquant invalide, ex. {premier_message_critique}."
+        )
 
+    # Un champ en anomalie sur une ligne (ex. valeur sentinelle ATIH type
+    # "ERR"/".999990" sur un sous-champ DMT non pertinent pour ce type de
+    # séjour) ne rend pas le fichier invalide : run.py charge quand même
+    # l'enregistrement, les anomalies sont seulement journalisées (cf.
+    # process_file). Seuls bloquent : format de version non reconnu, ou un
+    # champ critique invalide (liaison RHS/VDH/valorisation, sécurité
+    # sociale) — cf. _erreur_champ_critique (retour utilisateur 2026-08-21 :
+    # un fichier VDH réel avait 100% de ses lignes avec une anomalie mineure
+    # sur un champ non important, et l'upload le bloquait à tort).
     message = f"{ok}/{total} ligne(s) conformes."
     if with_errors:
-        message += f" {with_errors} ligne(s) avec anomalie(s) (seront journalisées à la mise à jour)."
+        message += f" {with_errors} ligne(s) avec anomalie(s) mineure(s) (seront journalisées à la mise à jour)."
     if version_inconnue:
         message += f" {version_inconnue} ligne(s) à code de version inconnu, ignorée(s)."
     return True, message
