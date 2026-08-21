@@ -204,42 +204,71 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
     )
     m["valorisation"] = notes.add(
         "warn",
-        "Montant BR TOT (fact.) = figure officielle ATIH déjà facturée. Montant BR estimé PRT = "
+        "Montant BR SÉJOUR (fact.) = montant_br_gmt + montant_br_gmth SEUL (hors transport/molécules "
+        "onéreuses/cancérologie, voir note suivante et \"Suppléments en sus\"). Montant BR estimé PRT = "
         "reconstitution prorata temporis + estimation des séjours en cours. PMCT/PMST/PMJT restent basés "
         "sur le seul prorata temporis RÉEL (pas l'estimation), pour rester un tarif moyen observé.",
         "<b>PMCT</b> = Montant BR PRT réel / Nb SSR. <b>PMST</b> = Montant BR PRT réel / Nb RHS. "
         "<b>PMJT</b> = Montant BR PRT réel / Nb journées de présence — ces 3 ratios utilisent le montant "
         "PROUVÉ (sans l'estimation des séjours en cours, voir note suivante), pour rester un tarif moyen "
-        "réellement observé plutôt qu'un chiffre qui inclurait sa propre estimation.",
+        "réellement observé plutôt qu'un chiffre qui inclurait sa propre estimation. Depuis le 2026-08-21 "
+        "(décision utilisateur), ce tarif moyen est calculé sur <code>montant_br_sej</code> exclusivement "
+        "— les suppléments (transport, molécules onéreuses, cancérologie) ne sont PAS lissés au jour, ce "
+        "sont des versements ponctuels sans rapport avec la durée du séjour ; les y inclure aurait faussé "
+        "le prix/jour d'un séjour qui en bénéficie ponctuellement.",
     )
     m["valorisation_non_fact"] = notes.add(
         "warn",
         "(fact.) = facturé : figure officielle ATIH (arrêté de versement), qui exclut déjà les séjours "
         "en anomalie (chaînage, en attente de droits, non facturable à l'AM).",
-        "<b>Montant BR TOT (fact.)</b> = <code>montant_br_tot</code> officiel ATIH, sommé par CAMPAGNE "
-        "(année de transmission), en excluant les séjours marqués <code>nv_chain</code> (chaînage), "
-        "<code>nv_attente_dts</code> (en attente de droits) ou <code>nv_nonfactam</code> (non facturable "
-        "à l'Assurance Maladie) — voir <code>EXCLUSION_MONTANT_OFFICIEL</code> dans "
-        "<code>src/viz/valorisation.py</code>. Ces 3 exclusions ont été trouvées empiriquement (2026-08-05) "
-        "en reproduisant EXACTEMENT au centime près deux totaux d'un tableau ATIH externe fourni par "
-        "l'utilisateur ([etablissement anonymise] et [etablissement anonymise], campagne 2026), puis confirmées sur les 2 autres "
-        "établissements. D'autres variables NV_* du fichier VisualValoSejours existent (nv_cm90, "
-        "nv_nonclos, nv_pie, nv_varano, nv_article51, nv_telereadapt, nv_evcepr, nv_gmt9999, "
-        "nv_horsperiode) mais n'ont montré aucune contribution sur ces cas de test — non exclues, faute "
-        "de preuve empirique. <b>Dans un TDB secondaire par type d'hospitalisation</b> (HC/HTP), ce "
-        "montant est ventilé EXACTEMENT via la colonne native <code>valorisation_sejour."
-        "type_hospitalisation</code> (C/P — indépendante du champ RHS) : vérifié sur [etablissement anonymise]/2026, "
-        "HC (847380.16€) + HTP (130354.22€) = 977734.38€, le total établissement, et le HC seul déjà "
-        "confirmé contre la restitution Ovalide le 2026-07-31. <b>Dans un TDB secondaire par UF</b>, "
-        "aucune colonne équivalente n'existe : ce montant devient une APPROXIMATION (marquée \"≈\") "
-        "égale à Montant BR PRT reproraté par jour de présence — fiable pour les séjours mono-UF "
-        "(majoritaires), approximative pour les séjours multi-UF.",
+        "<b>Montant BR SÉJOUR (fact.)</b> = <code>montant_br_sej</code> (= <code>montant_br_gmt</code> + "
+        "<code>montant_br_gmth</code>, colonne calculée — voir "
+        "<code>src/storage/valorisation_store.py</code>), sommé par CAMPAGNE (année de transmission), en "
+        "excluant les séjours marqués <code>nv_chain</code> (chaînage), <code>nv_attente_dts</code> (en "
+        "attente de droits) ou <code>nv_nonfactam</code> (non facturable à l'Assurance Maladie) — voir "
+        "<code>EXCLUSION_MONTANT_OFFICIEL</code> dans <code>src/viz/valorisation.py</code>. Ces 3 "
+        "exclusions ont été trouvées empiriquement (2026-08-05) en reproduisant EXACTEMENT au centime près "
+        "deux totaux d'un tableau ATIH externe fourni par l'utilisateur ([etablissement anonymise] et [etablissement anonymise], campagne "
+        "2026), puis confirmées sur les 2 autres établissements. D'autres variables NV_* du fichier "
+        "VisualValoSejours existent (nv_cm90, nv_nonclos, nv_pie, nv_varano, nv_article51, nv_telereadapt, "
+        "nv_evcepr, nv_gmt9999, nv_horsperiode) mais n'ont montré aucune contribution sur ces cas de test "
+        "— non exclues, faute de preuve empirique. Avant le 2026-08-21, ce montant incluait aussi les "
+        "suppléments transport/molécules onéreuses/cancérologie (alors appelé <code>montant_br_tot - "
+        "montant_br_trans</code>) — désormais tous exclus d'ici et affichés à part (voir \"Suppléments en "
+        "sus\" ci-dessous). <b>Dans un TDB secondaire par type d'hospitalisation</b> (HC/HTP), ce montant "
+        "est ventilé EXACTEMENT via la colonne native <code>valorisation_sejour.type_hospitalisation</code> "
+        "(C/P — indépendante du champ RHS). <b>Dans un TDB secondaire par UF</b>, aucune colonne "
+        "équivalente n'existe : ce montant devient une APPROXIMATION (marquée \"≈\") égale à Montant BR "
+        "PRT reproraté par jour de présence — fiable pour les séjours mono-UF (majoritaires), "
+        "approximative pour les séjours multi-UF.",
+    )
+    m["supplements"] = notes.add(
+        "warn",
+        "Transport, molécules onéreuses (MO/MED) et supplément cancérologie : facturés EN SUS du séjour, "
+        "pas lissés au prorata des journées (contrairement au Montant BR SÉJOUR ci-dessus).",
+        "<code>montant_br_supplements_campagne_comparable</code> (src/viz/valorisation.py) — même filtre "
+        "de comparabilité campagne/semaine limite et même exclusion d'anomalies "
+        "(<code>EXCLUSION_MONTANT_OFFICIEL</code>) que le Montant BR SÉJOUR ci-dessus, pour que "
+        "\"séjour + suppléments\" reste interprétable comme la décomposition du montant BR TOT brut ATIH. "
+        "Décision utilisateur 2026-08-21 : séparés du prix par journée (PMJT) car ce sont des versements "
+        "ponctuels sans rapport avec la durée du séjour.",
+    )
+    m["non_valorises"] = notes.add(
+        "warn",
+        "Séjours actifs sur la période sans aucun montant BR séjour connu, groupés par cause.",
+        "<code>sejours_non_valorises_campagne</code> (src/viz/valorisation.py) — séjours dont la dernière "
+        "semaine RHS connue est ≤ la semaine limite de comparabilité de la période (donc \"devraient\" "
+        "déjà avoir un montant s'ils étaient clos) mais dont <code>montant_br_sej</code> reste nul sur "
+        "TOUTES leurs lignes valorisation_sejour. Cause retenue par ordre de priorité si plusieurs "
+        "s'appliquent : <code>nv_chain</code>, <code>nv_attente_dts</code>, <code>nv_nonfactam</code>, "
+        "erreur de groupage (GME <code>9096ZZ0</code>), sinon \"en cours\" (séjour &lt;90j pas encore "
+        "clos — le financement SMR ne se déclenche qu'à la clôture ou au seuil de 90j).",
     )
     m["estimation_en_cours"] = notes.add(
         "warn",
         "ESSAI : Montant BR PRT (prorata temporis réel) + une estimation de la recette des séjours "
         "&lt;90j non clos sans anomalie connue, au tarif moyen déjà observé (PMJT) — à titre indicatif, "
-        "pas une donnée ATIH. Écart = Montant BR TOT (fact.) − Montant BR estimé PRT.",
+        "pas une donnée ATIH. Écart = Montant BR SÉJOUR (fact.) − Montant BR estimé PRT.",
         "<b>Montant BR PRT</b> (pro rata temporis, calcul \"maison\") = somme des valeurs journalières "
         "réparties uniformément sur les jours de présence RHS réels d'un séjour déjà facturé (voir "
         "<code>src/viz/valorisation.py</code>), agrégées par ANNÉE CIVILE RÉELLE des jours dont le jour "
@@ -261,10 +290,11 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
         "Top 5 classé sur l'effectif cumulé toutes années confondues (mêmes 5 codes pour chaque colonne). "
         "% = part du code dans le total (tous codes) de sa colonne, à 1 décimale.",
         "Un séjour compte pour le code (CM/GN) de sa DERNIÈRE semaine RHS connue dans la période — "
-        "utile si un séjour est re-groupé d'une semaine à l'autre. Valorisation = <code>montant_br_tot</code> "
-        "(hors transport), avec le même filtre de comparabilité campagne/semaine limite que la section 6 "
-        "(Montant BR TOT) — pour un séjour à cheval sur plusieurs semaines de la période, la valorisation "
-        "est rattachée au code de sa dernière semaine, pas répartie code par code au prorata.",
+        "utile si un séjour est re-groupé d'une semaine à l'autre. Valorisation = <code>montant_br_sej</code> "
+        "(hors transport/molécules onéreuses/cancérologie, cf. note 8), avec le même filtre de "
+        "comparabilité campagne/semaine limite que la section 6 (Montant BR SÉJOUR) — pour un séjour à "
+        "cheval sur plusieurs semaines de la période, la valorisation est rattachée au code de sa dernière "
+        "semaine, pas répartie code par code au prorata.",
     )
     m["structure_gme"] = notes.add(
         "warn",
@@ -616,6 +646,54 @@ def render(data: dict, axis_label: str | None = None) -> str:
             f"<td>{fmt(v['pmjt'], 2, ' €')}</td></tr>"
         )
 
+    # Suppléments "en sus" (2026-08-21, demande utilisateur) : transport,
+    # molécules onéreuses, cancérologie — jamais mélangés au montant BR
+    # séjour ci-dessus (voir note12), affichés dans leur propre sous-tableau.
+    supplements_rows = ""
+    for y in years:
+        s = data["valorisation"][y]["supplements"]
+        if s is None:
+            continue
+        supplements_rows += (
+            f"<tr><td>{periods_by_year[y]['label']}</td>"
+            f"<td>{fmt(s['transport'], 2, ' €')}</td>"
+            f"<td>{fmt(s['molecules_onereuses'], 2, ' €')}</td>"
+            f"<td>{fmt(s['supp_cancero'], 2, ' €')}</td>"
+            f"<td>{fmt(s['total'], 2, ' €')}</td></tr>"
+        )
+
+    # Séjours non valorisés par cause (2026-08-21, demande utilisateur) :
+    # rows = cause, colonnes = période, pour rester lisible même avec
+    # plusieurs années comparées (même patron que la section 9 structure GME).
+    non_valorises_causes: list[tuple[str, str]] = []
+    seen_causes: set[str] = set()
+    for y in years:
+        nv = data["valorisation"][y]["non_valorises"]
+        if nv is None:
+            continue
+        for row in nv["rows"]:
+            if row["cause"] not in seen_causes:
+                seen_causes.add(row["cause"])
+                non_valorises_causes.append((row["cause"], row["libelle"]))
+    non_valorises_rows = ""
+    for cle, libelle in non_valorises_causes:
+        cells = ""
+        for y in years:
+            nv = data["valorisation"][y]["non_valorises"]
+            n = 0
+            if nv is not None:
+                n = next((r["effectif"] for r in nv["rows"] if r["cause"] == cle), 0)
+            cells += f"<td>{fmt_int(n)}</td>"
+        non_valorises_rows += f"<tr><td>{libelle}</td>{cells}</tr>"
+    non_valorises_total_row = ""
+    if non_valorises_causes:
+        cells = ""
+        for y in years:
+            nv = data["valorisation"][y]["non_valorises"]
+            cells += f"<td>{fmt_int(nv['total'] if nv else 0)}</td>"
+        non_valorises_total_row = f"<tr><td><b>Total</b></td>{cells}</tr>"
+
+
     # ---------- sections 7-8 : palmarès CM / GN ----------
     # Section 9 "Palmarès GME" retirée (demande utilisateur 2026-08-03) :
     # jugée peu apporter par rapport à CM/GN et risque de surcharger le TDB.
@@ -682,6 +760,29 @@ def render(data: dict, axis_label: str | None = None) -> str:
     note8 = nm["valorisation"]
     note11 = nm["valorisation_non_fact"]
     note_estim = nm["estimation_en_cours"]
+    note12 = nm["supplements"]
+    note13 = nm["non_valorises"]
+
+    supplements_section = ""
+    if supplements_rows:
+        supplements_section = (
+            "<div class=\"table-wrap\">"
+            f"<table><caption>Suppléments \"en sus\"{note12} (hors du montant BR séjour ci-dessus)</caption>"
+            "<thead><tr><th>Période</th><th>Transport</th><th>Molécules onéreuses</th>"
+            "<th>Suppl. cancérologie</th><th>Total suppléments</th></tr></thead>"
+            f"<tbody>{supplements_rows}</tbody></table></div>"
+        )
+
+    non_valorises_section = ""
+    if non_valorises_rows:
+        year_headers_nv = "".join(f"<th>{periods_by_year[y]['label']}</th>" for y in years)
+        non_valorises_section = (
+            "<div class=\"table-wrap\">"
+            f"<table><caption>Séjours non valorisés{note13}</caption>"
+            f"<thead><tr><th>Cause</th>{year_headers_nv}</tr></thead>"
+            f"<tbody>{non_valorises_rows}</tbody>"
+            f"<tfoot>{non_valorises_total_row}</tfoot></table></div>"
+        )
     note9 = nm["palmares"]
     note10 = nm["structure_gme"]
     notes_section = notes.render(data["finess"])
@@ -721,10 +822,12 @@ def render(data: dict, axis_label: str | None = None) -> str:
         csarr_year_headers="".join(f"<th>{y}</th>" for y in years) * 4,
         csarr_group_colspan=len(years),
         valorisation_rows=valorisation_rows,
+        supplements_section=supplements_section,
+        non_valorises_section=non_valorises_section,
         palmares_html=palmares_html,
         note1=note1, note2=note2, note3=note3, note4=note4,
         note5=note5, note6=note6, note7=note7, note8=note8, note9=note9, note10=note10, note11=note11,
-        note_estim=note_estim,
+        note_estim=note_estim, note12=note12, note13=note13,
         notes_section=notes_section,
     )
     title = "PMSI-SMR — Tableau de bord"
@@ -905,6 +1008,8 @@ STYLE_BLOCK = """
   table tbody tr:last-child td { border-bottom: none; }
   table tfoot td, table tfoot th { font-weight: 700; border-top: 2.5px solid var(--ink); border-bottom: none; }
   .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 4px 6px; }
+  .table-wrap + .table-wrap { margin-top: 14px; }
+  table caption { caption-side: top; text-align: left; font-size: 12px; font-weight: 700; color: var(--ink); padding: 6px 4px 8px; }
   table tr.group-row td { background: var(--grid); text-align: left; font-size: 12px; }
   table td .pct { display: block; font-size: 0.82em; color: var(--muted); margin-top: 1px; }
 
@@ -1019,12 +1124,14 @@ HTML_TEMPLATE = """<div class="viz-root">
     <h2>6 · Valorisation{note8}</h2>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Période</th><th>Montant BR TOT (fact.){note11}</th>
+        <thead><tr><th>Période</th><th>Montant BR SÉJOUR (fact.){note11}</th>
         <th>Montant BR estimé PRT{note_estim}</th><th>Écart</th>
         <th>PMCT</th><th>PMST</th><th>PMJT</th></tr></thead>
         <tbody>{valorisation_rows}</tbody>
       </table>
     </div>
+    {supplements_section}
+    {non_valorises_section}
   </section>
 
   {palmares_html}

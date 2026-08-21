@@ -30,7 +30,35 @@ def init_table(conn: sqlite3.Connection, schema: dict) -> None:
         cols.append(f"{_quote(c['name'])} {c['type']}")
     cols.append(f"UNIQUE({', '.join(_quote(k) for k in schema['natural_key'])})")
     conn.execute(f"CREATE TABLE IF NOT EXISTS {_quote(table)} (\n  " + ",\n  ".join(cols) + "\n)")
+    _ensure_montant_br_sej_column(conn, table)
     conn.commit()
+
+
+def _ensure_montant_br_sej_column(conn: sqlite3.Connection, table: str) -> None:
+    """montant_br_sej = montant_br_gmt + montant_br_gmth, SANS aucun supplément
+    (transport, molécules onéreuses, cancérologie) — décision utilisateur
+    2026-08-21 : c'est CETTE valeur (pas montant_br_tot) qui sert de base au
+    calcul du prix par journée (voir compute_valeur_journaliere dans
+    src/viz/valorisation.py), les suppléments étant "en sus" et communiqués à
+    part. Colonne GENERATED ALWAYS AS ... VIRTUAL plutôt que stockée à
+    l'insertion : calcul trivial (somme de 2 colonnes déjà en base), donc pas
+    besoin de la maintenir manuellement en écriture, et visible directement
+    par l'Explorateur (sql.js) comme une colonne normale — pas de logique à
+    dupliquer côté JS. ALTER TABLE (pas seulement CREATE TABLE IF NOT EXISTS)
+    car une base pmsi.db déjà existante n'a pas cette colonne — idempotent :
+    ne s'exécute que si la colonne est absente (cf. philosophie "pas de
+    commande init séparée", pmsi.py)."""
+    # table_xinfo (pas table_info) : seule variante qui liste aussi les
+    # colonnes GENERATED — table_info les omet silencieusement, ce qui ferait
+    # retenter l'ALTER TABLE à chaque appel et planter sur "duplicate column
+    # name" (constaté empiriquement 2026-08-21).
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_xinfo({_quote(table)})").fetchall()}
+    if "montant_br_sej" in existing:
+        return
+    conn.execute(
+        f'ALTER TABLE {_quote(table)} ADD COLUMN "montant_br_sej" REAL '
+        'GENERATED ALWAYS AS (COALESCE("montant_br_gmt", 0) + COALESCE("montant_br_gmth", 0)) VIRTUAL'
+    )
 
 
 def insert_rows(

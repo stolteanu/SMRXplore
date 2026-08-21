@@ -359,24 +359,26 @@ def compute_valeur_journaliere(
     filtre. Nouvelle hypothèse de calcul, non validée contre une référence
     ATIH externe (contrairement au reste de ce module)."""
     day_axis = _rhs_day_axis(conn, finess) if axis_filter else {}
-    # montant_br_tot = 0.0 n'est pas une vraie facturation (campagne où le
-    # séjour existe mais n'a encore rien déclenché de facturable, distinct
-    # de NULL en base mais équivalent ici) : exclu au même titre que NULL,
-    # sinon une campagne à 0€ ferait à tort compter le séjour comme
+    # montant_br_sej (= montant_br_gmt + montant_br_gmth, SANS supplément —
+    # transport/molécules onéreuses/cancérologie exclus, voir docstring
+    # module et _ensure_montant_br_sej_column dans src/storage/valorisation_store.py)
+    # = 0.0 n'est pas une vraie facturation (campagne où le séjour existe
+    # mais n'a encore rien déclenché de facturable) : exclu au même titre que
+    # NULL, sinon une campagne à 0€ ferait à tort compter le séjour comme
     # "plusieurs campagnes valorisées" (cas 1) au lieu de "clôture unique"
     # (cas 2) — bug trouvé sur les séjours 12092797/12092888 (2026-07-31).
     # nv_nonfactam=1 ("non facturable Assurance Maladie") exclu : un séjour
-    # ainsi marqué porte quand même un montant_br_tot (valeur de production),
-    # mais ce n'est pas une vraie facturation AM — l'inclure gonflait notre
-    # total par rapport à la restitution ATIH de référence (trouvé 2026-07-31
-    # sur [etablissement anonymise]/2026 : 1 séjour HC à 37703.63€, marqué nv_nonfactam=1).
-    clause = f"WHERE montant_br_tot IS NOT NULL AND montant_br_tot != 0 AND {EXCLUSION_MONTANT_OFFICIEL}"
+    # ainsi marqué porte quand même un montant (valeur de production), mais
+    # ce n'est pas une vraie facturation AM — l'inclure gonflait notre total
+    # par rapport à la restitution ATIH de référence (trouvé 2026-07-31 sur
+    # [etablissement anonymise]/2026 : 1 séjour HC à 37703.63€, marqué nv_nonfactam=1).
+    clause = f"WHERE montant_br_sej IS NOT NULL AND montant_br_sej != 0 AND {EXCLUSION_MONTANT_OFFICIEL}"
     params: list = []
     if finess is not None:
         clause += " AND finess_epmsi = ?"
         params.append(finess)
     valo_rows = conn.execute(
-        "SELECT finess_epmsi, numero_admin_sejour, campagne, numero_semaine, montant_br_tot "
+        "SELECT finess_epmsi, numero_admin_sejour, campagne, numero_semaine, montant_br_sej "
         f"FROM valorisation_sejour {clause}",
         params,
     ).fetchall()
@@ -538,8 +540,14 @@ def montant_br_tot_campagne_comparable(
     exclure: bool = True,
     axis_filter: tuple[str, str] | None = None,
 ) -> float:
-    """montant_br_tot officiel ATIH, mais restreint aux séjours dont TOUTE
-    l'activité RHS (de cette campagne) tient dans les semaines 01..max_week —
+    """montant_br_sej (= montant_br_gmt + montant_br_gmth, SANS supplément —
+    décision utilisateur 2026-08-21, voir _ensure_montant_br_sej_column dans
+    src/storage/valorisation_store.py ; anciennement montant_br_tot -
+    montant_br_trans, qui restait pollué par les molécules onéreuses et le
+    supplément cancérologie — les suppléments sont désormais TOUS exclus
+    d'ici et communiqués à part, voir montant_br_supplements_campagne_comparable
+    ci-dessous), mais restreint aux séjours dont TOUTE l'activité RHS (de
+    cette campagne) tient dans les semaines 01..max_week —
     c-à-d des séjours qui, comme ceux d'une VRAIE transmission "M04", étaient
     déjà clos/connus à cette date. Nécessaire car les fichiers 2024/2025 dont
     on dispose sont des transmissions M12 (année complète, chaque séjour y
@@ -613,7 +621,7 @@ def montant_br_tot_campagne_comparable(
             )
 
     rows = conn.execute(
-        "SELECT numero_admin_sejour, montant_br_tot - COALESCE(montant_br_trans, 0) "
+        "SELECT numero_admin_sejour, montant_br_sej "
         f"FROM valorisation_sejour {clause}",
         params,
     ).fetchall()
@@ -647,6 +655,130 @@ def montant_br_tot_campagne_comparable(
         else:
             total += montant
     return total
+
+
+def montant_br_supplements_campagne_comparable(
+    conn: sqlite3.Connection,
+    campagne: int,
+    max_week: int,
+    finess: str | None = None,
+) -> dict[str, float]:
+    """Suppléments EXCLUS de montant_br_sej — transport (`montant_br_trans`),
+    molécules onéreuses (`montant_am_med`), supplément cancérologie
+    (`montant_br_supp_cancero`) — décision utilisateur 2026-08-21 : "en sus"
+    du séjour, communiqués À PART plutôt que mélangés au prix par journée
+    (voir montant_br_tot_campagne_comparable et compute_valeur_journaliere).
+    Même filtre de comparabilité (max_week) et même exclusion d'anomalies
+    (EXCLUSION_MONTANT_OFFICIEL) que le total principal, pour que
+    total + suppléments reste interprétable."""
+    dernieres_semaines = _derniere_semaine_rhs_par_sejour(conn, campagne, finess)
+    clause = f"WHERE campagne = ? AND montant_br_tot IS NOT NULL AND {EXCLUSION_MONTANT_OFFICIEL}"
+    params: list = [campagne]
+    if finess is not None:
+        clause += " AND finess_epmsi = ?"
+        params.append(finess)
+    rows = conn.execute(
+        "SELECT numero_admin_sejour, COALESCE(montant_br_trans, 0), COALESCE(montant_am_med, 0), "
+        f"COALESCE(montant_br_supp_cancero, 0) FROM valorisation_sejour {clause}",
+        params,
+    ).fetchall()
+    transport = molecules_onereuses = supp_cancero = 0.0
+    for numadmin, trans, med, cancero in rows:
+        numadmin = _norm_numadmin(numadmin)
+        derniere_semaine = dernieres_semaines.get(numadmin)
+        if derniere_semaine is None or derniere_semaine > max_week:
+            continue
+        transport += trans
+        molecules_onereuses += med
+        supp_cancero += cancero
+    return {
+        "transport": transport,
+        "molecules_onereuses": molecules_onereuses,
+        "supp_cancero": supp_cancero,
+        "total": transport + molecules_onereuses + supp_cancero,
+    }
+
+
+_CAUSE_NON_VALORISE_LABELS = {
+    "nv_chain": "Chaînage (NV_CHAIN)",
+    "nv_attente_dts": "En attente de droits (NV_ATTENTE_DTS)",
+    "nv_nonfactam": "Non facturable à l'AM (NV_NONFACTAM)",
+    "erreur_groupage": "Erreur de groupage (GME 9096Z)",
+    "en_cours": "Séjour en cours, pas encore clos (<90j)",
+}
+"""Ordre d'affichage + libellés du tableau des séjours non valorisés (demande
+utilisateur 2026-08-21). Un séjour peut cumuler plusieurs anomalies NV_* :
+seule la PREMIÈRE trouvée dans cet ordre est retenue pour le classer (évite
+de le compter dans plusieurs causes à la fois)."""
+
+
+def sejours_non_valorises_campagne(
+    conn: sqlite3.Connection, campagne: int, max_week: int, finess: str | None = None
+) -> dict:
+    """Pour chaque séjour actif dans `campagne` (au moins une ligne RHS dont
+    l'année du numero_semaine est `campagne`, clos avant `max_week` — même
+    filtre de comparabilité que montant_br_tot_campagne_comparable) mais SANS
+    montant_br_sej valorisé, la cause : anomalie NV_* connue, erreur de
+    groupage (GME 9096Z), ou simplement en cours (séjour <90j pas encore clos
+    — le financement SMR ne se déclenche qu'à la clôture ou au seuil de 90j,
+    cf. docstring module). Regroupé par cause avec effectif, PAS par séjour
+    individuel (liste nominative jugée hors-sujet pour un TDB d'activité)."""
+    dernieres_semaines = _derniere_semaine_rhs_par_sejour(conn, campagne, finess)
+    actifs = {numadmin for numadmin, semaine in dernieres_semaines.items() if semaine <= max_week}
+
+    clause = "WHERE campagne = ?"
+    params: list = [campagne]
+    if finess is not None:
+        clause += " AND finess_epmsi = ?"
+        params.append(finess)
+    rows = conn.execute(
+        "SELECT numero_admin_sejour, montant_br_sej, code_gme, "
+        "COALESCE(nv_chain, 0), COALESCE(nv_attente_dts, 0), COALESCE(nv_nonfactam, 0) "
+        f"FROM valorisation_sejour {clause}",
+        params,
+    ).fetchall()
+
+    par_sejour: dict[str, dict] = {}
+    for numadmin, montant_sej, code_gme, nv_chain, nv_attente_dts, nv_nonfactam in rows:
+        numadmin = _norm_numadmin(numadmin)
+        if numadmin not in actifs:
+            continue
+        # Une ligne suffit à disqualifier le séjour de "non valorisé" (une
+        # seule campagne/semaine facturée parmi plusieurs suffit).
+        if montant_sej:
+            par_sejour[numadmin] = None  # marqueur "valorisé, à exclure"
+            continue
+        if numadmin in par_sejour and par_sejour[numadmin] is None:
+            continue
+        cause = None
+        if nv_chain:
+            cause = "nv_chain"
+        elif nv_attente_dts:
+            cause = "nv_attente_dts"
+        elif nv_nonfactam:
+            cause = "nv_nonfactam"
+        elif code_gme == "9096ZZ0":
+            cause = "erreur_groupage"
+        else:
+            cause = "en_cours"
+        # Garde la cause déjà trouvée sur une autre ligne du même séjour
+        # (ex. une semaine en nv_chain, une autre "en cours") plutôt que de
+        # l'écraser par la dernière ligne lue.
+        if numadmin not in par_sejour:
+            par_sejour[numadmin] = cause
+
+    effectif_par_cause: dict[str, int] = {}
+    for cause in par_sejour.values():
+        if cause is None:
+            continue
+        effectif_par_cause[cause] = effectif_par_cause.get(cause, 0) + 1
+
+    rows_out = [
+        {"cause": cle, "libelle": libelle, "effectif": effectif_par_cause.get(cle, 0)}
+        for cle, libelle in _CAUSE_NON_VALORISE_LABELS.items()
+        if effectif_par_cause.get(cle, 0)
+    ]
+    return {"rows": rows_out, "total": sum(r["effectif"] for r in rows_out)}
 
 
 def montant_br_pt_par_annee(conn: sqlite3.Connection, finess: str | None = None) -> dict[int, float]:

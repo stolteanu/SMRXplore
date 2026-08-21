@@ -977,7 +977,7 @@ def section_palmares_gme(
             clause += " AND finess_epmsi = ?"
             params.append(finess)
         rows = conn.execute(
-            "SELECT numero_admin_sejour, montant_br_tot - COALESCE(montant_br_trans, 0) "
+            "SELECT numero_admin_sejour, montant_br_sej "
             f"FROM valorisation_sejour {clause}",
             params,
         ).fetchall()
@@ -1095,7 +1095,7 @@ def section_structure_gme(
             clause += " AND finess_epmsi = ?"
             params.append(finess)
         rows = conn.execute(
-            "SELECT numero_admin_sejour, montant_br_tot - COALESCE(montant_br_trans, 0) "
+            "SELECT numero_admin_sejour, montant_br_sej "
             f"FROM valorisation_sejour {clause}",
             params,
         ).fetchall()
@@ -1242,10 +1242,24 @@ def section_valorisation(
     applique le PMJT déjà calculé ci-dessous (donc SANS boucle : le PMJT
     n'est jamais recalculé à partir de cette estimation) à leurs journées de
     présence — filtrées par le même axe le cas échéant — pour estimer la
-    recette qu'ils produiront une fois facturés."""
+    recette qu'ils produiront une fois facturés.
+
+    `supplements` / `non_valorises` (2026-08-21, décision utilisateur) :
+    depuis ce correctif, TOUS les montants ci-dessus (`montant_br_tot`,
+    `montant_br_pt`...) sont basés sur `montant_br_sej` (= montant_br_gmt +
+    montant_br_gmth SEUL, sans transport/molécules onéreuses/cancérologie —
+    voir src/viz/valorisation.py), pas `montant_br_tot` au sens CSV du terme.
+    `supplements` (montant_br_supplements_campagne_comparable) donne ces
+    3 suppléments À PART, jamais mélangés au prix par journée. `non_valorises`
+    (sejours_non_valorises_campagne) liste par cause les séjours actifs sur
+    la période sans AUCUN montant_br_sej connu (anomalie NV_*, erreur de
+    groupage, ou simplement en cours). Absents (None) sur un TDB secondaire
+    par axe (UF/type d'hospitalisation) — pas de sens à les y ventiler."""
     from src.viz.valorisation import (
         estimation_recettes_sejours_en_cours,
+        montant_br_supplements_campagne_comparable,
         montant_br_tot_campagne_comparable,
+        sejours_non_valorises_campagne,
         valeur_sur_periode,
     )
 
@@ -1275,6 +1289,12 @@ def section_valorisation(
             montant_br_tot_exact = axis_filter[0] == "type_hospitalisation"
         estimation_en_cours = estimation_recettes_sejours_en_cours(conn, period, finess, pmjt, axis_filter)
         montant_br_pt_avec_estimation = montant_br_pt + estimation_en_cours["montant"]
+        # Suppléments (transport/MO/cancéro) et séjours non valorisés : hors
+        # axis_filter (pas de sens à les ventiler par UF/type d'hosp., et
+        # ça alourdirait le TDB secondaire — demande utilisateur 2026-08-21,
+        # affichés seulement sur le TDB principal).
+        supplements = None if axis_filter else montant_br_supplements_campagne_comparable(conn, y, period["max_week"], finess)
+        non_valorises = None if axis_filter else sejours_non_valorises_campagne(conn, y, period["max_week"], finess)
         out[y] = {
             "montant_br_pt": montant_br_pt,
             "montant_br_tot": montant_br_tot,
@@ -1283,6 +1303,8 @@ def section_valorisation(
             "montant_br_non_fact": montant_br_non_fact,
             "estimation_en_cours": estimation_en_cours,
             "montant_br_pt_avec_estimation": montant_br_pt_avec_estimation,
+            "supplements": supplements,
+            "non_valorises": non_valorises,
             "pmct": montant_br_pt / sej["nb_ssr"] if sej["nb_ssr"] else None,
             "pmst": montant_br_pt / sej["nb_rhs"] if sej["nb_rhs"] else None,
             "pmjt": pmjt,

@@ -130,10 +130,26 @@ const SOURCES = {
     label: "Valorisation",
     short: "Valo",
     table: "valorisation_sejour va",
+    // Séjours non valorisables (nv_chain/nv_attente_dts/nv_nonfactam, mêmes 3
+    // anomalies que EXCLUSION_MONTANT_OFFICIEL côté TDB, src/viz/valorisation.py)
+    // exclus ICI, directement dans la source — PAS via un filtre global
+    // cross-fichier (décision utilisateur 2026-08-21, "exclure dès le début").
+    // Un filtre global cross-fichier a été essayé puis retiré : son index par
+    // séjour est reconstruit PAR PÉRIODE (cf. buildForeignIndex), donc un
+    // séjour valorisé sous une AUTRE campagne que celle affichée (ex. séjour
+    // à cheval sur deux ans) n'avait aucune ligne candidate dans l'index de la
+    // période courante — le filtre l'excluait alors même que "Oui" ET "Non"
+    // étaient tous deux cochés, faisant disparaître à tort des lignes RHS/VID-
+    // HOSP de séjours par ailleurs parfaitement valides (constaté empiriquement
+    // 2026-08-21 : 97 lignes RHS 680000973/2026 disparaissaient ainsi). Exclure
+    // directement ici, dans la table SOURCE, ne touche que les lignes Valo
+    // elles-mêmes et ne peut plus jamais fausser un comptage RHS/VID-HOSP.
     sql: `SELECT va.*, cm.libelle_long AS lib_cm
           FROM valorisation_sejour va
           LEFT JOIN nomenclature_gme cm ON cm.code = substr(va.code_gme,1,2) AND cm.kind = 'CM'
-          WHERE va.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
+          WHERE va.finess_epmsi IN (%FINESS%) AND (%PERIOD%)
+                AND COALESCE(va.nv_chain,0) = 0 AND COALESCE(va.nv_attente_dts,0) = 0
+                AND COALESCE(va.nv_nonfactam,0) = 0`,
     periodKind: "campagne", // filtre par colonne campagne = année
     dims: [
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
@@ -165,6 +181,15 @@ const SOURCES = {
       { id: "nb_lignes", label: "Nombre de lignes de valorisation", derive: r => 1 },
       { id: "nb_sejours", label: "Nombre de séjours (distincts)", distinctKey: r => r.finess_epmsi + "|" + r.numero_admin_sejour },
       { id: "montant_br_tot", label: "Montant brut total (€)", col: "montant_br_tot", numeric: true },
+      // montant_br_sej = montant_br_gmt + montant_br_gmth SEUL, sans aucun
+      // supplément (transport, molécules onéreuses, cancérologie) — colonne
+      // calculée (GENERATED ALWAYS AS, cf. src/storage/valorisation_store.py),
+      // à utiliser pour tout calcul de prix par journée/séjour/semaine dans
+      // ce requêteur plutôt que montant_br_tot, qui reste pollué par ces
+      // suppléments (décision utilisateur 2026-08-21, cf. TDB simple section 6).
+      { id: "montant_br_sej", label: "Montant BR séjour (hors suppléments) (€)", col: "montant_br_sej", numeric: true },
+      { id: "montant_br_trans", label: "Montant transport (BR) (€)", col: "montant_br_trans", numeric: true },
+      { id: "montant_br_supp_cancero", label: "Montant supplément cancérologie (BR) (€)", col: "montant_br_supp_cancero", numeric: true },
       { id: "montant_am_tot", label: "Montant Assurance Maladie total (€)", col: "montant_am_tot", numeric: true },
       { id: "montant_br_gmt", label: "Montant brut GMT (≤90j) (€)", col: "montant_br_gmt", numeric: true },
       { id: "montant_br_gmth", label: "Montant brut GMTH (>90j) (€)", col: "montant_br_gmth", numeric: true },
