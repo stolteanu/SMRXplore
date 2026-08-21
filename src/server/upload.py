@@ -16,9 +16,19 @@ Cycle de vie d'un fichier déposé :
                        dans la base) pour vérifier le format, et — SEULEMENT si tout
                        est correct — déplace chaque fichier vers son dossier final
                        (input/rhs, input/vdh, input/valorisation) avec le nom
-                       standard. En cas d'erreur sur au moins un fichier, rien n'est
-                       déplacé : l'utilisateur corrige (retire/remplace) et relance
-                       le contrôle.
+                       standard. En cas d'erreur BLOQUANTE sur au moins un fichier,
+                       rien n'est déplacé.
+
+Deux catégories d'anomalies pour RHS/VID-HOSP (_valider_rhs_vdh) :
+  - BLOQUANTES, jamais contournables : code de version non reconnu, longueur
+    d'enregistrement incorrecte, champ de liaison manquant (finess_epmsi,
+    numero_admin_sejour, numero_semaine, numero_unite_medicale — la clé
+    naturelle qui rattache RHS/VID-HOSP/valorisation entre eux dans pmsi.db).
+  - AVERTISSEMENTS, contournables via confirmer_malgre_erreurs() (bouton
+    "Mettre à jour quand même" dans l'UI) : toute autre anomalie de champ,
+    ex. numéro de sécurité sociale absent/non numérique — n'entre dans
+    aucune clé de rattachement, et run.py charge de toute façon
+    l'enregistrement en journalisant l'anomalie (cf. process_file).
 
 Rien ici ne touche à data/processed/pmsi.db : le chargement effectif reste
 /api/charger (run.py), déclenché par le bouton "Mettre à jour" une fois le
@@ -178,6 +188,7 @@ def stage_file(categorie: str, original_name: str, content: bytes) -> dict:
         "mois": mois,
         "detecte": finess is not None,
         "confirme_ecrasement": False,
+        "confirme_malgre_erreurs": False,
     }
     _write_meta(_meta_path(categorie, file_id), meta)
     return meta
@@ -224,38 +235,53 @@ def list_staged() -> dict[str, list[dict]]:
 
 # Champs de liaison (natural_key, en tête d'enregistrement) sans lesquels un
 # RHS/VID-HOSP ne peut pas être rattaché aux deux autres fichiers d'une même
-# transmission — un enregistrement qui en manque un est bloquant, même si le
-# reste du fichier est par ailleurs conforme.
+# transmission — un enregistrement qui en manque un reste BLOQUANT (avec la
+# longueur d'enregistrement et le code de version), quoi qu'il arrive : ça
+# casserait le rattachement dans la base, aucun bouton "quand même" ne doit
+# pouvoir le contourner.
 _CHAMPS_LIAISON = {
     "rhs_groupe": ["finess_epmsi", "numero_admin_sejour", "numero_semaine", "numero_unite_medicale"],
     "vid_hosp": ["finess_epmsi", "numero_admin_sejour"],
 }
-# Numéro de sécurité sociale (VID-HOSP uniquement — absent du RHS) : requis
-# et strictement numérique, sinon bloquant.
+# Numéro de sécurité sociale (VID-HOSP uniquement) : n'entre PAS dans la clé
+# naturelle ni dans le rattachement entre tables de pmsi.db (seul finess_epmsi
+# + numero_admin_sejour y comptent) — une anomalie dessus est donc un simple
+# AVERTISSEMENT, pas un blocage (retour utilisateur 2026-08-21 : un fichier
+# réel avec NIR="XXXX" sur certaines lignes était rejeté en bloc alors que le
+# reste du fichier, et notamment les champs de liaison, étaient corrects).
 _CHAMP_SECU = {"vid_hosp": "numero_immatriculation_assure"}
 
 
-def _erreur_champ_critique(fmt: str, fixed: dict) -> str | None:
+def _erreur_liaison(fmt: str, fixed: dict) -> str | None:
     for champ in _CHAMPS_LIAISON.get(fmt, []):
         valeur = fixed.get(champ)
         if valeur in (None, ""):
             return f"champ de liaison {champ!r} manquant (empêche le rattachement aux autres fichiers)"
-    champ_secu = _CHAMP_SECU.get(fmt)
-    if champ_secu:
-        valeur = fixed.get(champ_secu)
-        if valeur in (None, ""):
-            return "numéro de sécurité sociale absent"
-        if not str(valeur).strip().isdigit():
-            return f"numéro de sécurité sociale non numérique ({valeur!r})"
     return None
 
 
-def _valider_rhs_vdh(fmt: str, path: Path) -> tuple[bool, str]:
+def _avertissement_secu(fmt: str, fixed: dict) -> str | None:
+    champ = _CHAMP_SECU.get(fmt)
+    if not champ:
+        return None
+    valeur = fixed.get(champ)
+    if valeur in (None, ""):
+        return "numéro de sécurité sociale absent"
+    if not str(valeur).strip().isdigit():
+        return f"numéro de sécurité sociale non numérique ({valeur!r})"
+    return None
+
+
+def _valider_rhs_vdh(fmt: str, path: Path) -> dict:
+    """Retourne {"bloquant": bool, "message": str, "avertissement_count": int}.
+    bloquant=True ne peut JAMAIS être contourné (mauvais fichier/format, ou
+    perte du rattachement entre tables) ; avertissement_count>0 peut l'être
+    via confirmer_malgre_erreurs() — cf. docstring module."""
     import run as run_module  # import tardif : évite tout cycle au chargement du serveur
 
     registry = run_module.load_registry()
     if fmt not in registry:
-        return False, f"format {fmt!r} absent de config/formats/registry.json"
+        return {"bloquant": True, "message": f"format {fmt!r} absent de config/formats/registry.json", "avertissement_count": 0}
     entry = registry[fmt]
     version_slice = tuple(entry["version_slice"])
 
@@ -266,65 +292,81 @@ def _valider_rhs_vdh(fmt: str, path: Path) -> tuple[bool, str]:
     total = 0
     ok = 0
     version_inconnue = 0
-    with_errors = 0
-    critique = 0
-    premier_message_critique: str | None = None
+    with_avertissement = 0
+    bloquant_count = 0
+    premier_message_bloquant: str | None = None
+    premier_message_avertissement: str | None = None
     for line_no, _raw, version, parsed in parse_file_multi(path, schemas_by_version, version_slice):
         total += 1
         if parsed is None:
             version_inconnue += 1
             continue
-        erreur_critique = _erreur_champ_critique(fmt, parsed["fixed"])
-        if erreur_critique:
-            critique += 1
-            if premier_message_critique is None:
-                premier_message_critique = f"ligne {line_no} : {erreur_critique}"
+
+        if parsed["actual_length"] != parsed["expected_length"]:
+            bloquant_count += 1
+            if premier_message_bloquant is None:
+                premier_message_bloquant = (
+                    f"ligne {line_no} : longueur d'enregistrement incorrecte "
+                    f"(attendue={parsed['expected_length']}, réelle={parsed['actual_length']})"
+                )
             continue
-        if parsed["errors"]:
-            with_errors += 1
+        erreur_liaison = _erreur_liaison(fmt, parsed["fixed"])
+        if erreur_liaison:
+            bloquant_count += 1
+            if premier_message_bloquant is None:
+                premier_message_bloquant = f"ligne {line_no} : {erreur_liaison}"
+            continue
+
+        avert_secu = _avertissement_secu(fmt, parsed["fixed"])
+        if avert_secu or parsed["errors"]:
+            with_avertissement += 1
+            if premier_message_avertissement is None:
+                premier_message_avertissement = f"ligne {line_no} : " + (avert_secu or parsed["errors"][0])
         else:
             ok += 1
 
     if total == 0:
-        return False, "fichier vide."
-    if ok == 0 and with_errors == 0 and critique == 0:
-        return False, (
-            f"aucune ligne avec un code de version reconnu — mauvais fichier déposé dans cette zone, "
-            f"ou format non encore incorporé au projet ({total} ligne(s) ignorée(s))."
-        )
-    if critique:
-        return False, (
-            f"{critique}/{total} ligne(s) avec un champ bloquant invalide, ex. {premier_message_critique}."
-        )
+        return {"bloquant": True, "message": "fichier vide.", "avertissement_count": 0}
+    if ok == 0 and with_avertissement == 0 and bloquant_count == 0:
+        return {
+            "bloquant": True,
+            "message": (
+                f"aucune ligne avec un code de version reconnu — mauvais fichier déposé dans cette zone, "
+                f"ou format non encore incorporé au projet ({total} ligne(s) ignorée(s))."
+            ),
+            "avertissement_count": 0,
+        }
+    if bloquant_count:
+        return {
+            "bloquant": True,
+            "message": f"{bloquant_count}/{total} ligne(s) avec un format/champ de liaison invalide, ex. {premier_message_bloquant}.",
+            "avertissement_count": 0,
+        }
 
-    # Un champ en anomalie sur une ligne (ex. valeur sentinelle ATIH type
-    # "ERR"/".999990" sur un sous-champ DMT non pertinent pour ce type de
-    # séjour) ne rend pas le fichier invalide : run.py charge quand même
-    # l'enregistrement, les anomalies sont seulement journalisées (cf.
-    # process_file). Seuls bloquent : format de version non reconnu, ou un
-    # champ critique invalide (liaison RHS/VDH/valorisation, sécurité
-    # sociale) — cf. _erreur_champ_critique (retour utilisateur 2026-08-21 :
-    # un fichier VDH réel avait 100% de ses lignes avec une anomalie mineure
-    # sur un champ non important, et l'upload le bloquait à tort).
+    # Non bloquant : longueur et champs de liaison sont corrects sur toutes
+    # les lignes. Une anomalie sur un autre champ (NIR, sous-champ DMT type
+    # sentinelle ATIH...) n'empêche pas run.py de charger l'enregistrement —
+    # seulement journalisée (cf. process_file) — donc n'empêche pas non plus
+    # l'upload, moyennant confirmation explicite si des lignes sont concernées.
     message = f"{ok}/{total} ligne(s) conformes."
-    if with_errors:
-        message += f" {with_errors} ligne(s) avec anomalie(s) mineure(s) (seront journalisées à la mise à jour)."
+    if with_avertissement:
+        message += f" {with_avertissement} ligne(s) avec anomalie(s) mineure(s) (seront journalisées à la mise à jour) — ex. {premier_message_avertissement}."
     if version_inconnue:
         message += f" {version_inconnue} ligne(s) à code de version inconnu, ignorée(s)."
-    return True, message
+    return {"bloquant": False, "message": message, "avertissement_count": with_avertissement}
 
 
-def _valider_valorisation(path: Path) -> tuple[bool, str]:
+def _valider_valorisation(path: Path) -> dict:
     schema = json.loads((ROOT / "config/formats/valorisation_sejour.schema.json").read_text(encoding="utf-8"))
     from src.parsing.valorisation import load_from_csv
 
     try:
         rows = load_from_csv(path, schema)
     except ValueError as exc:
-        return False, str(exc)
+        return {"bloquant": True, "message": str(exc), "avertissement_count": 0}
     if not rows:
-        return True, "0 ligne dans le fichier (fichier accepté mais vide)."
-    return True, f"{len(rows)} ligne(s) conformes."
+        return {"bloquant": False, "message": "0 ligne dans le fichier (fichier accepté mais vide).", "avertissement_count": 0}
+    return {"bloquant": False, "message": f"{len(rows)} ligne(s) conformes.", "avertissement_count": 0}
 
 
 def _nom_final(categorie: str, meta: dict) -> str:
@@ -358,6 +400,21 @@ def confirmer_ecrasement(categorie: str, file_id: str) -> dict:
     return meta
 
 
+def confirmer_malgre_erreurs(categorie: str, file_id: str) -> dict:
+    """Marque explicitement qu'un fichier avec des anomalies NON bloquantes
+    (cf. _valider_rhs_vdh : format/longueur/champs de liaison corrects, mais
+    au moins une autre anomalie comme un NIR invalide) doit quand même être
+    téléversé. Appelé UNIQUEMENT sur clic explicite ("Mettre à jour quand
+    même") — jamais automatiquement (même logique que confirmer_ecrasement)."""
+    meta_path = _meta_path(categorie, file_id)
+    if not meta_path.exists():
+        raise ErreurUpload("Fichier introuvable en zone de dépôt.")
+    meta = _read_meta(meta_path)
+    meta["confirme_malgre_erreurs"] = True
+    _write_meta(meta_path, meta)
+    return meta
+
+
 def controler() -> dict:
     staged = list_staged()
     total_fichiers = sum(len(v) for v in staged.values())
@@ -386,9 +443,23 @@ def controler() -> dict:
 
             if categorie in ("rhs", "vdh"):
                 fmt = "rhs_groupe" if categorie == "rhs" else "vid_hosp"
-                ok, message = _valider_rhs_vdh(fmt, data_path)
+                validation = _valider_rhs_vdh(fmt, data_path)
             else:
-                ok, message = _valider_valorisation(data_path)
+                validation = _valider_valorisation(data_path)
+
+            if validation["bloquant"]:
+                entry["ok"] = False
+                entry["message"] = validation["message"]
+                tout_ok = False
+                resultats.append(entry)
+                continue
+
+            ok = True
+            message = validation["message"]
+
+            if validation["avertissement_count"] and not meta.get("confirme_malgre_erreurs"):
+                ok = False
+                entry["confirmation_erreurs_requise"] = True
 
             if ok:
                 cible = ROOT / cat.dossier_final / _nom_final(categorie, meta)

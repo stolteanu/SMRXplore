@@ -279,6 +279,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, status=400)
             return
 
+        if self.path == "/api/upload/confirmer-malgre-erreurs":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                meta = upload_mod.confirmer_malgre_erreurs(payload.get("categorie", ""), payload.get("id", ""))
+                self._send_json(meta)
+            except upload_mod.ErreurUpload as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
         if self.path == "/api/upload/retirer":
             try:
                 length = int(self.headers.get("Content-Length", 0))

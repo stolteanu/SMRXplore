@@ -78,6 +78,7 @@
     background: var(--accent); color: #fff; border: none; border-radius: 6px;
     padding: 5px 10px; font-size: 12px; cursor: pointer;
   }
+  .meta-form button.quand-meme { background: var(--err); }
 
   .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
   #action-btn {
@@ -258,7 +259,11 @@
     var badge = '<span class="badge pending">en attente</span>';
     if (resultat) badge = resultat.ok
       ? '<span class="badge ok">OK</span>'
-      : (resultat.ecrasement_requis ? '<span class="badge err">confirmation requise</span>' : '<span class="badge err">erreur</span>');
+      : (resultat.ecrasement_requis
+          ? '<span class="badge err">confirmation requise</span>'
+          : (resultat.confirmation_erreurs_requise
+              ? '<span class="badge err">anomalies détectées</span>'
+              : '<span class="badge err">erreur</span>'));
 
     li.innerHTML =
       '<div class="file-row">' +
@@ -300,6 +305,24 @@
           });
       });
       li.appendChild(confirmBox);
+    }
+
+    if (resultat && resultat.confirmation_erreurs_requise) {
+      var confirmErrBox = document.createElement("div");
+      confirmErrBox.className = "meta-form";
+      confirmErrBox.innerHTML = '<button type="button" class="quand-meme">Mettre à jour quand même</button>';
+      confirmErrBox.querySelector("button").addEventListener("click", function () {
+        fetch("/api/upload/confirmer-malgre-erreurs", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categorie: categorie, id: meta.id })
+        }).then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+          .then(function (res) {
+            if (!res.ok) { alert(res.body.error || "Échec de la confirmation."); return; }
+            globalStatus.textContent = "Confirmé — relance le contrôle pour finaliser.";
+            globalStatus.className = "";
+          });
+      });
+      li.appendChild(confirmErrBox);
     }
 
     if (needForm) {
