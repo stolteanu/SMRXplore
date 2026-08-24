@@ -293,9 +293,8 @@ function defaultModeFor(dim) {
 }
 
 function refreshDimUI() {
-  rowDimRows = [{ uid: ++uidCounter, srcKey: activeSource, dimId: null, mode: undefined }];
-  colDimRows = [];
-  exprRows = [{ uid: ++uidCounter, srcKey: activeSource, measureId: null, aggId: "count", label: "", kind: "mesure" }];
+  if (!rowDimRows.length) rowDimRows = [{ uid: ++uidCounter, srcKey: activeSource, dimId: null, mode: undefined }];
+  if (!exprRows.length) exprRows = [{ uid: ++uidCounter, srcKey: activeSource, measureId: null, aggId: "count", label: "", kind: "mesure" }];
   renderDimsList("rowDimsList", rowDimRows, 1);
   renderDimsList("colDimsList", colDimRows, 0);
   renderExprList();
@@ -1820,8 +1819,7 @@ function renderGlobalFilterList() {
 }
 
 function refreshListeUI() {
-  filterRows = [];
-  listeColRows = [{ uid: ++uidCounter, srcKey: activeSourceListe, kind: "dim", id: null, mode: undefined }];
+  if (!listeColRows.length) listeColRows = [{ uid: ++uidCounter, srcKey: activeSourceListe, kind: "dim", id: null, mode: undefined }];
   renderFilterList();
   renderListeColsList();
 }
