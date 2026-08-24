@@ -444,128 +444,51 @@ function renderLabelInput(row, onInput) {
   return labelInput;
 }
 
-// Champ formule (formule par ligne / ratio) : validation en direct (bordure rouge + message si la
-// formule ne s'analyse pas — parseFormula, cf. plus bas), sans bloquer la saisie ni re-rendre à
-// chaque frappe (seul un re-rendu perdrait le focus du champ en cours de frappe).
-function renderFormulaField(row, placeholder, hint) {
-  const wrap = document.createElement("div");
-  wrap.style.cssText = "flex:1 1 260px;min-width:200px;display:flex;flex-direction:column;gap:2px;";
-  const formulaInput = document.createElement("input");
-  formulaInput.type = "text";
-  formulaInput.placeholder = placeholder;
-  formulaInput.value = row.formula || "";
-  formulaInput.style.cssText = "padding:6px 8px;border:1px solid var(--bordure);border-radius:4px;font-family:monospace;";
-  const err = document.createElement("span");
-  err.style.cssText = "font-size:0.78em;color:#c0392b;";
-  function validate() {
-    if (!formulaInput.value.trim()) { err.textContent = ""; formulaInput.classList.remove("champ-err"); return; }
-    try { parseFormula(formulaInput.value); err.textContent = ""; formulaInput.classList.remove("champ-err"); }
-    catch (e) { err.textContent = e.message; formulaInput.classList.add("champ-err"); }
-  }
-  formulaInput.addEventListener("input", () => { row.formula = formulaInput.value; validate(); updateRecap(); });
-  validate();
-  wrap.appendChild(formulaInput);
-  if (hint) { const h = document.createElement("span"); h.style.cssText = "font-size:0.76em;color:var(--gris);"; h.textContent = hint; wrap.appendChild(h); }
-  wrap.appendChild(err);
-  return wrap;
-}
-
 // Sélecteur de mesure en expression : comme renderDimsList pour les lignes/colonnes, une seule
 // liste groupée par fichier source — les mesures de n'importe quel fichier peuvent être combinées
 // dans un même tableau/graphique (ex. Nombre de séjours (RHS) ET Montant brut total (Valo)),
 // rattachées via le séjour (finess + numéro admin séjour) au moment de générer.
-//
-// Trois types d'expression (row.kind) : "mesure" (défaut, catalogue existant), "formule_ligne" (une
-// formule arithmétique combinant des mesures brutes de la MÊME ligne source, ex. montant_br_tot -
-// montant_am_tot, puis agrégée normalement — somme/moyenne/...), et "ratio" (une formule combinant
-// le résultat DÉJÀ AGRÉGÉ d'autres expressions de la même liste, référencées par position E1/E2/...,
-// ex. E1/E2 = coût moyen par séjour — cf. computeRatioPivot). allowRatio n'expose "ratio" que là où
-// toutes les expressions de la liste sont calculées ensemble sans être découpées (Tableau croisé) —
-// le Graphique ne sélectionne parfois qu'une partie des expressions selon le type de graphique
-// (camembert, boxplot...), ce qui casserait la résolution E1/E2 si elles n'étaient pas incluses.
-function renderExprListGeneric(containerId, arr, minCount, allowRatio) {
+function renderExprListGeneric(containerId, arr, minCount) {
   const container = document.getElementById(containerId);
   container.innerHTML = "";
-  arr.forEach((row, rowIdx) => {
-    if (!row.kind) row.kind = "mesure";
+  arr.forEach((row) => {
     const div = document.createElement("div");
     div.className = "var-row";
 
-    const kindSel = document.createElement("select");
-    kindSel.style.cssText = "flex:0 0 150px;";
-    const kindOpts = [["mesure", "Mesure"], ["formule_ligne", "Formule (par ligne)"]];
-    if (allowRatio) kindOpts.push(["ratio", "Ratio (expressions)"]);
-    kindOpts.forEach(([v, t]) => {
-      const o = document.createElement("option");
-      o.value = v; o.textContent = t;
-      if (row.kind === v) o.selected = true;
-      kindSel.appendChild(o);
+    const measSel = document.createElement("select");
+    const measPlaceholder = document.createElement("option");
+    measPlaceholder.value = "";
+    measPlaceholder.textContent = "— Choisir une mesure —";
+    if (!row.measureId) measPlaceholder.selected = true;
+    measSel.appendChild(measPlaceholder);
+    SOURCE_ORDER.forEach(srcKey => {
+      const src = SOURCES[srcKey];
+      const group = document.createElement("optgroup");
+      group.label = src.label;
+      src.measures.forEach(m => {
+        const o = document.createElement("option");
+        o.value = srcKey + "::" + m.id;
+        o.textContent = `${m.label} (${src.short})`;
+        if (srcKey === row.srcKey && m.id === row.measureId) o.selected = true;
+        group.appendChild(o);
+      });
+      measSel.appendChild(group);
     });
-    kindSel.addEventListener("change", () => {
-      row.kind = kindSel.value;
-      row.measureId = null; row.formula = "";
-      renderExprListGeneric(containerId, arr, minCount, allowRatio);
+
+    measSel.addEventListener("change", () => {
+      if (!measSel.value) { row.measureId = null; renderExprListGeneric(containerId, arr, minCount); updateRecap(); return; }
+      const [srcKey, measureId] = measSel.value.split("::");
+      row.srcKey = srcKey; row.measureId = measureId;
+      renderExprListGeneric(containerId, arr, minCount);
       updateRecap();
     });
-    div.appendChild(kindSel);
+    div.appendChild(measSel);
 
-    if (row.kind === "formule_ligne") {
-      const srcSel = document.createElement("select");
-      srcSel.style.cssText = "flex:0 0 160px;";
-      SOURCE_ORDER.forEach(srcKey => {
-        const o = document.createElement("option");
-        o.value = srcKey; o.textContent = SOURCES[srcKey].label;
-        if (srcKey === row.srcKey) o.selected = true;
-        srcSel.appendChild(o);
-      });
-      if (!row.srcKey) row.srcKey = SOURCE_ORDER[0];
-      srcSel.addEventListener("change", () => { row.srcKey = srcSel.value; renderExprListGeneric(containerId, arr, minCount, allowRatio); updateRecap(); });
-      div.appendChild(srcSel);
-
-      const ids = SOURCES[row.srcKey].measures.map(m => m.id).join(", ");
-      div.appendChild(renderFormulaField(row, "ex. montant_br_tot - montant_am_tot", `Identifiants disponibles (${SOURCES[row.srcKey].short}) : ${ids}`));
+    // Agrégation et libellé n'ont de sens qu'une fois une mesure choisie (sinon rien à agréger) —
+    // évite aussi de suggérer une agrégation par défaut sur une mesure implicite.
+    if (row.measureId) {
       div.appendChild(renderAggSelect(row));
       div.appendChild(renderLabelInput(row, () => {}));
-    } else if (row.kind === "ratio") {
-      const refs = arr.map((r, i) => `E${i + 1}${i === rowIdx ? " (cette ligne)" : " = " + (r.kind === "ratio" ? "ratio, non référençable" : exprLabelFor(r))}`).join(" · ");
-      div.appendChild(renderFormulaField(row, "ex. E1 / E2", refs));
-      div.appendChild(renderLabelInput(row, () => {}));
-    } else {
-      const measSel = document.createElement("select");
-      const measPlaceholder = document.createElement("option");
-      measPlaceholder.value = "";
-      measPlaceholder.textContent = "— Choisir une mesure —";
-      if (!row.measureId) measPlaceholder.selected = true;
-      measSel.appendChild(measPlaceholder);
-      SOURCE_ORDER.forEach(srcKey => {
-        const src = SOURCES[srcKey];
-        const group = document.createElement("optgroup");
-        group.label = src.label;
-        src.measures.forEach(m => {
-          const o = document.createElement("option");
-          o.value = srcKey + "::" + m.id;
-          o.textContent = `${m.label} (${src.short})`;
-          if (srcKey === row.srcKey && m.id === row.measureId) o.selected = true;
-          group.appendChild(o);
-        });
-        measSel.appendChild(group);
-      });
-
-      measSel.addEventListener("change", () => {
-        if (!measSel.value) { row.measureId = null; renderExprListGeneric(containerId, arr, minCount, allowRatio); updateRecap(); return; }
-        const [srcKey, measureId] = measSel.value.split("::");
-        row.srcKey = srcKey; row.measureId = measureId;
-        renderExprListGeneric(containerId, arr, minCount, allowRatio);
-        updateRecap();
-      });
-      div.appendChild(measSel);
-
-      // Agrégation et libellé n'ont de sens qu'une fois une mesure choisie (sinon rien à agréger) —
-      // évite aussi de suggérer une agrégation par défaut sur une mesure implicite.
-      if (row.measureId) {
-        div.appendChild(renderAggSelect(row));
-        div.appendChild(renderLabelInput(row, () => {}));
-      }
     }
 
     const rm = document.createElement("button");
@@ -575,7 +498,7 @@ function renderExprListGeneric(containerId, arr, minCount, allowRatio) {
       if (arr.length <= minCount) return;
       const idx = arr.indexOf(row);
       if (idx >= 0) arr.splice(idx, 1);
-      renderExprListGeneric(containerId, arr, minCount, allowRatio);
+      renderExprListGeneric(containerId, arr, minCount);
       updateRecap();
     });
     div.appendChild(rm);
@@ -584,7 +507,7 @@ function renderExprListGeneric(containerId, arr, minCount, allowRatio) {
   });
 }
 
-function renderExprList() { renderExprListGeneric("exprList", exprRows, 1, true); }
+function renderExprList() { renderExprListGeneric("exprList", exprRows, 1); }
 
 function labelForDimRow(row) {
   const d = dimDefOf(row);
@@ -600,12 +523,6 @@ function labelForDimRow(row) {
 
 function exprLabelFor(expr) {
   if (expr.label && expr.label.trim()) return expr.label.trim();
-  if (expr.kind === "ratio") return (expr.formula && expr.formula.trim()) || "(formule non saisie)";
-  if (expr.kind === "formule_ligne") {
-    if (!expr.formula || !expr.formula.trim()) return "(formule non saisie)";
-    const agg = AGG_DEFS.find(a => a.id === expr.aggId);
-    return `${agg ? agg.short : expr.aggId} — ${expr.formula}`;
-  }
   if (!expr.measureId) return "(mesure non choisie)";
   const src = SOURCES[expr.srcKey];
   const measure = measureOf(expr);
@@ -615,15 +532,10 @@ function exprLabelFor(expr) {
 }
 function exprLabel(expr) { return exprLabelFor(expr); }
 
-// Une expression est "incomplète" (bloque la génération, cf. generer()/prepareGraphData()) si sa
-// formule est vide ou ne s'analyse pas (formule_ligne/ratio), ou si aucune mesure n'est choisie
-// (mesure) — même esprit que les autres sélecteurs de variable de l'app (jamais de génération sur
-// une sélection implicite/incomplète).
+// Une expression est "incomplète" (bloque la génération, cf. generer()/prepareGraphData()) si aucune
+// mesure n'est choisie — même esprit que les autres sélecteurs de variable de l'app (jamais de
+// génération sur une sélection implicite/incomplète).
 function exprRowIncomplete(r) {
-  if (r.kind === "formule_ligne" || r.kind === "ratio") {
-    if (!r.formula || !r.formula.trim()) return true;
-    try { parseFormula(r.formula); return false; } catch (e) { return true; }
-  }
   return !r.measureId;
 }
 
@@ -1146,7 +1058,6 @@ function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, b
   const rowSortByKey = new Map(), colSortByKey = new Map();
   const bucketOf = {};
   for (const expr of exprsCfg) {
-    if (expr.kind === "ratio") continue; // pas de lignes source propres — combine d'autres expressions déjà agrégées, cf. plus bas
     const iterSrcKey = iterSrcKeyOf(expr);
     const b = bucketCached(iterSrcKey);
     bucketOf[expr.uid] = b;
@@ -1175,57 +1086,13 @@ function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, b
   }
 
   const perExpr = {};
-  const ratioExprs = [];
   for (const expr of exprsCfg) {
-    if (expr.kind === "ratio") { ratioExprs.push(expr); continue; }
     const measure = measureOf(expr);
     const iterSrcKey = iterSrcKeyOf(expr);
     perExpr[expr.uid] = computeExprPivot(bucketOf[expr.uid].cells, rowKeys, colKeys, expr, measure, expr.aggId, foreignIdx, iterSrcKey, subtotalGroups);
   }
-  // Ratios calculés dans un 2e passage, une fois toutes les expressions "normales" agrégées : leur
-  // formule combine le résultat DÉJÀ AGRÉGÉ d'autres expressions (référencées par position E1/E2/...
-  // dans exprsCfg), pas des lignes source à elles — cf. computeRatioPivot.
-  for (const expr of ratioExprs) perExpr[expr.uid] = computeRatioPivot(expr, exprsCfg, perExpr, rowKeys, colKeys, subtotalGroups);
 
   return { rowKeys, colKeys, perExpr, rowPartsByKey, colPartsByKey, subtotalGroups };
-}
-
-// Ratio d'expressions : formule référençant d'autres expressions de la même liste par position
-// (E1 = exprsCfg[0], E2 = exprsCfg[1], ...), évaluée cellule par cellule sur leurs valeurs déjà
-// agrégées (perExpr[...].grid/rowTotal/colTotal/grandTotal/subtotals) — jamais sur des lignes source
-// (une ratio ne référence pas de mesure, cf. measureOf). Une expression référencée qui est elle-même
-// un ratio (ou introuvable) résout à null, pour éviter tout risque de dépendance circulaire plutôt
-// que de tenter une résolution récursive/topologique.
-function computeRatioPivot(expr, exprsCfg, perExpr, rowKeys, colKeys, subtotalGroups) {
-  let ast = null;
-  try { ast = parseFormula(expr.formula || ""); } catch (e) { ast = null; }
-  function resolveAt(accessor) {
-    if (!ast) return null;
-    return evalFormula(ast, name => {
-      const m = /^E(\d+)$/i.exec(name);
-      if (!m) return null;
-      const ref = exprsCfg[Number(m[1]) - 1];
-      if (!ref || ref.kind === "ratio" || !perExpr[ref.uid]) return null;
-      return accessor(perExpr[ref.uid]);
-    });
-  }
-  const grid = {}, rowTotal = {}, colTotal = {};
-  for (const rk of rowKeys) {
-    grid[rk] = {};
-    for (const ck of colKeys) grid[rk][ck] = resolveAt(pr => (pr.grid[rk] || {})[ck]);
-  }
-  for (const rk of rowKeys) rowTotal[rk] = resolveAt(pr => pr.rowTotal[rk]);
-  for (const ck of colKeys) colTotal[ck] = resolveAt(pr => pr.colTotal[ck]);
-  const grandTotal = resolveAt(pr => pr.grandTotal);
-  const subtotals = {};
-  if (subtotalGroups) {
-    for (const g of subtotalGroups) {
-      const grid_g = {};
-      for (const ck of colKeys) grid_g[ck] = resolveAt(pr => pr.subtotals[g.key] && pr.subtotals[g.key].grid[ck]);
-      subtotals[g.key] = { grid: grid_g, rowTotal: resolveAt(pr => pr.subtotals[g.key] && pr.subtotals[g.key].rowTotal) };
-    }
-  }
-  return { grid, rowTotal, colTotal, grandTotal, isPct: false, subtotals };
 }
 
 // Calcule, pour une liste de clés déjà triée (tableau de tableaux de valeurs, une entrée par
@@ -1441,117 +1308,7 @@ function catalogEntry(srcKey, kind, id) {
   return (arr || []).find(x => x.id === id) || null;
 }
 
-// ---------- Expressions personnalisées (formule par ligne / ratio d'expressions) ----------
-// Petit analyseur/évaluateur de formules arithmétiques (+ - * / parenthèses, moins unaire, nombres,
-// identifiants) — jamais d'eval() : on ne veut exécuter que ces quatre opérations, rien d'arbitraire.
-// Division par zéro (ou opérande manquant) -> null, propagé silencieusement dans toute l'expression
-// englobante (résultat vide "—" plutôt qu'une erreur), cohérent avec le reste de l'app.
-function tokenizeFormula(src) {
-  const tokens = [];
-  let i = 0;
-  while (i < src.length) {
-    const c = src[i];
-    if (/\s/.test(c)) { i++; continue; }
-    if ("+-*/()".includes(c)) { tokens.push({ t: c }); i++; continue; }
-    if (/[0-9.]/.test(c)) {
-      let j = i; while (j < src.length && /[0-9.]/.test(src[j])) j++;
-      const num = src.slice(i, j);
-      if (!/^\d+(\.\d+)?$/.test(num)) throw new Error(`Nombre invalide : "${num}"`);
-      tokens.push({ t: "num", v: Number(num) }); i = j; continue;
-    }
-    if (/[A-Za-z_]/.test(c)) {
-      let j = i; while (j < src.length && /[A-Za-z0-9_]/.test(src[j])) j++;
-      tokens.push({ t: "id", v: src.slice(i, j) }); i = j; continue;
-    }
-    throw new Error(`Caractère inattendu : "${c}"`);
-  }
-  return tokens;
-}
-function parseFormula(src) {
-  const tokens = tokenizeFormula(src);
-  let pos = 0;
-  const peek = () => tokens[pos];
-  const next = () => tokens[pos++];
-  function parseExpr() {
-    let node = parseTerm();
-    while (peek() && (peek().t === "+" || peek().t === "-")) {
-      const op = next().t;
-      node = { type: "bin", op, left: node, right: parseTerm() };
-    }
-    return node;
-  }
-  function parseTerm() {
-    let node = parseFactor();
-    while (peek() && (peek().t === "*" || peek().t === "/")) {
-      const op = next().t;
-      node = { type: "bin", op, left: node, right: parseFactor() };
-    }
-    return node;
-  }
-  function parseFactor() {
-    const tok = peek();
-    if (!tok) throw new Error("Formule incomplète.");
-    if (tok.t === "-") { next(); return { type: "neg", node: parseFactor() }; }
-    if (tok.t === "(") {
-      next();
-      const node = parseExpr();
-      if (!peek() || peek().t !== ")") throw new Error("Parenthèse fermante manquante.");
-      next();
-      return node;
-    }
-    if (tok.t === "num") { next(); return { type: "num", value: tok.v }; }
-    if (tok.t === "id") { next(); return { type: "id", name: tok.v }; }
-    throw new Error(`Jeton inattendu : "${tok.t}"`);
-  }
-  if (!tokens.length) throw new Error("Formule vide.");
-  const ast = parseExpr();
-  if (pos < tokens.length) throw new Error("Caractère(s) en trop après la formule.");
-  return ast;
-}
-function evalFormula(ast, resolveIdent) {
-  switch (ast.type) {
-    case "num": return ast.value;
-    case "id": { const v = resolveIdent(ast.name); return (v === null || v === undefined || isNaN(v)) ? null : v; }
-    case "neg": { const v = evalFormula(ast.node, resolveIdent); return v === null ? null : -v; }
-    case "bin": {
-      const l = evalFormula(ast.left, resolveIdent), r = evalFormula(ast.right, resolveIdent);
-      if (l === null || r === null) return null;
-      if (ast.op === "+") return l + r;
-      if (ast.op === "-") return l - r;
-      if (ast.op === "*") return l * r;
-      if (ast.op === "/") return r === 0 ? null : l / r;
-      return null;
-    }
-    default: return null;
-  }
-}
-
-// "Mesure" synthétique pour une expression de type "formule_ligne" : sa valeur par ligne est le
-// résultat de la formule appliquée aux mesures brutes (identifiants = ids du catalogue) de SA propre
-// source — ensuite agrégée normalement (row.aggId) via le même pipeline que n'importe quelle mesure
-// (extractValues/agFn), donc compatible telle quelle avec tout le reste (pivot, graphiques, export).
-function customRowMeasure(expr) {
-  let ast;
-  try { ast = parseFormula(expr.formula || ""); } catch (e) { return null; }
-  return {
-    id: "__formule__" + expr.uid,
-    label: (expr.label && expr.label.trim()) || expr.formula,
-    derive: row => evalFormula(ast, name => {
-      const m = catalogEntry(expr.srcKey, "measure", name);
-      if (!m) return null;
-      let v = m.derive ? m.derive(row) : row[m.col];
-      if (v === null || v === undefined || v === "") return null;
-      v = Number(v);
-      if (isNaN(v)) return null;
-      if (m.scale) v *= m.scale;
-      return v;
-    }),
-  };
-}
-
 function measureOf(expr) {
-  if (expr.kind === "formule_ligne") return customRowMeasure(expr);
-  if (expr.kind === "ratio") return null; // pas une mesure classique — cf. computeRatioPivot
   return catalogEntry(expr.srcKey, "measure", expr.measureId);
 }
 
@@ -2343,7 +2100,7 @@ function refreshGraphUI() {
   renderDimsList("graphXDimsList", graphXDimRows, 1);
   renderDimsList("graphSeriesDimsList", graphSeriesDimRows, 0);
   renderDimsList("graphFacetDimsList", graphFacetDimRows, 0);
-  renderExprListGeneric("graphExprList", graphExprRows, 1, false);
+  renderExprListGeneric("graphExprList", graphExprRows, 1);
 }
 
 function suggestChartType(xDimsCfg, seriesDimsCfg, exprsCfg) {
@@ -4802,7 +4559,7 @@ function wireEvents() {
   });
   document.getElementById("btnAddGraphExpr").addEventListener("click", () => {
     graphExprRows.push({ uid: ++uidCounter, srcKey: activeSourceGraph, measureId: null, aggId: "count", label: "", kind: "mesure" });
-    renderExprListGeneric("graphExprList", graphExprRows, 1, false);
+    renderExprListGeneric("graphExprList", graphExprRows, 1);
   });
   document.querySelectorAll("#chartTypeTabs button").forEach(btn => {
     btn.addEventListener("click", () => {
