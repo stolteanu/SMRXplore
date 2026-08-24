@@ -96,10 +96,10 @@ const SOURCES = {
         derive: r => sumNum(r.dependance_habillage_toilette, r.dependance_deplacement, r.dependance_alimentation, r.dependance_continence) },
       { id: "avq_cogn", label: "AVQ cognitif (somme comportement+relation)", numeric: true,
         derive: r => sumNum(r.dependance_comportement, r.dependance_relation) },
-      { id: "nb_das", label: "Nombre de diagnostics associés (DAS)", col: "n1_nb_das", numeric: true },
-      { id: "nb_csarr", label: "Nombre d'actes CSARR (bloc)", col: "n2_nb_csarr", numeric: true },
-      { id: "nb_csar", label: "Nombre d'actes CSAR (bloc)", col: "n3_nb_csar", numeric: true },
-      { id: "nb_ccam", label: "Nombre d'actes CCAM (bloc)", col: "n4_nb_ccam", numeric: true },
+      { id: "nb_das", label: "DAS saisis (par RHS)", col: "n1_nb_das", numeric: true },
+      { id: "nb_csarr", label: "Actes CSARR saisis (par RHS)", col: "n2_nb_csarr", numeric: true },
+      { id: "nb_csar", label: "Actes CSAR saisis (par RHS)", col: "n3_nb_csar", numeric: true },
+      { id: "nb_ccam", label: "Actes CCAM saisis (par RHS)", col: "n4_nb_ccam", numeric: true },
     ],
   },
 
@@ -265,7 +265,7 @@ const SOURCES = {
         libDerive: r => { const n = diagAncestorOfKind(r.code_das, "block"); return n ? n.libelle : null; } },
     ],
     measures: [
-      { id: "nb_das", label: "Nombre de DAS", derive: r => 1 },
+      { id: "nb_das", label: "Nombre de lignes (détail)", distinctKey: r => r.id },
     ],
   },
 
@@ -306,7 +306,7 @@ const SOURCES = {
       ...dateDims("date_realisation", "Date de réalisation", "date_realisation"),
     ],
     measures: [
-      { id: "nb_csarr", label: "Nombre d'actes CSARR", derive: r => 1 },
+      { id: "nb_csarr", label: "Nombre de lignes (détail)", distinctKey: r => r.id },
       { id: "nb_realisations", label: "Nombre de réalisations (cumulé)", col: "nombre_realisations", numeric: true },
     ],
   },
@@ -338,7 +338,7 @@ const SOURCES = {
       ...dateDims("date_realisation", "Date de réalisation", "date_realisation"),
     ],
     measures: [
-      { id: "nb_csar", label: "Nombre d'actes CSAR", derive: r => 1 },
+      { id: "nb_csar", label: "Nombre de lignes (détail)", distinctKey: r => r.id },
       { id: "nb_realisations", label: "Nombre de réalisations (cumulé)", col: "nombre_realisations", numeric: true },
     ],
   },
@@ -368,7 +368,7 @@ const SOURCES = {
       ...dateDims("date_realisation", "Date de réalisation", "date_realisation"),
     ],
     measures: [
-      { id: "nb_ccam", label: "Nombre d'actes CCAM", derive: r => 1 },
+      { id: "nb_ccam", label: "Nombre de lignes (détail)", distinctKey: r => r.id },
       { id: "nb_realisations", label: "Nombre de réalisations (cumulé)", col: "nombre_realisations", numeric: true },
     ],
   },
