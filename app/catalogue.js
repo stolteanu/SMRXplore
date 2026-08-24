@@ -36,7 +36,11 @@ const SOURCES = {
       { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
       { id: "sexe", label: "Sexe", col: "sexe" },
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
+      { id: "tranche_age", label: "Tranche d'âge (à l'entrée)", derive: r => tranche_age(ageAns(r.date_naissance, r.date_debut_sejour)) },
+      { id: "departement_residence", label: "Département de résidence", derive: r => departement(r.code_postal_residence) },
       { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
+      ...dateDims("date_debut_sejour", "Date de début de séjour", "date_debut_sejour"),
+      ...dateDims("date_fin_sejour", "Date de fin de séjour", "date_fin_sejour"),
       // sortKey en AAAASS (année puis semaine, ex. 202405) : numero_semaine est stocké SSAAAA
       // (semaine puis année) — trier dessus tel quel mélangerait les années (toutes les "S05" de
       // chaque année se retrouveraient groupées avant les "S12", quelle que soit l'année).
@@ -59,10 +63,10 @@ const SOURCES = {
         libDerive: r => r.lib_erreur || (r.code_retour_groupage === "0" || r.code_retour_groupage === "000" ? "Aucune" : null) },
       { id: "erreur_type", label: "Erreur de groupage (bloquant/non)", col: "type_erreur" },
       // MMP + AE = "morbidité principale" (MP) au sens du guide de production PMSI-SMR.
-      { id: "dp", label: "Manifestation morbide principale (MMP)", col: "manifestation_morbide_principale", libCol: "lib_dp" },
-      { id: "dp_chapitre", label: "Chapitre CIM-10 (MMP)", derive: r => { const n = diagAncestorOfKind(r.manifestation_morbide_principale, "chapter"); return n ? n.code : null; },
+      { id: "mmp", label: "Manifestation morbide principale (MMP)", col: "manifestation_morbide_principale", libCol: "lib_dp" },
+      { id: "mmp_chapitre", label: "Chapitre CIM-10 (MMP)", derive: r => { const n = diagAncestorOfKind(r.manifestation_morbide_principale, "chapter"); return n ? n.code : null; },
         libDerive: r => { const n = diagAncestorOfKind(r.manifestation_morbide_principale, "chapter"); return n ? n.libelle : null; } },
-      { id: "dp_bloc", label: "Bloc/sous-chapitre CIM-10 (MMP)", derive: r => { const n = diagAncestorOfKind(r.manifestation_morbide_principale, "block"); return n ? n.code : null; },
+      { id: "mmp_bloc", label: "Bloc/sous-chapitre CIM-10 (MMP)", derive: r => { const n = diagAncestorOfKind(r.manifestation_morbide_principale, "block"); return n ? n.code : null; },
         libDerive: r => { const n = diagAncestorOfKind(r.manifestation_morbide_principale, "block"); return n ? n.libelle : null; } },
       { id: "ae", label: "Affection étiologique (AE)", col: "affection_etiologique", libCol: "lib_ae" },
       { id: "ae_chapitre", label: "Chapitre CIM-10 (AE)", derive: r => { const n = diagAncestorOfKind(r.affection_etiologique, "chapter"); return n ? n.code : null; },
@@ -117,6 +121,8 @@ const SOURCES = {
       { id: "sejour_facturable", label: "Séjour facturable AM", col: "sejour_facturable_am" },
       { id: "motif_non_fact", label: "Motif de non-facturation AM", col: "motif_non_facturation_am" },
       { id: "tranche_age", label: "Tranche d'âge (à l'entrée)", derive: r => tranche_age(ageAns(r.date_naissance_beneficiaire, r.date_entree)) },
+      ...dateDims("date_entree", "Date d'entrée", "date_entree"),
+      ...dateDims("date_sortie", "Date de sortie", "date_sortie"),
       { id: "etab_transfert", label: "Établissement de transfert", col: "etablissement_transfert" },
       { id: "etab_retour", label: "Établissement de retour", col: "etablissement_retour" },
     ],
@@ -183,6 +189,21 @@ const SOURCES = {
       { id: "code_gmt", label: "Code GMT", col: "code_gmt" },
       { id: "code_gmth", label: "Code GMTH (> 90j)", col: "code_gmth" },
       { id: "zone_valorisation", label: "Zone de valorisation", col: "zone_valorisation" },
+      { id: "valorise", label: "Valorisé (indicateur)", col: "indicateur_valorisation", libDerive: r => ouiNon(r.indicateur_valorisation) },
+      // nv_chain/nv_attente_dts/nv_nonfactam ne figurent PAS ici : ces 3 anomalies sont déjà
+      // exclues à la source (cf. clause WHERE ci-dessus, décision 2026-08-21) — toujours à 0
+      // dans ce jeu de données, donc sans intérêt en dimension. Les autres indicateurs nv_*
+      // restent non filtrés et sont exposés tels quels ; certains sont absents selon le format
+      // de fichier (2024/2025 vs 2026, cf. valorisation_sejour.schema.json) et vaudront alors NULL.
+      { id: "nv_cm90", label: "NV_CM90 (indicateur de non-valorisation)", col: "nv_cm90", libDerive: r => ouiNon(r.nv_cm90) },
+      { id: "nv_nonclos", label: "NV_NONCLOS (indicateur de non-valorisation)", col: "nv_nonclos", libDerive: r => ouiNon(r.nv_nonclos) },
+      { id: "nv_pie", label: "NV_PIE (indicateur de non-valorisation)", col: "nv_pie", libDerive: r => ouiNon(r.nv_pie) },
+      { id: "nv_varano", label: "NV_VARANO (indicateur de non-valorisation)", col: "nv_varano", libDerive: r => ouiNon(r.nv_varano) },
+      { id: "nv_article51", label: "NV_ARTICLE51 (indicateur de non-valorisation)", col: "nv_article51", libDerive: r => ouiNon(r.nv_article51) },
+      { id: "nv_telereadapt", label: "NV_TELEREADAPT (indicateur de non-valorisation)", col: "nv_telereadapt", libDerive: r => ouiNon(r.nv_telereadapt) },
+      { id: "nv_evcepr", label: "NV_EVCEPR (indicateur de non-valorisation)", col: "nv_evcepr", libDerive: r => ouiNon(r.nv_evcepr) },
+      { id: "nv_gmt9999", label: "NV_GMT9999 (indicateur de non-valorisation)", col: "nv_gmt9999", libDerive: r => ouiNon(r.nv_gmt9999) },
+      { id: "nv_horsperiode", label: "NV_HORSPERIODE (indicateur de non-valorisation)", col: "nv_horsperiode", libDerive: r => ouiNon(r.nv_horsperiode) },
     ],
     measures: [
       { id: "nb_lignes", label: "Nombre de lignes de valorisation", derive: r => 1 },
@@ -281,6 +302,8 @@ const SOURCES = {
       { id: "csarr_chapitre", label: "Chapitre CSARR", col: "code_csarr_chap", libCol: "lib_csarr_chap" },
       { id: "csarr_sous_chapitre", label: "Sous-chapitre CSARR", col: "code_csarr_sschap", libCol: "lib_csarr_sschap" },
       { id: "intervenant", label: "Type d'intervenant", col: "code_intervenant", libCol: "lib_intervenant" },
+      { id: "niveau_technicite", label: "Niveau de technicité", col: "module_niveau_technicite" },
+      ...dateDims("date_realisation", "Date de réalisation", "date_realisation"),
     ],
     measures: [
       { id: "nb_csarr", label: "Nombre d'actes CSARR", derive: r => 1 },
@@ -311,6 +334,8 @@ const SOURCES = {
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
       { id: "code_csar", label: "Acte CSAR (code principal)", col: "code_principal", libCol: "lib_csar" },
       { id: "intervenant", label: "Type d'intervenant", col: "code_intervenant", libCol: "lib_intervenant" },
+      { id: "niveau_technicite", label: "Niveau de technicité", col: "module_niveau_technicite" },
+      ...dateDims("date_realisation", "Date de réalisation", "date_realisation"),
     ],
     measures: [
       { id: "nb_csar", label: "Nombre d'actes CSAR", derive: r => 1 },
@@ -340,6 +365,7 @@ const SOURCES = {
       { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
       { id: "code_ccam", label: "Acte CCAM (code)", col: "code_ccam", libCol: "lib_ccam" },
       { id: "code_activite", label: "Code activité", col: "code_activite" },
+      ...dateDims("date_realisation", "Date de réalisation", "date_realisation"),
     ],
     measures: [
       { id: "nb_ccam", label: "Nombre d'actes CCAM", derive: r => 1 },
@@ -385,4 +411,96 @@ function tranche_age(age) {
   if (age < 75) return "65-74 ans";
   if (age < 85) return "75-84 ans";
   return "85 ans et +";
+}
+
+// Département = 2 premiers chiffres du code postal, sauf DOM (97X/98X) où le
+// département est sur 3 chiffres (ex. 97400 -> 974). Corse (2A/2B) non
+// distinguée : le code postal seul ne permet pas de trancher entre 2A et 2B.
+function departement(codePostal) {
+  if (!codePostal || codePostal.length < 2) return null;
+  if (codePostal.startsWith("97") || codePostal.startsWith("98")) return codePostal.substring(0, 3);
+  return codePostal.substring(0, 2);
+}
+
+function ouiNon(v) {
+  if (v === null || v === undefined || v === "") return null;
+  return Number(v) === 1 ? "Oui" : (Number(v) === 0 ? "Non" : String(v));
+}
+
+// Dates stockées en "AAAA-MM-JJ" (ISO, cf. fixed_width._cast) — le "T00:00:00"
+// évite tout décalage de fuseau horaire lors du parsing par new Date().
+function parseDateStr(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + "T00:00:00");
+  return isNaN(d) ? null : d;
+}
+
+const MOIS_LABELS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+const JOURS_SEMAINE_LABELS = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+
+function anneeDate(dateStr) {
+  return (dateStr && dateStr.length >= 4) ? dateStr.slice(0, 4) : null;
+}
+
+function moisDate(dateStr) {
+  if (!dateStr || dateStr.length < 7) return null;
+  const m = Number(dateStr.slice(5, 7));
+  return m ? `${dateStr.slice(0, 4)}-${String(m).padStart(2, "0")} (${MOIS_LABELS[m - 1]})` : null;
+}
+
+function trimestreDate(dateStr) {
+  if (!dateStr || dateStr.length < 7) return null;
+  const m = Number(dateStr.slice(5, 7));
+  return m ? `${dateStr.slice(0, 4)}-T${Math.ceil(m / 3)}` : null;
+}
+
+function jourSemaineDate(dateStr) {
+  const d = parseDateStr(dateStr);
+  return d ? JOURS_SEMAINE_LABELS[d.getDay()] : null;
+}
+
+function jourSemaineSort(dateStr) {
+  const d = parseDateStr(dateStr);
+  return d ? (d.getDay() + 6) % 7 : null; // Lundi=0 ... Dimanche=6
+}
+
+// Semaine ISO 8601 (lundi première, semaine 1 = celle contenant le premier jeudi de l'année) —
+// même convention que numero_semaine des fichiers sources.
+function isoWeekInfo(dateStr) {
+  const d = parseDateStr(dateStr);
+  if (!d) return null;
+  const target = new Date(d.valueOf());
+  const dayNr = (d.getDay() + 6) % 7;
+  target.setDate(target.getDate() - dayNr + 3);
+  const firstThursday = new Date(target.getFullYear(), 0, 4);
+  const diff = target - firstThursday;
+  const week = 1 + Math.round(diff / (7 * 24 * 3600 * 1000));
+  return { week, year: target.getFullYear() };
+}
+
+function semaineIsoDate(dateStr) {
+  const info = isoWeekInfo(dateStr);
+  return info ? `S${String(info.week).padStart(2, "0")}-${info.year}` : null;
+}
+
+function semaineIsoSort(dateStr) {
+  const info = isoWeekInfo(dateStr);
+  return info ? info.year * 100 + info.week : null;
+}
+
+// Génère, pour une colonne date source, la dimension brute + ses variantes de
+// regroupement temporel (Année/Mois/Trimestre/Jour de semaine/Semaine ISO) — évite de
+// dupliquer ces 6 entrées à la main pour chaque champ date exposé (cf. discussion
+// 2026-08-24 : équivalent simplifié d'un "expression + fonction de transformation"
+// à la QlikView, restreint aux dates plutôt qu'un moteur d'expressions libre).
+function dateDims(idPrefix, label, col) {
+  return [
+    { id: idPrefix, label, col },
+    { id: idPrefix + "_annee", label: `${label} — Année`, derive: r => anneeDate(r[col]) },
+    { id: idPrefix + "_mois", label: `${label} — Mois`, derive: r => moisDate(r[col]),
+      sortKey: r => r[col] ? r[col].slice(0, 7) : null },
+    { id: idPrefix + "_trimestre", label: `${label} — Trimestre`, derive: r => trimestreDate(r[col]) },
+    { id: idPrefix + "_jour_semaine", label: `${label} — Jour de semaine`, derive: r => jourSemaineDate(r[col]), sortKey: r => jourSemaineSort(r[col]) },
+    { id: idPrefix + "_semaine_iso", label: `${label} — Semaine ISO`, derive: r => semaineIsoDate(r[col]), sortKey: r => semaineIsoSort(r[col]) },
+  ];
 }

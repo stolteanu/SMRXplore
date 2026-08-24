@@ -4308,7 +4308,7 @@ function renderFiche(d) {
     d.rhsRaw.forEach(r => {
       const semaineLbl = `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}`;
       html += `<details class="semaine-detail"><summary>${esc(semaineLbl)} — GME ${esc(r.code_gme)}${r.lib_gme ? " (" + esc(r.lib_gme) + ")" : ""}</summary><div class="semaine-body">`;
-      html += `<p><strong>Diagnostic principal :</strong> ${esc(normVal(r.manifestation_morbide_principale))}${r.lib_dp ? " — " + esc(r.lib_dp) : ""}<br>`;
+      html += `<p><strong>Manifestation morbide principale (MMP) :</strong> ${esc(normVal(r.manifestation_morbide_principale))}${r.lib_dp ? " — " + esc(r.lib_dp) : ""}<br>`;
       html += `<strong>Affection étiologique :</strong> ${esc(normVal(r.affection_etiologique))}${r.lib_ae ? " — " + esc(r.lib_ae) : ""}</p>`;
 
       const das = dasByParent[r.id] || [];
