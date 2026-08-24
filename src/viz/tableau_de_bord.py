@@ -183,9 +183,32 @@ def _period_filter(
     `type_hospitalisation` : HTP jour (2) et nuit (3) sont fusionnés en un
     seul groupe "2" (TYPE_HOSPITALISATION_GROUPES dans valorisation.py,
     2026-08-05, demande utilisateur — établissement non spécialisé en HTP de
-    nuit) — demander "2" matche donc les lignes RHS codées 2 OU 3."""
+    nuit) — demander "2" matche donc les lignes RHS codées 2 OU 3.
+
+    Exclusion 680000973/M1C+M1B (2026-08-24) : bug de transmission WEB100T
+    confirmé (voir [[pmsi_smr_ecart_ovalide_htp_transmission]]) — ce seul
+    établissement génère encore des lignes au format M1C (obsolète depuis la
+    bascule S10/2025) pour des séjours HTP qui auraient dû être transmis en
+    M1D ; ATIH ne les reconnaît pas ("RHA de l'année N"). Vérifié : en les
+    excluant, le Nb RHS 2026 (680000973, semaines 01-26) tombe exactement à
+    3880, identique au Tableau F du rapport Ovalide 1.D.0.RTP. Scoping
+    volontairement restreint à cet établissement (pas une règle générique
+    par date de bascule) — M1C reste le format légitime pour 2023-2025 sur
+    tous les établissements, un filtre global aurait vidé ces années-là.
+    Même exclusion étendue à M1B (format 2021, encore plus ancien — voir
+    config/formats/rhs_groupe_m1b.schema.json, implémenté le 2026-08-24) :
+    9 lignes retrouvées pour 3 séjours HTP sur cet établissement, toutes
+    porteuses de code_gme='9096Z0' (placeholder d'erreur de groupage) et
+    indicateur_erreur='X' — même mécanisme WEB100T, encore plus régressif
+    (le séjour retombe jusqu'au format de son ouverture, ici 2020-2021)."""
     clause = "finess_epmsi = ? AND substr(numero_semaine, 3, 4) = ? AND CAST(substr(numero_semaine, 1, 2) AS INTEGER) <= ?"
     params = [finess, period["year"], period["max_week"]]
+    if finess == "680000973" and period["year"] == "2026":
+        # M1C/M1B ne sont plus les formats légitimes en 2026 (bascule
+        # S10/2025 déjà passée) — restreint à cette année pour ne pas
+        # exclure les lignes M1C réellement valides de 2023-2025 (voir
+        # docstring ci-dessus).
+        clause += " AND version_format_rhs_groupe NOT IN ('M1C', 'M1B')"
     if axis_filter:
         champ, valeur = axis_filter
         if champ == "type_hospitalisation":

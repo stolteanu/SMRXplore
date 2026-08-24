@@ -8,6 +8,11 @@ const SOURCES = {
     label: "RHS groupé",
     short: "RHS",
     table: "rhs_groupe r",
+    // Exclusion 680000973/M1C+M1B/2026 (2026-08-24, même correctif que
+    // _period_filter dans src/viz/tableau_de_bord.py — voir sa docstring) :
+    // bug de transmission WEB100T confirmé, lignes M1C/M1B résiduelles non
+    // reconnues par ATIH pour cet établissement en 2026 uniquement (M1C
+    // reste le format légitime 2023-2025, ne pas exclure ces années-là).
     sql: `SELECT r.*, gme.libelle_long AS lib_gme, gn.libelle_long AS lib_gn,
                  cm.libelle_long AS lib_cm,
                  err.libelle AS lib_erreur, err.type AS type_erreur,
@@ -22,7 +27,9 @@ const SOURCES = {
                                      ELSE r.code_retour_groupage END
           LEFT JOIN nomenclature_diagnostics dp ON dp.code = r.manifestation_morbide_principale
           LEFT JOIN nomenclature_diagnostics ae ON ae.code = r.affection_etiologique
-          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
+          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)
+                AND NOT (r.finess_epmsi = '680000973' AND r.version_format_rhs_groupe IN ('M1C', 'M1B')
+                         AND substr(r.numero_semaine,3,4) = '2026')`,
     periodKind: "semaine", // filtre par numero_semaine (semaine ISO + année)
     dims: [
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },

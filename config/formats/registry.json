@@ -6,6 +6,7 @@
       13
     ],
     "variants": {
+      "M1B": "rhs_groupe_m1b.schema.json",
       "M1C": "rhs_groupe_m1c.schema.json",
       "M1D": "rhs_groupe_m1d.schema.json"
     }
