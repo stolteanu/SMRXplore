@@ -114,6 +114,8 @@
     align-items: center; justify-content: center;
   }
   .groupe-tag .remove:hover { color: var(--ink); }
+  .groupe-tag label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .groupe-tag input[type="checkbox"] { accent-color: var(--vid); }
 </style>
 </head>
 <body>
@@ -199,6 +201,7 @@
   function lsKey(finess) { return `pmsi_uf_groupes_${finess}`; }
   function lsKeyNoms(finess) { return `pmsi_uf_noms_${finess}`; }
   function lsKeySelection(finess) { return `pmsi_uf_selection_${finess}`; }
+  function lsKeyGroupesActifs(finess) { return `pmsi_uf_groupes_actifs_${finess}`; }
 
   function loadGroupes(finess) {
     try {
@@ -249,6 +252,23 @@
 
   function saveSelection(finess, selection) {
     localStorage.setItem(lsKeySelection(finess), JSON.stringify(selection));
+  }
+
+  // Groupes ACTIFS (2026-08-25, décision utilisateur) : un groupe défini
+  // est proposé comme une case à cocher à part (comme une UF), pour ne pas
+  // avoir à recocher ses UF individuelles ni à le redéfinir à chaque fois.
+  // Mais un groupe défini n'est PAS coché par défaut — il faut le cocher
+  // explicitement pour qu'il soit inclus dans la génération en cours.
+  function loadGroupesActifs(finess) {
+    try {
+      return JSON.parse(localStorage.getItem(lsKeyGroupesActifs(finess)) || "[]");
+    } catch {
+      return [];
+    }
+  }
+
+  function saveGroupesActifs(finess, noms) {
+    localStorage.setItem(lsKeyGroupesActifs(finess), JSON.stringify(noms));
   }
 
   function fetchUfList(finess) {
@@ -322,7 +342,10 @@
       const msgEl = newGroupe.querySelector(".new-groupe-msg");
       addBtn.addEventListener("click", () => {
         const nom = nameInput.value.trim();
-        const chosen = Array.from(chipGrid.querySelectorAll("input:checked")).map(i => i.value);
+        // :checked capte aussi les UF déjà groupées (disabled mais restées
+        // cochées visuellement) — exclues ici, sinon un nouveau groupe
+        // absorbe par erreur les UF d'un groupe précédent.
+        const chosen = Array.from(chipGrid.querySelectorAll("input:checked:not(:disabled)")).map(i => i.value);
         if (!nom || chosen.length === 0) {
           msgEl.style.display = "";
           msgEl.textContent = !nom
@@ -349,15 +372,24 @@
     const list = block.querySelector(".groupe-list");
     const groupes = loadGroupes(finess);
     const noms = Object.keys(groupes);
+    const actifs = new Set(loadGroupesActifs(finess));
     list.innerHTML = noms.length ? "" : "";
     noms.forEach(nom => {
       const tag = document.createElement("span");
       tag.className = "groupe-tag";
-      tag.innerHTML = `${nom} (${groupes[nom].join(", ")}) <span class="remove" title="Supprimer">✕</span>`;
+      tag.innerHTML = `<label><input type="checkbox" ${actifs.has(nom) ? "checked" : ""}> ${nom} (${groupes[nom].join(", ")})</label>
+        <span class="remove" title="Supprimer le groupe (pour le redéfinir si ses UF ont changé)">✕</span>`;
+      tag.querySelector('input[type="checkbox"]').addEventListener("change", (ev) => {
+        const current = new Set(loadGroupesActifs(finess));
+        if (ev.target.checked) current.add(nom); else current.delete(nom);
+        saveGroupesActifs(finess, Array.from(current));
+      });
       tag.querySelector(".remove").addEventListener("click", () => {
         const g = loadGroupes(finess);
         delete g[nom];
         saveGroupes(finess, g);
+        const act = loadGroupesActifs(finess).filter(n => n !== nom);
+        saveGroupesActifs(finess, act);
         block.remove();
         renderFinessGroupBlock(finess);
       });
@@ -441,8 +473,14 @@
     const selection_uf = {};
     if (axis === "uf") {
       finess.forEach(f => {
+        // Seuls les groupes ACTIFS (cochés) sont envoyés — un groupe défini
+        // mais non coché est juste une définition réutilisable, pas incluse
+        // par défaut dans la génération (décision utilisateur 2026-08-25).
         const g = loadGroupes(f);
-        if (Object.keys(g).length) groupes_uf[f] = g;
+        const actifs = loadGroupesActifs(f);
+        const gActifs = {};
+        actifs.forEach(nom => { if (g[nom]) gActifs[nom] = g[nom]; });
+        if (Object.keys(gActifs).length) groupes_uf[f] = gActifs;
         const sel = loadSelection(f);
         if (sel !== null) selection_uf[f] = sel;
       });
