@@ -45,6 +45,8 @@
   .btn-remove:hover { background: #fdecea; }
   .btn-add { margin-top: 4px; align-self: flex-start; background: #fff; border: 1px dashed var(--bleu); color: var(--bleu); border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.85em; }
   .btn-add:hover { background: var(--bleu-clair); }
+  .btn-toggle-all { margin-left: 8px; background: #fff; border: 1px solid var(--bleu); color: var(--bleu); border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.85em; font-weight: 400; }
+  .btn-toggle-all:hover { background: var(--bleu-clair); }
   #recapBox { font-size: 0.9em; }
   #recapBox dl { display: grid; grid-template-columns: 160px 1fr; gap: 4px 12px; margin: 0; }
   #recapBox dt { color: var(--gris); font-weight: 600; }
@@ -74,6 +76,9 @@
   table.pivot tr.totalrow td { background: #eaf2f8 !important; font-weight: 700; border-top: 2px solid var(--bleu); }
   table.pivot tr.subtotalrow td { background: #f2f6f4 !important; font-weight: 600; border-top: 1px solid var(--bleu-clair); font-style: italic; }
   table.pivot td.totalcol { background: #eaf2f8 !important; font-weight: 700; border-left: 2px solid var(--bleu); }
+  /* Colonne dédiée aux libellés des variables en colonnes (une par niveau d'imbrication), adjacente
+     aux valeurs plutôt que fusionnée dans la même case — cf. thead de renderMultiPivotTable. */
+  table.pivot th.collabel, table.pivot td.collabel { font-style: italic; color: var(--gris); font-weight: 400; white-space: normal; max-width: 90px; }
   .export-bar { display: flex; gap: 10px; margin-top: 14px; }
   .meta-line { font-size: 0.82em; color: var(--gris); margin-bottom: 10px; }
   .mode-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -163,7 +168,7 @@
     <h2>1. Filtres</h2>
     <div class="row">
       <div class="field">
-        <label>Établissement(s) — 5 maximum</label>
+        <label>Établissement(s) <button type="button" id="btnToggleFiness" class="btn-toggle-all">Tout sélectionner</button></label>
         <div class="checks" id="checksFiness"><span style="color:var(--gris)">Chargement…</span></div>
       </div>
       <div class="field">

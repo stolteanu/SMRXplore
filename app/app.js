@@ -202,8 +202,6 @@ function queryAll(sql, params) {
   return rows;
 }
 
-const MAX_FINESS = 5;
-
 function populateFiness() {
   const rows = queryAll("SELECT DISTINCT finess_epmsi FROM rhs_groupe ORDER BY 1");
   const box = document.getElementById("checksFiness");
@@ -220,19 +218,31 @@ function populateFiness() {
     box.appendChild(label);
   });
   box.addEventListener("change", onFinessCheckChange);
+  updateFinessToggleLabel();
+  const btnToggle = document.getElementById("btnToggleFiness");
+  if (btnToggle) btnToggle.addEventListener("click", toggleAllFiness);
 }
 
 function selectedFiness() {
   return [...document.querySelectorAll("#checksFiness input:checked")].map(c => c.value);
 }
 
+function updateFinessToggleLabel() {
+  const btnToggle = document.getElementById("btnToggleFiness");
+  if (!btnToggle) return;
+  const boxes = document.querySelectorAll("#checksFiness input.finess-check");
+  const allChecked = boxes.length > 0 && [...boxes].every(cb => cb.checked);
+  btnToggle.textContent = allChecked ? "Tout désélectionner" : "Tout sélectionner";
+}
+
+function toggleAllFiness() {
+  const boxes = document.querySelectorAll("#checksFiness input.finess-check");
+  const allChecked = boxes.length > 0 && [...boxes].every(cb => cb.checked);
+  boxes.forEach(cb => { cb.checked = !allChecked; });
+  onFinessChange();
+}
+
 function onFinessCheckChange(evt) {
-  const checked = document.querySelectorAll("#checksFiness input:checked");
-  if (checked.length > MAX_FINESS) {
-    evt.target.checked = false;
-    status(`Maximum ${MAX_FINESS} établissements en comparaison.`, true);
-    return;
-  }
   onFinessChange();
 }
 
@@ -254,6 +264,7 @@ function populateMoisSelect() {
 }
 
 function onFinessChange() {
+  updateFinessToggleLabel();
   const finessList = selectedFiness();
   if (!finessList.length) {
     document.getElementById("checksAnnees").innerHTML = "";
@@ -1154,6 +1165,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
 
     for (let level = 0; level < nDimsCol; level++) {
       html += "<tr>";
+      html += `<th class="collabel">${thLabelHtml(colLabels[level])}</th>`;
       if (level === 0) rowLabels.forEach(lbl => { html += `<th rowspan="${headerRows}">${thLabelHtml(lbl)}</th>`; });
       pivot.colKeys.forEach((ck, i) => {
         if (colShow[i][level]) html += `<th colspan="${colSpan[i][level] * n}">${thLabelHtml(colsParts[i][level])}</th>`;
@@ -1162,6 +1174,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       html += "</tr>";
     }
     html += "<tr>";
+    html += `<th class="collabel"></th>`;
     for (const ck of pivot.colKeys) for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
     for (const e of exprsCfg) html += `<th class="exprhead totalcol">${thLabelHtml(exprLabel(e))}</th>`;
     html += "</tr></thead><tbody>";
@@ -1177,6 +1190,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
 
   pivot.rowKeys.forEach((rk, i) => {
     html += "<tr>";
+    if (nDimsCol > 0) html += `<td class="collabel"></td>`;
     for (let level = 0; level < nDims; level++) {
       if (show[i][level]) {
         const cls = level === 0 ? "rowhead" : "rowhead rowhead-nested";
@@ -1201,7 +1215,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       const groupKey = rowsParts[i][0];
       const isLastOfGroup = i === pivot.rowKeys.length - 1 || rowsParts[i + 1][0] !== groupKey;
       if (isLastOfGroup) {
-        html += `<tr class="subtotalrow"><td class="rowhead" colspan="${nDims}">Sous-total — ${esc(groupKey)}</td>`;
+        html += `<tr class="subtotalrow">${nDimsCol > 0 ? '<td class="collabel"></td>' : ''}<td class="rowhead" colspan="${nDims}">Sous-total — ${esc(groupKey)}</td>`;
         for (const ck of pivot.colKeys) {
           for (const e of exprsCfg) {
             const pr = pivot.perExpr[e.uid];
@@ -1219,7 +1233,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
     }
   });
 
-  html += `<tr class="totalrow"><td class="rowhead" colspan="${nDims}">Total</td>`;
+  html += `<tr class="totalrow">${nDimsCol > 0 ? '<td class="collabel"></td>' : ''}<td class="rowhead" colspan="${nDims}">Total</td>`;
   for (const ck of pivot.colKeys) {
     for (const e of exprsCfg) {
       const pr = pivot.perExpr[e.uid];
@@ -1366,13 +1380,20 @@ function fillFilterDatalist(dlId, srcKey, entry) {
   try {
     const { sql, params } = buildQuery(srcKey, finessList, periods);
     const cols = entry.libCol ? `${entry.col} AS v, ${entry.libCol} AS l` : `${entry.col} AS v`;
-    const q = `SELECT DISTINCT ${cols} FROM (${sql}) WHERE ${entry.col} IS NOT NULL AND ${entry.col} <> ''
+    const q = `SELECT DISTINCT ${cols} FROM (${sql})
                ORDER BY ${entry.col} LIMIT ${FILTER_DATALIST_LIMIT}`;
     const rows = queryAll(q, params);
+    let videAjoute = false;
     rows.forEach(r => {
       const o = document.createElement("option");
-      o.value = String(r.v);
-      if (entry.libCol && r.l) o.label = `${r.v} — ${r.l}`;
+      if (r.v === null || r.v === undefined || r.v === "") {
+        if (videAjoute) return;
+        videAjoute = true;
+        o.value = "(vide)";
+      } else {
+        o.value = String(r.v);
+        if (entry.libCol && r.l) o.label = `${r.v} — ${r.l}`;
+      }
       dl.appendChild(o);
     });
   } catch (e) {
@@ -1477,13 +1498,19 @@ function fillGlobalDimValues(selectEl, srcKey, entry, gf) {
   try {
     const { sql, params } = buildQuery(srcKey, finessList, periods);
     const cols = entry.libCol ? `${entry.col} AS v, ${entry.libCol} AS l` : `${entry.col} AS v`;
-    const q = `SELECT DISTINCT ${cols} FROM (${sql}) WHERE ${entry.col} IS NOT NULL AND ${entry.col} <> ''
+    const q = `SELECT DISTINCT ${cols} FROM (${sql})
                ORDER BY ${entry.col} LIMIT ${GLOBAL_FILTER_VALUES_LIMIT}`;
     const rows = queryAll(q, params);
+    let videAjoute = false;
     rows.forEach(r => {
+      const value = normVal(r.v);
+      if (value === "(vide)") {
+        if (videAjoute) return;
+        videAjoute = true;
+      }
       const o = document.createElement("option");
-      o.value = normVal(r.v);
-      o.textContent = entry.libCol && r.l ? `${r.v} — ${r.l}` : String(r.v);
+      o.value = value;
+      o.textContent = entry.libCol && r.l ? `${r.v} — ${r.l}` : (value === "(vide)" ? "(vide)" : String(r.v));
       if (gf.values && gf.values.includes(o.value)) o.selected = true;
       selectEl.appendChild(o);
     });

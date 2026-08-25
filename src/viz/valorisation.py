@@ -319,6 +319,20 @@ def _rhs_day_axis(
     return out
 
 
+def _axis_value_matches(value: str | None, valeur) -> bool:
+    """Compare une valeur d'axe (UF ou type d'hospitalisation) à la valeur du
+    filtre — qui peut être soit une valeur unique, soit une liste/tuple/set de
+    codes UF (regroupement en "service" défini par l'utilisateur, cf.
+    _period_filter dans tableau_de_bord.py, même sémantique IN (...)). Sans ce
+    cas de liste, un groupe ne matchait jamais aucun jour (comparaison
+    str == list toujours fausse) et la valorisation par groupe d'UF ressortait
+    à zéro — centralisé ici pour que tous les points de calcul (jour par jour
+    et montant officiel par séjour) traitent les groupes de la même façon."""
+    if isinstance(valeur, (list, tuple, set)):
+        return value in valeur
+    return value == valeur
+
+
 def _matches_axis(
     day_axis: dict[tuple[str, int, datetime.date], tuple[str | None, str | None]],
     axis_filter: tuple[str, str] | None,
@@ -334,7 +348,7 @@ def _matches_axis(
     uf, type_hosp = got
     champ, valeur = axis_filter
     value = uf if champ == "numero_unite_medicale" else type_hosp
-    return value == valeur
+    return _axis_value_matches(value, valeur)
 
 
 def compute_valeur_journaliere(
@@ -647,10 +661,10 @@ def montant_br_tot_campagne_comparable(
                 # de journée à répartir en % — tout le montant va à sa
                 # dernière UF connue (voir _dernier_uf_par_sejour), sinon il
                 # disparaîtrait de la somme sur toutes les UF.
-                if dernier_uf.get((finess, numadmin)) == valeur:
+                if _axis_value_matches(dernier_uf.get((finess, numadmin)), valeur):
                     total += montant
                 continue
-            jours_uf = sum(1 for j in jours if day_axis.get((finess, numadmin, j), (None, None))[0] == valeur)
+            jours_uf = sum(1 for j in jours if _axis_value_matches(day_axis.get((finess, numadmin, j), (None, None))[0], valeur))
             total += montant * (jours_uf / len(jours))
         else:
             total += montant
