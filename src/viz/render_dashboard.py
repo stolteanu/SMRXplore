@@ -1232,6 +1232,7 @@ def generate_axis_reports(
     axis: str,
     mois_fin: int | None = None,
     groupes: dict[str, list[str]] | None = None,
+    selection: list[str] | None = None,
 ) -> list[dict]:
     """TDB secondaire (2026-08-04, décision utilisateur) : PAS une section
     résumé en plus du TDB principal, mais un TDB COMPLET (sections 1-9,
@@ -1245,9 +1246,20 @@ def generate_axis_reports(
     persisté en localStorage — jamais codé en dur ici, la notion de
     "service" n'existe pas dans le PMSI. Pour chaque groupe, un seul TDB
     complet est généré (axis_filter sur la liste d'UF, IN (...) — voir
-    tableau_de_bord._period_filter) avec le nom du groupe comme libellé. Les
-    UF non affectées à un groupe continuent de générer chacune leur propre
-    TDB individuel, comme avant.
+    tableau_de_bord._period_filter) avec le nom du groupe comme libellé.
+
+    `selection` (optionnel, uniquement pour axis == "uf", 2026-08-25) :
+    liste explicite de codes UF (non regroupées) pour lesquelles générer un
+    TDB individuel — les cases à cocher de tdb-choix.html servent aussi de
+    FILTRE, pas seulement à composer un groupe.
+
+    Dès qu'au moins un groupe est défini OU qu'une sélection explicite est
+    fournie (même vide) pour cet établissement (2026-08-25, décision
+    utilisateur) : SEULS les groupes et les UF listées dans `selection`
+    génèrent un TDB — toute UF ni groupée ni sélectionnée n'en génère plus
+    du tout. Si ni groupe ni sélection ne sont fournis (paramètres absents/
+    None), comportement historique inchangé : chaque UF génère son propre
+    TDB individuel.
 
     Limites assumées (voir docstrings de tableau_de_bord.section_patients et
     section_valorisation) : la section Patients restreint aux séjours ayant
@@ -1264,10 +1276,15 @@ def generate_axis_reports(
         raise ValueError(f"axe inconnu : {axis!r} (attendu : {list(AXIS_CHAMP)})")
     champ = AXIS_CHAMP[axis]
 
+    # Connexion partagée sur toute la boucle par valeur d'axe ci-dessous
+    # (2026-08-25, correctif de performance) : plusieurs helpers de
+    # valorisation.py mettent en cache leur résultat par IDENTITÉ de
+    # connexion (voir _rhs_presence_days_by_sejour) — une connexion par
+    # appel à build() (comportement précédent) invalidait ce cache à chaque
+    # UF et recalculait tout depuis zéro pour chacune.
     conn = connect()
     periods = compute_reporting_periods(conn, finess, years, mois_fin)
     values = valeurs_axe(conn, periods, finess, champ)
-    conn.close()
 
     from src.viz.tableau_de_bord import TYPE_HOSPITALISATION_LABELS
 
@@ -1281,6 +1298,7 @@ def generate_axis_reports(
 
     entries: list[tuple[str, str, str | list[str]]] = []  # (slug_base, libelle, valeur_filtre)
     groupees: set[str] = set()
+    a_un_filtre = axis == "uf" and (bool(groupes) or selection is not None)
     if axis == "uf" and groupes:
         for nom_groupe, ufs in groupes.items():
             ufs_valides = [u for u in ufs if u in values]
@@ -1288,15 +1306,23 @@ def generate_axis_reports(
                 continue
             groupees.update(ufs_valides)
             entries.append((nom_groupe, nom_groupe, ufs_valides))
-    for value in values:
-        if value in groupees:
-            continue
-        label = labels.get(value, value)
-        entries.append((value, label, value))
+    if a_un_filtre:
+        selection_set = set(selection or [])
+        for value in values:
+            if value in groupees or value not in selection_set:
+                continue
+            label = labels.get(value, value)
+            entries.append((value, label, value))
+    else:
+        for value in values:
+            if value in groupees:
+                continue
+            label = labels.get(value, value)
+            entries.append((value, label, value))
 
     reports = []
     for slug_base, label, valeur_filtre in entries:
-        data = build(finess, years, axis_filter=(champ, valeur_filtre), mois_fin=mois_fin)
+        data = build(finess, years, axis_filter=(champ, valeur_filtre), mois_fin=mois_fin, conn=conn)
         if not data["years"]:
             continue
         html = render(data, axis_label=f"{AXIS_TITLE[axis]} {label}")
@@ -1304,6 +1330,7 @@ def generate_axis_reports(
         path = GENERATED_DIR / f"tableau_de_bord_{finess}_{suffix}_{axis}-{slug}.html"
         path.write_text(html, encoding="utf-8")
         reports.append({"value": slug_base, "libelle": label, "url": f"/generated/{path.name}"})
+    conn.close()
     return reports
 
 

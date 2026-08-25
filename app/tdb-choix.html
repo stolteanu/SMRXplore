@@ -68,7 +68,7 @@
     font-size: 13px; padding: 10px 14px; border-radius: 8px; margin-top: 14px;
   }
   .msg.error { background: color-mix(in srgb, var(--warn) 16%, var(--surface));
-    border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border)); color: var(--warn-ink); }
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border)); color: var(--ink); }
   #results { margin-top: 20px; }
   .report {
     border-bottom: 1px solid var(--grid); padding: 12px 0; font-size: 13.5px;
@@ -96,6 +96,11 @@
     border-radius: 8px; padding: 7px 12px; font-size: 12.5px; cursor: pointer;
   }
   .new-groupe button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .new-groupe-msg {
+    font-size: 12.5px; color: var(--ink); background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+    border-radius: 8px; padding: 5px 10px;
+  }
   .groupe-list { display: flex; flex-wrap: wrap; gap: 8px; }
   .groupe-tag {
     display: inline-flex; align-items: center; gap: 8px;
@@ -137,8 +142,8 @@
   </div>
 
   <div class="card" id="groupes-uf-card" style="display:none;">
-    <h2>Regroupement d'UF en services (optionnel)</h2>
-    <p class="hint" style="margin-top:0;">Les services n'existent pas dans le PMSI : définissez ici vos propres regroupements d'UF. Cochez des UF, donnez un nom, ajoutez le groupe. Un TDB complet sera généré par groupe (les UF non regroupées restent générées individuellement). Ce paramétrage est mémorisé sur cet ordinateur, par établissement.</p>
+    <h2>Regroupement et filtre par UF (optionnel)</h2>
+    <p class="hint" style="margin-top:0;">Les services n'existent pas dans le PMSI : définissez ici vos propres regroupements d'UF. Les cases à cocher servent aussi de filtre : cochez uniquement les UF (ou groupes) que vous voulez voir générées, décochez celles à exclure. Pour créer un groupe, cochez ses UF, donnez un nom, ajoutez le groupe (un seul TDB sera généré pour tout le groupe). Dès que vous touchez une case ou créez un groupe, seules les UF/groupes cochés génèrent un TDB — les UF jamais touchées n'en génèrent plus. Tant que rien n'est touché, comportement par défaut : chaque UF génère son propre TDB individuel. Ce paramétrage est mémorisé sur cet ordinateur, par établissement.</p>
     <div id="groupes-uf-body"><span class="hint">Sélectionnez au moins un établissement.</span></div>
   </div>
 
@@ -192,6 +197,8 @@
   const ufListCache = {}; // finess -> Promise<string[]>
 
   function lsKey(finess) { return `pmsi_uf_groupes_${finess}`; }
+  function lsKeyNoms(finess) { return `pmsi_uf_noms_${finess}`; }
+  function lsKeySelection(finess) { return `pmsi_uf_selection_${finess}`; }
 
   function loadGroupes(finess) {
     try {
@@ -203,6 +210,45 @@
 
   function saveGroupes(finess, groupes) {
     localStorage.setItem(lsKey(finess), JSON.stringify(groupes));
+  }
+
+  // Historique des noms de groupe déjà utilisés pour cet établissement,
+  // pour les reproposer même si le groupe correspondant a été supprimé
+  // depuis (ex. resaisi avec d'autres UF).
+  function loadNomsHistory(finess) {
+    try {
+      return JSON.parse(localStorage.getItem(lsKeyNoms(finess)) || "[]");
+    } catch {
+      return [];
+    }
+  }
+
+  function rememberNom(finess, nom) {
+    const noms = loadNomsHistory(finess);
+    if (!noms.includes(nom)) {
+      noms.push(nom);
+      localStorage.setItem(lsKeyNoms(finess), JSON.stringify(noms));
+    }
+  }
+
+  // Sélection individuelle d'UF (2026-08-25, décision utilisateur) : les
+  // cases à cocher servent aussi de FILTRE, pas seulement à composer un
+  // groupe. Une UF cochée sans être nommée/regroupée reste incluse en
+  // individuel ; une UF non cochée et non regroupée est exclue. `null`
+  // (clé absente) = jamais touché => pas de filtre (comportement historique,
+  // toutes les UF). Une fois la clé écrite (même vide), le filtre est actif.
+  function loadSelection(finess) {
+    const raw = localStorage.getItem(lsKeySelection(finess));
+    if (raw === null) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  function saveSelection(finess, selection) {
+    localStorage.setItem(lsKeySelection(finess), JSON.stringify(selection));
   }
 
   function fetchUfList(finess) {
@@ -240,25 +286,57 @@
     fetchUfList(finess).then(ufs => {
       const groupes = loadGroupes(finess);
       const grouped = new Set(Object.values(groupes).flat());
+      const selection = loadSelection(finess); // null = pas de filtre (toutes cochées par défaut)
       const chipGrid = block.querySelector(".uf-chip-grid");
       chipGrid.innerHTML = ufs.length
-        ? ufs.map(uf => `<label class="chip small${grouped.has(uf) ? " grouped" : ""}">
-            <input type="checkbox" value="${uf}" ${grouped.has(uf) ? "disabled" : ""}> ${uf}</label>`).join("")
+        ? ufs.map(uf => {
+            const isGrouped = grouped.has(uf);
+            const checked = isGrouped || (selection !== null && selection.includes(uf));
+            return `<label class="chip small${isGrouped ? " grouped" : ""}">
+              <input type="checkbox" value="${uf}" ${checked ? "checked" : ""} ${isGrouped ? "disabled" : ""}> ${uf}</label>`;
+          }).join("")
         : '<span class="hint">Aucune UF trouvée.</span>';
 
+      // Cocher/décocher une UF (non regroupée) active le mode filtre : dès
+      // qu'une case est touchée, seules les UF cochées (individuellement ou
+      // via un groupe) génèrent un TDB — cf. loadSelection().
+      chipGrid.addEventListener("change", (ev) => {
+        const input = ev.target;
+        if (input.tagName !== "INPUT" || input.disabled) return;
+        const current = loadSelection(finess) || [];
+        const setSel = new Set(current.filter(u => !grouped.has(u)));
+        if (input.checked) setSel.add(input.value); else setSel.delete(input.value);
+        saveSelection(finess, Array.from(setSel));
+      });
+
+      const datalistId = `noms-${finess}`;
+      const noms = loadNomsHistory(finess);
       const newGroupe = block.querySelector(".new-groupe");
       newGroupe.innerHTML = `
-        <input type="text" placeholder="Nom du service (ex. Cardiologie)">
-        <button type="button">+ Créer le groupe</button>`;
+        <input type="text" placeholder="Nom du service (ex. Cardiologie)" list="${datalistId}">
+        <datalist id="${datalistId}">${noms.map(n => `<option value="${n}">`).join("")}</datalist>
+        <button type="button">+ Créer le groupe</button>
+        <span class="new-groupe-msg" style="display:none;"></span>`;
       const nameInput = newGroupe.querySelector("input");
       const addBtn = newGroupe.querySelector("button");
+      const msgEl = newGroupe.querySelector(".new-groupe-msg");
       addBtn.addEventListener("click", () => {
         const nom = nameInput.value.trim();
         const chosen = Array.from(chipGrid.querySelectorAll("input:checked")).map(i => i.value);
-        if (!nom || chosen.length === 0) return;
+        if (!nom || chosen.length === 0) {
+          msgEl.style.display = "";
+          msgEl.textContent = !nom
+            ? "Donnez un nom au groupe avant de le créer."
+            : "Cochez au moins une UF avant de créer le groupe.";
+          if (!nom) nameInput.focus();
+          return;
+        }
         const g = loadGroupes(finess);
         g[nom] = chosen;
         saveGroupes(finess, g);
+        rememberNom(finess, nom);
+        const sel = loadSelection(finess);
+        if (sel !== null) saveSelection(finess, sel.filter(u => !chosen.includes(u)));
         block.remove();
         renderFinessGroupBlock(finess);
       });
@@ -360,10 +438,13 @@
     const moisFinRaw = document.getElementById("mois-fin").value;
     const mois_fin = moisFinRaw ? parseInt(moisFinRaw, 10) : null;
     const groupes_uf = {};
+    const selection_uf = {};
     if (axis === "uf") {
       finess.forEach(f => {
         const g = loadGroupes(f);
         if (Object.keys(g).length) groupes_uf[f] = g;
+        const sel = loadSelection(f);
+        if (sel !== null) selection_uf[f] = sel;
       });
     }
 
@@ -374,7 +455,7 @@
     fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ years, finess, axis, mois_fin, groupes_uf })
+      body: JSON.stringify({ years, finess, axis, mois_fin, groupes_uf, selection_uf })
     })
       .then(r => r.json().then(body => ({ ok: r.ok, body })))
       .then(({ ok, body }) => {

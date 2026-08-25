@@ -1340,6 +1340,7 @@ def build(
     years: list[str] | None = None,
     axis_filter: tuple[str, str] | None = None,
     mois_fin: int | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> dict:
     """`years` (optionnel, ex. ["2025", "2026"], max 3) restreint le TDB aux
     années choisies dans la page "TDB choix" — voir compute_reporting_periods.
@@ -1354,8 +1355,19 @@ def build(
     plus du TDB principal.
 
     `mois_fin` (optionnel, 1-12, 2026-08-05) : voir compute_reporting_periods —
-    impose le mois de fin de période (toujours cumulatif depuis janvier)."""
-    conn = connect()
+    impose le mois de fin de période (toujours cumulatif depuis janvier).
+
+    `conn` (optionnel, 2026-08-25, correctif de performance) : connexion
+    déjà ouverte à réutiliser au lieu d'en ouvrir/fermer une nouvelle — ne
+    PAS la fermer ici, l'appelant en reste propriétaire. Permet à
+    generate_axis_reports() de partager une connexion sur toute la boucle
+    par UF, pour que le cache de valorisation.py (voir
+    _rhs_presence_days_by_sejour) profite à toutes les valeurs d'axe au lieu
+    de tout recalculer à chaque UF. Sans argument, comportement inchangé
+    (connexion locale ouverte puis fermée)."""
+    conn_owned = conn is None
+    if conn is None:
+        conn = connect()
     periods = compute_reporting_periods(conn, finess, years, mois_fin)
     years = [p["year"] for p in periods]
     sejours = section_sejours(conn, periods, finess, axis_filter)
@@ -1378,7 +1390,8 @@ def build(
         "erreurs_groupage": section_erreurs_groupage(conn, periods, finess, axis_filter),
         "incoherences_vidhosp_rhs": section_incoherences_vidhosp_rhs(conn, finess),
     }
-    conn.close()
+    if conn_owned:
+        conn.close()
     return data
 
 

@@ -69,6 +69,7 @@ from __future__ import annotations
 import datetime
 import sqlite3
 from collections import defaultdict
+from functools import lru_cache
 
 
 def _norm_numadmin(raw) -> str:
@@ -83,11 +84,24 @@ def _norm_numadmin(raw) -> str:
     return s.lstrip("0") or "0"
 
 
+@lru_cache(maxsize=64)
 def _rhs_presence_days_by_sejour(
     conn: sqlite3.Connection, finess: str | None = None
 ) -> dict[tuple[str, int], list[datetime.date]]:
     """Pour chaque séjour, TOUS ses jours calendaires de présence RHS,
-    toutes années confondues (pas de partition par campagne ici)."""
+    toutes années confondues (pas de partition par campagne ici).
+
+    Mise en cache (2026-08-25, correctif de performance) : résultat pur
+    fonction de (conn, finess), identique quel que soit l'axis_filter — un
+    TDB secondaire "par UF" appelle cette fonction une fois par valeur d'UF
+    (voir generate_axis_reports), qui rescannait sinon `rhs_groupe` en
+    entier à chaque fois (jusqu'à ~900k appels à _norm_numadmin observés au
+    profilage pour un seul établissement). La clé de cache est l'IDENTITÉ de
+    l'objet connexion (sqlite3.Connection est hashable par défaut) : une
+    nouvelle connexion (nouvel appel à connect()) invalide automatiquement
+    le cache, donc aucun risque de données périmées après un rechargement.
+    Accès uniquement en lecture par tous les appelants (jamais muté) —
+    sûr à partager entre appels."""
     clause = "WHERE numero_semaine IS NOT NULL"
     params: list = []
     if finess is not None:
@@ -116,8 +130,11 @@ def _rhs_presence_days_by_sejour(
     return out
 
 
+@lru_cache(maxsize=64)
 def _dernier_uf_par_sejour(conn: sqlite3.Connection, finess: str | None = None) -> dict[tuple[str, int], str]:
-    """Dernière UF connue (numero_unite_medicale de la dernière semaine RHS)
+    """Mise en cache : voir _rhs_presence_days_by_sejour.
+
+    Dernière UF connue (numero_unite_medicale de la dernière semaine RHS)
     par séjour — filet de sécurité pour la ventilation UF de montant_br_tot
     (2026-08-05) quand un séjour n'a AUCUNE journée de présence RHS (cas
     "entrée=sortie le même jour calendaire", cf. docstring module) : pas de
@@ -145,14 +162,17 @@ def _dernier_uf_par_sejour(conn: sqlite3.Connection, finess: str | None = None) 
     return {k: v[1] for k, v in best.items()}
 
 
+@lru_cache(maxsize=64)
 def _rhs_presence_days_by_campagne(
     conn: sqlite3.Connection, finess: str | None = None
 ) -> dict[tuple[str, int, int], list[datetime.date]]:
     """Pour chaque (séjour, année de campagne), la liste des jours calendaires
     marqués présents dans le RHS groupé, rattachés à l'année civile du
     dimanche de leur semaine (règle notice p.34-35 — valable pour le cas
-    incrémental >90j, cf. docstring module, cas 1)."""
-    by_sejour = _rhs_presence_days_by_sejour(conn, finess)
+    incrémental >90j, cf. docstring module, cas 1).
+
+    Mise en cache : voir _rhs_presence_days_by_sejour (même justification,
+    même garantie de fraîcheur via l'identité de connexion)."""
     # Recompute per-day with the campagne (dimanche-year) key instead of
     # collapsing to the séjour alone.
     clause = "WHERE numero_semaine IS NOT NULL"
@@ -188,6 +208,7 @@ def _rhs_presence_days_by_campagne(
     return out
 
 
+@lru_cache(maxsize=64)
 def _rhs_presence_days_by_week(
     conn: sqlite3.Connection, finess: str | None = None
 ) -> dict[tuple[str, int, int, int], list[datetime.date]]:
@@ -195,7 +216,9 @@ def _rhs_presence_days_by_week(
     présence RHS — clé plus fine que _rhs_presence_days_by_campagne, utilisée
     pour attribuer un montant HTP (une ligne valorisation_sejour par semaine
     RHA, cf. docstring module cas 4) à SA semaine précise plutôt qu'à
-    l'ensemble de l'année de campagne."""
+    l'ensemble de l'année de campagne.
+
+    Mise en cache : voir _rhs_presence_days_by_sejour."""
     clause = "WHERE numero_semaine IS NOT NULL"
     params: list = []
     if finess is not None:
@@ -224,10 +247,13 @@ def _rhs_presence_days_by_week(
     return out
 
 
+@lru_cache(maxsize=64)
 def _date_entree_par_sejour(
     conn: sqlite3.Connection, finess: str | None = None
 ) -> dict[tuple[str, int], datetime.date]:
-    """date_entree (VID-HOSP) par séjour — utilisée en dernier recours pour
+    """Mise en cache : voir _rhs_presence_days_by_sejour.
+
+    date_entree (VID-HOSP) par séjour — utilisée en dernier recours pour
     les séjours entrée=sortie le même jour calendaire (0 journée de présence
     RHS, cf. règle "présent à minuit" du Guide Méthodologique), qui sont
     quand même facturés 1 jour (vérifié 2026-07-31 : montant_br_tot de ces
@@ -281,10 +307,13 @@ le reste du module (day_axis, montant_br_tot_campagne_comparable, TDB
 secondaire par type d'hospitalisation) ne voie plus jamais le code "3" isolé."""
 
 
+@lru_cache(maxsize=64)
 def _rhs_day_axis(
     conn: sqlite3.Connection, finess: str | None = None
 ) -> dict[tuple[str, int, datetime.date], tuple[str | None, str | None]]:
-    """Pour chaque jour de présence RHS, l'UF (`numero_unite_medicale`) et le
+    """Mise en cache : voir _rhs_presence_days_by_sejour.
+
+    Pour chaque jour de présence RHS, l'UF (`numero_unite_medicale`) et le
     type d'hospitalisation de la ligne RHS qui l'a produit — utilisé pour
     ventiler compute_valeur_journaliere par axe (TDB secondaire "par UF" /
     "par type d'hospitalisation", 2026-08-04) SANS changer le dénominateur

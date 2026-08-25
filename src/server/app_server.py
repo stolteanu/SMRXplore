@@ -62,6 +62,7 @@ def _generate(
     axis: str,
     mois_fin: int | None = None,
     groupes_uf: dict[str, dict[str, list[str]]] | None = None,
+    selection_uf: dict[str, list[str]] | None = None,
 ) -> list[dict]:
     from src.viz.render_dashboard import generate_axis_reports, render, render_annexe, render_journal
     from src.viz.tableau_de_bord import build
@@ -98,9 +99,12 @@ def _generate(
             # Un TDB complet PAR valeur d'axe (pas une section résumé en
             # plus du TDB principal, cf. generate_axis_reports). Pour "uf",
             # `groupes_uf[finess]` (optionnel) regroupe plusieurs UF en
-            # "service" défini par l'utilisateur — voir generate_axis_reports.
+            # "service" défini par l'utilisateur, et `selection_uf[finess]`
+            # (optionnel, 2026-08-25) restreint les UF individuelles
+            # générées — voir generate_axis_reports.
             groupes = (groupes_uf or {}).get(finess) if axis == "uf" else None
-            report["secondaires"] = generate_axis_reports(finess, years or None, axis, mois_fin, groupes)
+            selection = (selection_uf or {}).get(finess) if axis == "uf" else None
+            report["secondaires"] = generate_axis_reports(finess, years or None, axis, mois_fin, groupes, selection)
 
         reports.append(report)
     return reports
@@ -349,6 +353,7 @@ class Handler(BaseHTTPRequestHandler):
             axis = payload.get("axis") or "none"
             mois_fin = payload.get("mois_fin")
             groupes_uf = payload.get("groupes_uf") or {}
+            selection_uf = payload.get("selection_uf") or {}
 
             if not finess_list:
                 raise ValueError("Choisissez au moins un établissement.")
@@ -371,8 +376,13 @@ class Handler(BaseHTTPRequestHandler):
                 for nom, ufs in groupes.items():
                     if not isinstance(nom, str) or not isinstance(ufs, list) or not all(isinstance(u, str) for u in ufs):
                         raise ValueError("groupes_uf invalide.")
+            if not isinstance(selection_uf, dict):
+                raise ValueError("selection_uf invalide.")
+            for f, ufs in selection_uf.items():
+                if f not in finess_list or not isinstance(ufs, list) or not all(isinstance(u, str) for u in ufs):
+                    raise ValueError("selection_uf invalide.")
 
-            reports = _generate(finess_list, years, axis, mois_fin, groupes_uf)
+            reports = _generate(finess_list, years, axis, mois_fin, groupes_uf, selection_uf)
             self._send_json({"reports": reports})
         except Exception as exc:
             self._send_json({"error": str(exc)}, status=400)
