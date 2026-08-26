@@ -4374,20 +4374,29 @@ function buildTableExportHtml() {
   // width:auto (et non 100%) pour que le tableau se redimensionne à son contenu plutôt que
   // d'étirer les colonnes sur toute la largeur de page — même comportement que l'affichage dans
   // l'appli (table.pivot { width: auto }) et que l'export Word.
+  // Mêmes règles que table.pivot dans l'explorateur (cf. explorateur.html) — la page exportée doit
+  // reproduire fidèlement la mise en page à l'écran (en-têtes centrés, rowhead à gauche, lignes/
+  // colonnes de sous-total et de total), sinon le tableau croisé (rowspan/colspan multi-niveaux)
+  // rend n'importe comment avec un CSS générique qui ignore ces classes.
   return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>${esc(lastResult.titleText)}</title>
 <style>
 body{font-family:Arial,sans-serif;color:#212f3c;margin:24px;}
 h1{color:#1a5276;font-size:1.2em;}
 p{color:#7f8c8d;font-size:0.9em;}
-table{border-collapse:collapse;width:auto;font-size:0.9em;}
-th,td{border:1px solid #d5dbdb;padding:6px 10px;text-align:right;}
-td:first-child,th:first-child{text-align:left;}
-th{background:#eaf2f8;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-tr:last-child td{background:#eaf2f8;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+table.pivot{border-collapse:collapse;width:auto;font-size:0.88em;}
+table.pivot th,table.pivot td{border:1px solid #d5dbdb;padding:6px 10px;text-align:right;white-space:nowrap;}
+table.pivot th{background:#eaf2f8;text-align:center;white-space:normal;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+table.pivot th .th-label{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;text-overflow:ellipsis;white-space:normal;word-break:break-word;max-width:150px;margin:0 auto;}
+table.pivot td.rowhead{text-align:left;font-weight:600;background:#fafcfd;}
+table.pivot tr:nth-child(even) td:not(.rowhead){background:#fbfcfc;}
+table.pivot tr.totalrow td{background:#eaf2f8!important;font-weight:700;border-top:2px solid #1a5276;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+table.pivot tr.subtotalrow td{background:#f2f6f4!important;font-weight:600;border-top:1px solid #eaf2f8;font-style:italic;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+table.pivot td.totalcol{background:#eaf2f8!important;font-weight:700;border-left:2px solid #1a5276;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+table.pivot .colsubtotal{background:#f2f6f4!important;font-weight:600;font-style:italic;border-left:1px solid #eaf2f8;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 body.gris{filter:grayscale(100%);}
 .toolbar{margin-bottom:18px;padding:10px 14px;background:#f4f6f7;border:1px solid #d5dbdb;border-radius:6px;display:flex;gap:16px;align-items:center;font-size:0.85em;}
 .toolbar button{background:#1a5276;color:#fff;border:none;border-radius:4px;padding:7px 14px;cursor:pointer;font-weight:600;}
-@media print{ .toolbar{display:none;} body{margin:0;} table{font-size:${orient === "landscape" ? 10 : 11}px;} }
+@media print{ .toolbar{display:none;} body{margin:0;} table.pivot{font-size:${orient === "landscape" ? 10 : 11}px;} }
 </style>
 <style id="pageStyle">@page{size:A4 ${orient};margin:${orient === "landscape" ? "10mm" : "12mm"};}</style>
 </head><body>
