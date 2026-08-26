@@ -76,9 +76,9 @@
   table.pivot tr.totalrow td { background: #eaf2f8 !important; font-weight: 700; border-top: 2px solid var(--bleu); }
   table.pivot tr.subtotalrow td { background: #f2f6f4 !important; font-weight: 600; border-top: 1px solid var(--bleu-clair); font-style: italic; }
   table.pivot td.totalcol { background: #eaf2f8 !important; font-weight: 700; border-left: 2px solid var(--bleu); }
-  /* Colonne dédiée aux libellés des variables en colonnes (une par niveau d'imbrication), adjacente
-     aux valeurs plutôt que fusionnée dans la même case — cf. thead de renderMultiPivotTable. */
-  table.pivot th.collabel, table.pivot td.collabel { font-style: italic; color: var(--gris); font-weight: 400; white-space: normal; max-width: 90px; }
+  /* Nom de la ou des variable(s) en colonnes : ligne d'en-tête dédiée au-dessus des catégories,
+     pas une colonne à part — cf. thead de renderMultiPivotTable. */
+  table.pivot th.collabel-row { font-style: italic; color: var(--gris); font-weight: 400; background: #fff; border-bottom: none; }
   .export-bar { display: flex; gap: 10px; margin-top: 14px; }
   .meta-line { font-size: 0.82em; color: var(--gris); margin-bottom: 10px; }
   .mode-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
