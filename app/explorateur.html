@@ -59,7 +59,14 @@
      s'élargir un peu au lieu que toutes se partagent la largeur à égalité. */
   table.pivot { border-collapse: collapse; width: auto; font-size: 0.88em; }
   table.pivot th, table.pivot td { border: 1px solid var(--bordure); padding: 6px 10px; text-align: right; white-space: nowrap; }
-  table.pivot th { background: var(--bleu-clair); position: sticky; top: 0; text-align: center; white-space: normal; }
+  /* Le collant est posé sur <thead> en un bloc, pas sur chaque <th> individuellement : avec
+     plusieurs lignes d'en-tête (sous-totaux colonne, dimensions imbriquées), poser top:0 sur
+     chaque <th> les faisait tous se figer à la même position au défilement, se superposant les
+     uns aux autres et cachant la 1ère ligne de données (constaté par l'utilisateur, capture à
+     l'appui). Un seul point d'ancrage pour tout le bloc d'en-tête règle ça : les lignes gardent
+     leur empilement naturel, seul l'ensemble se fige en haut du cadre défilant. */
+  table.pivot thead { position: sticky; top: 0; z-index: 3; }
+  table.pivot th { background: var(--bleu-clair); text-align: center; white-space: normal; }
   /* Libellé d'en-tête : retour à la ligne dans la largeur calibrée par le contenu (pas de troncature
      à une seule ligne), jusqu'à 3 lignes — au-delà, coupé avec une ellipse plutôt que d'élargir la
      colonne à l'infini pour un seul libellé démesuré. display:-webkit-box (nécessaire pour
