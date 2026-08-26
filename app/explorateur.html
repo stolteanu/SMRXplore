@@ -76,6 +76,8 @@
   table.pivot tr.totalrow td { background: #eaf2f8 !important; font-weight: 700; border-top: 2px solid var(--bleu); }
   table.pivot tr.subtotalrow td { background: #f2f6f4 !important; font-weight: 600; border-top: 1px solid var(--bleu-clair); font-style: italic; }
   table.pivot td.totalcol { background: #eaf2f8 !important; font-weight: 700; border-left: 2px solid var(--bleu); }
+  /* Sous-total colonne : même traitement que les sous-totaux ligne (tr.subtotalrow), en colonne. */
+  table.pivot .colsubtotal { background: #f2f6f4 !important; font-weight: 600; font-style: italic; border-left: 1px solid var(--bleu-clair); }
   .export-bar { display: flex; gap: 10px; margin-top: 14px; }
   .meta-line { font-size: 0.82em; color: var(--gris); margin-bottom: 10px; }
   .mode-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -249,6 +251,9 @@
         <label>Colonnes (facultatif)</label>
         <div class="var-list" id="colDimsList"></div>
         <button class="btn-add" id="btnAddColDim">+ Ajouter une variable</button>
+        <label id="colSubtotalWrap" style="display:none; margin-top:8px; font-size:0.85em; align-items:center; gap:6px;">
+          <input type="checkbox" id="chkColSubtotal"> Sous-totaux par 1ère variable de regroupement
+        </label>
       </div>
     </div>
 

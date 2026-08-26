@@ -388,6 +388,7 @@ function renderDimsList(containerId, arr, minCount) {
   });
   updateGraphAddButtons();
   if (containerId === "rowDimsList") updateRowSubtotalUI(arr);
+  if (containerId === "colDimsList") updateColSubtotalUI(arr);
 }
 
 // Case à cocher "Sous-totaux" (section Lignes du tableau croisé) : visible seulement dès qu'il y a
@@ -402,6 +403,20 @@ function updateRowSubtotalUI(arr) {
   } else {
     wrap.style.display = "none";
     document.getElementById("chkRowSubtotal").checked = false;
+  }
+}
+
+// Symétrique de updateRowSubtotalUI, pour la section Colonnes.
+function updateColSubtotalUI(arr) {
+  const wrap = document.getElementById("colSubtotalWrap");
+  if (!wrap) return;
+  if (arr.length > 1) {
+    wrap.style.display = "flex";
+    const lbl = labelForDimRow(arr[0]);
+    wrap.lastChild.textContent = ` Sous-totaux par ${lbl}`;
+  } else {
+    wrap.style.display = "none";
+    document.getElementById("chkColSubtotal").checked = false;
   }
 }
 
@@ -930,18 +945,24 @@ function extractValues(cellRows, measure, expr, foreignIdx, baseSrcKey) {
   return vals;
 }
 
-function computeExprPivot(cells, rowKeys, colKeys, expr, measure, aggId, foreignIdx, baseSrcKey, subtotalGroups) {
+function computeExprPivot(cells, rowKeys, colKeys, expr, measure, aggId, foreignIdx, baseSrcKey, subtotalGroups, colSubtotalGroups) {
   const isDistinct = !!measure.distinctKey;
   const isPct = aggId === "pct_total" || aggId === "pct_row" || aggId === "pct_col";
   const grid = {}, rowTotal = {}, colTotal = {};
   let grandTotal = null;
-  const subtotals = {};
+  const subtotals = {}, colSubtotals = {};
 
   function cellValues(rk, ck) { return extractValues(cells.get(cellKeyStr(rk, ck)) || [], measure, expr, foreignIdx, baseSrcKey); }
   // Concatène les valeurs brutes de tout un groupe de lignes (sous-total) pour une colonne donnée —
   // toujours recalculé depuis les valeurs sources (comme rowTotal/colTotal), jamais en sommant des
   // cellules déjà agrégées, pour rester correct avec les mesures non additives (moyenne, distinct…).
   function groupValues(rks, ck) { let v = []; for (const rk of rks) v = v.concat(cellValues(rk, ck)); return v; }
+  // Symétrique de groupValues, pour un groupe de colonnes (sous-total colonne).
+  function groupValuesCol(cks, rk) { let v = []; for (const ck of cks) v = v.concat(cellValues(rk, ck)); return v; }
+  // Croisement groupe de lignes × groupe de colonnes (les deux sous-totaux actifs en même temps) —
+  // recalculé depuis les valeurs sources comme les autres agrégats, pas en sommant des cellules déjà
+  // agrégées.
+  function crossValues(rks, cks) { let v = []; for (const rk of rks) for (const ck of cks) v = v.concat(cellValues(rk, ck)); return v; }
 
   if (!isPct) {
     for (const rk of rowKeys) {
@@ -963,7 +984,19 @@ function computeExprPivot(cells, rowKeys, colKeys, expr, measure, aggId, foreign
         const grid_g = {};
         for (const ck of colKeys) grid_g[ck] = agFn(groupValues(g.rowKeys, ck), isDistinct, aggId);
         let allG = []; for (const ck of colKeys) allG = allG.concat(groupValues(g.rowKeys, ck));
-        subtotals[g.key] = { grid: grid_g, rowTotal: agFn(allG, isDistinct, aggId) };
+        const colGroupGrid = {};
+        if (colSubtotalGroups) {
+          for (const cg of colSubtotalGroups) colGroupGrid[cg.key] = agFn(crossValues(g.rowKeys, cg.colKeys), isDistinct, aggId);
+        }
+        subtotals[g.key] = { grid: grid_g, rowTotal: agFn(allG, isDistinct, aggId), colGroupGrid };
+      }
+    }
+    if (colSubtotalGroups) {
+      for (const cg of colSubtotalGroups) {
+        const grid_g = {};
+        for (const rk of rowKeys) grid_g[rk] = agFn(groupValuesCol(cg.colKeys, rk), isDistinct, aggId);
+        let allG = []; for (const rk of rowKeys) allG = allG.concat(groupValuesCol(cg.colKeys, rk));
+        colSubtotals[cg.key] = { grid: grid_g, colTotal: agFn(allG, isDistinct, aggId) };
       }
     }
   } else {
@@ -1007,15 +1040,43 @@ function computeExprPivot(cells, rowKeys, colKeys, expr, measure, aggId, foreign
           const den = aggId === "pct_total" ? baseGrand : aggId === "pct_row" ? groupBaseRow : baseCol[ck];
           grid_g[ck] = den ? (100 * num / den) : (num === 0 ? 0 : null);
         }
+        const colGroupGrid = {};
+        if (colSubtotalGroups) {
+          for (const cg of colSubtotalGroups) {
+            const num = baseAgg(crossValues(g.rowKeys, cg.colKeys));
+            const cgBaseCol = baseAgg(crossValues(rowKeys, cg.colKeys)); // total du groupe de colonnes, toutes lignes
+            const den = aggId === "pct_total" ? baseGrand : aggId === "pct_row" ? groupBaseRow : cgBaseCol;
+            colGroupGrid[cg.key] = den ? (100 * num / den) : (num === 0 ? 0 : null);
+          }
+        }
         subtotals[g.key] = {
           grid: grid_g,
-          rowTotal: aggId === "pct_row" ? (groupBaseRow ? 100 : null) : (baseGrand ? 100 * groupBaseRow / baseGrand : null)
+          rowTotal: aggId === "pct_row" ? (groupBaseRow ? 100 : null) : (baseGrand ? 100 * groupBaseRow / baseGrand : null),
+          colGroupGrid
+        };
+      }
+    }
+    if (colSubtotalGroups) {
+      for (const cg of colSubtotalGroups) {
+        const groupBaseRow = {};
+        for (const rk of rowKeys) groupBaseRow[rk] = baseAgg(groupValuesCol(cg.colKeys, rk));
+        let allG = []; for (const rk of rowKeys) allG = allG.concat(groupValuesCol(cg.colKeys, rk));
+        const groupBaseCol = baseAgg(allG);
+        const grid_g = {};
+        for (const rk of rowKeys) {
+          const num = groupBaseRow[rk];
+          const den = aggId === "pct_total" ? baseGrand : aggId === "pct_row" ? baseRow[rk] : groupBaseCol;
+          grid_g[rk] = den ? (100 * num / den) : (num === 0 ? 0 : null);
+        }
+        colSubtotals[cg.key] = {
+          grid: grid_g,
+          colTotal: aggId === "pct_col" ? (groupBaseCol ? 100 : null) : (baseGrand ? 100 * groupBaseCol / baseGrand : null)
         };
       }
     }
   }
 
-  return { grid, rowTotal, colTotal, grandTotal, isPct, subtotals };
+  return { grid, rowTotal, colTotal, grandTotal, isPct, subtotals, colSubtotals };
 }
 
 // Chaque expression est désormais comptée/sommée sur les lignes réelles de SON PROPRE fichier
@@ -1044,7 +1105,7 @@ function ownRowsFor(srcKey, baseSrcKey, baseRows, foreignIdx) {
   return applyGlobalFilters(flattenIdx(foreignIdx[srcKey]), srcKey, foreignIdx);
 }
 
-function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, baseSrcKey, subtotal) {
+function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, baseSrcKey, rowSubtotal, colSubtotal) {
   function iterSrcKeyOf(expr) { return iterSrcKeyFor(expr, baseSrcKey, [rowDimsCfg, colDimsCfg]); }
 
   function bucket(srcKey) {
@@ -1119,7 +1180,7 @@ function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, b
   // Sous-totaux : un groupe par valeur de la 1ère variable de regroupement en lignes — seulement
   // pertinent dès qu'il y en a une 2e, sinon le sous-total serait identique au total de la ligne.
   let subtotalGroups = null;
-  if (subtotal && rowDimsCfg.length > 1) {
+  if (rowSubtotal && rowDimsCfg.length > 1) {
     const groupsMap = new Map();
     for (const rk of rowKeys) {
       const g0 = rowPartsByKey.get(rk)[0];
@@ -1128,15 +1189,26 @@ function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, b
     }
     subtotalGroups = [...groupsMap.entries()].map(([key, rks]) => ({ key, rowKeys: rks }));
   }
+  // Symétrique, pour la 1ère variable de regroupement en colonnes.
+  let colSubtotalGroups = null;
+  if (colSubtotal && colDimsCfg.length > 1) {
+    const groupsMap = new Map();
+    for (const ck of colKeys) {
+      const g0 = colPartsByKey.get(ck)[0];
+      if (!groupsMap.has(g0)) groupsMap.set(g0, []);
+      groupsMap.get(g0).push(ck);
+    }
+    colSubtotalGroups = [...groupsMap.entries()].map(([key, cks]) => ({ key, colKeys: cks }));
+  }
 
   const perExpr = {};
   for (const expr of exprsCfg) {
     const measure = measureOf(expr);
     const iterSrcKey = iterSrcKeyOf(expr);
-    perExpr[expr.uid] = computeExprPivot(bucketOf[expr.uid].cells, rowKeys, colKeys, expr, measure, expr.aggId, foreignIdx, iterSrcKey, subtotalGroups);
+    perExpr[expr.uid] = computeExprPivot(bucketOf[expr.uid].cells, rowKeys, colKeys, expr, measure, expr.aggId, foreignIdx, iterSrcKey, subtotalGroups, colSubtotalGroups);
   }
 
-  return { rowKeys, colKeys, perExpr, rowPartsByKey, colPartsByKey, subtotalGroups };
+  return { rowKeys, colKeys, perExpr, rowPartsByKey, colPartsByKey, subtotalGroups, colSubtotalGroups };
 }
 
 // Calcule, pour une liste de clés déjà triée (tableau de tableaux de valeurs, une entrée par
@@ -1178,6 +1250,35 @@ function fmtVal(v, isPct) {
 // s'applique sans changer le display:table-cell du <th> lui-même — cf. commentaire CSS associé.
 function thLabelHtml(text) { return `<span class="th-label">${esc(text)}</span>`; }
 
+// Rend les cellules de données d'une ligne (corps, sous-total ligne ou total général) en insérant,
+// après chaque groupe de sous-total colonne, une cellule supplémentaire — symétrique de la logique
+// d'en-tête (colSubtotalLastIdx) dans renderMultiPivotTable. valFn(pr, ck) donne la valeur normale
+// d'une cellule ; subValFn(pr, groupKey) donne celle du sous-total colonne.
+function renderColCells(pivot, exprsCfg, valFn, subValFn) {
+  let out = "";
+  const lastIdxToKey = new Map();
+  if (pivot.colSubtotalGroups) {
+    for (const g of pivot.colSubtotalGroups) {
+      const lastCk = g.colKeys[g.colKeys.length - 1];
+      lastIdxToKey.set(pivot.colKeys.indexOf(lastCk), g.key);
+    }
+  }
+  pivot.colKeys.forEach((ck, i) => {
+    for (const e of exprsCfg) {
+      const pr = pivot.perExpr[e.uid];
+      out += "<td>" + fmtVal(valFn(pr, ck), pr.isPct) + "</td>";
+    }
+    if (lastIdxToKey.has(i)) {
+      const key = lastIdxToKey.get(i);
+      for (const e of exprsCfg) {
+        const pr = pivot.perExpr[e.uid];
+        out += '<td class="colsubtotal">' + fmtVal(subValFn(pr, key), pr.isPct) + "</td>";
+      }
+    }
+  });
+  return out;
+}
+
 function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
   const n = exprsCfg.length;
   const nDims = rowDimsCfg.length;
@@ -1198,11 +1299,24 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
     const colLabels = colDimsCfg.map(cfg => labelForDimRow(cfg));
     const colsParts = pivot.colKeys.map(ck => pivot.colPartsByKey.get(ck));
     const { show: colShow, span: colSpan } = computeMerge(colsParts);
-    const totalDataCols = pivot.colKeys.length * n + n;
+    // Sous-totaux colonne : un groupe par valeur de la 1ère variable en colonnes, symétrique des
+    // sous-totaux lignes — une colonne supplémentaire juste après le dernier sous-groupe de chaque
+    // groupe (mêmes limites colShow/colSpan[.][0] que sa ligne de catégories de niveau 0). Indexé
+    // par le dernier index de pivot.colKeys appartenant au groupe, pour la détection lors du parcours.
+    const colSubtotalLastIdx = new Map();
+    if (pivot.colSubtotalGroups) {
+      for (const g of pivot.colSubtotalGroups) {
+        const lastCk = g.colKeys[g.colKeys.length - 1];
+        colSubtotalLastIdx.set(pivot.colKeys.indexOf(lastCk), g.key);
+      }
+    }
+    const numColSubtotals = pivot.colSubtotalGroups ? pivot.colSubtotalGroups.length : 0;
+    const totalDataCols = pivot.colKeys.length * n + numColSubtotals * n + n;
     // Lignes d'en-tête total : 1 ligne de libellé + 1 ligne de catégories par niveau, plus la ligne
     // d'expressions. La colonne "Total" démarre dès la 1ère ligne (celle du libellé du niveau 0),
     // pas seulement à partir de la 1ère ligne de catégories — sinon le repère visuel (bordure/fond)
-    // qui la distingue du reste du tableau ne couvrait pas toute la hauteur.
+    // qui la distingue du reste du tableau ne couvrait pas toute la hauteur. Les sous-totaux colonne
+    // suivent le même principe.
     const rowLabelsRowspan = 2 * nDimsCol;
     const totalCellRowspan = 2 * nDimsCol;
 
@@ -1217,6 +1331,9 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       if (level === 0) rowLabels.forEach(lbl => { html += `<th rowspan="${rowLabelsRowspan}">${thLabelHtml(lbl)}</th>`; });
       pivot.colKeys.forEach((ck, i) => {
         if (colShow[i][level]) html += `<th colspan="${colSpan[i][level] * n}">${thLabelHtml(colsParts[i][level])}</th>`;
+        if (level === 0 && colSubtotalLastIdx.has(i)) {
+          html += `<th colspan="${n}" rowspan="${totalCellRowspan}" class="colsubtotal">${thLabelHtml("Sous-total : " + colSubtotalLastIdx.get(i))}</th>`;
+        }
       });
       html += "</tr>";
 
@@ -1224,8 +1341,8 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       // juste après ce niveau-ci — répété une fois par groupe du niveau courant (mêmes colShow/
       // colSpan que sa ligne de catégories juste au-dessus), pas une seule cellule pleine largeur :
       // le libellé doit rester dans les limites de chaque case de la variable parente (ex. répété
-      // sous "Femme" et sous "Homme", pas étalé sur les deux). N'occupe pas la colonne Total, déjà
-      // réservée par son rowspan démarré au niveau 0.
+      // sous "Femme" et sous "Homme", pas étalé sur les deux). N'occupe pas la colonne Total ni les
+      // colonnes de sous-total colonne, déjà réservées par leur rowspan démarré au niveau 0.
       if (level + 1 < nDimsCol) {
         html += "<tr>";
         pivot.colKeys.forEach((ck, i) => {
@@ -1235,7 +1352,12 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       }
     }
     html += "<tr>";
-    for (const ck of pivot.colKeys) for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
+    pivot.colKeys.forEach((ck, i) => {
+      for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
+      if (colSubtotalLastIdx.has(i)) {
+        for (const e of exprsCfg) html += `<th class="exprhead colsubtotal">${thLabelHtml(exprLabel(e))}</th>`;
+      }
+    });
     for (const e of exprsCfg) html += `<th class="exprhead totalcol">${thLabelHtml(exprLabel(e))}</th>`;
     html += "</tr></thead><tbody>";
   } else {
@@ -1257,14 +1379,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
         html += `<td class="${cls}" rowspan="${span[i][level]}">${esc(rowsParts[i][level])}</td>`;
       }
     }
-    if (nDimsCol > 0) {
-      for (const ck of pivot.colKeys) {
-        for (const e of exprsCfg) {
-          const pr = pivot.perExpr[e.uid];
-          html += "<td>" + fmtVal(pr.grid[rk][ck], pr.isPct) + "</td>";
-        }
-      }
-    }
+    if (nDimsCol > 0) html += renderColCells(pivot, exprsCfg, (pr, ck) => pr.grid[rk][ck], (pr, key) => pr.colSubtotals && pr.colSubtotals[key] ? pr.colSubtotals[key].grid[rk] : null);
     for (const e of exprsCfg) {
       const pr = pivot.perExpr[e.uid];
       html += '<td class="totalcol">' + fmtVal(pr.rowTotal[rk], pr.isPct) + "</td>";
@@ -1281,13 +1396,9 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
         // "code — libellé" (mode "Code — Libellé"), un 2e tiret cadratin à la suite lisait mal.
         html += `<tr class="subtotalrow"><td class="rowhead" colspan="${nDims}">Sous-total : ${esc(groupKey)}</td>`;
         if (nDimsCol > 0) {
-          for (const ck of pivot.colKeys) {
-            for (const e of exprsCfg) {
-              const pr = pivot.perExpr[e.uid];
-              const sub = pr.subtotals && pr.subtotals[groupKey];
-              html += "<td>" + fmtVal(sub ? sub.grid[ck] : null, pr.isPct) + "</td>";
-            }
-          }
+          html += renderColCells(pivot, exprsCfg,
+            (pr, ck) => { const sub = pr.subtotals && pr.subtotals[groupKey]; return sub ? sub.grid[ck] : null; },
+            (pr, key) => { const sub = pr.subtotals && pr.subtotals[groupKey]; return sub && sub.colGroupGrid ? sub.colGroupGrid[key] : null; });
         }
         for (const e of exprsCfg) {
           const pr = pivot.perExpr[e.uid];
@@ -1300,14 +1411,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
   });
 
   html += `<tr class="totalrow"><td class="rowhead" colspan="${nDims}">Total</td>`;
-  if (nDimsCol > 0) {
-    for (const ck of pivot.colKeys) {
-      for (const e of exprsCfg) {
-        const pr = pivot.perExpr[e.uid];
-        html += "<td>" + fmtVal(pr.colTotal[ck], pr.isPct) + "</td>";
-      }
-    }
-  }
+  if (nDimsCol > 0) html += renderColCells(pivot, exprsCfg, (pr, ck) => pr.colTotal[ck], (pr, key) => pr.colSubtotals && pr.colSubtotals[key] ? pr.colSubtotals[key].colTotal : null);
   for (const e of exprsCfg) {
     const pr = pivot.perExpr[e.uid];
     html += '<td class="totalcol">' + fmtVal(pr.grandTotal, pr.isPct) + "</td>";
@@ -1360,7 +1464,9 @@ function generer() {
 
     const chkSubtotal = document.getElementById("chkRowSubtotal");
     const subtotal = !!(chkSubtotal && chkSubtotal.checked && rowDimRows.length > 1);
-    const pivot = computeMultiPivot(rows, rowDimRows, colDimRows, exprRows, foreignIdx, activeSource, subtotal);
+    const chkColSubtotal = document.getElementById("chkColSubtotal");
+    const colSubtotal = !!(chkColSubtotal && chkColSubtotal.checked && colDimRows.length > 1);
+    const pivot = computeMultiPivot(rows, rowDimRows, colDimRows, exprRows, foreignIdx, activeSource, subtotal, colSubtotal);
     const rowLabel = rowDimRows.map(r => labelForDimRow(r)).join(" / ");
     const tableHtml = renderMultiPivotTable(pivot, rowDimRows, colDimRows, exprRows);
 
