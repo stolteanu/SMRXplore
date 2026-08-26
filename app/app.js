@@ -1200,14 +1200,16 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
     const { show: colShow, span: colSpan } = computeMerge(colsParts);
     const totalDataCols = pivot.colKeys.length * n + n;
     // Lignes d'en-tête total : 1 ligne de libellé + 1 ligne de catégories par niveau, plus la ligne
-    // d'expressions. Le rowspan des lignes/de "Total" démarre à la 1ère ligne de catégories (pas à
-    // la 1ère ligne de libellé, qui n'a pas de colonne "Lignes"/"Total" à ce niveau).
+    // d'expressions. La colonne "Total" démarre dès la 1ère ligne (celle du libellé du niveau 0),
+    // pas seulement à partir de la 1ère ligne de catégories — sinon le repère visuel (bordure/fond)
+    // qui la distingue du reste du tableau ne couvrait pas toute la hauteur.
     const rowLabelsRowspan = 2 * nDimsCol;
-    const totalCellRowspan = 2 * nDimsCol - 1;
+    const totalCellRowspan = 2 * nDimsCol;
 
     html += "<tr>";
     html += `<th colspan="${nDims}"></th>`;
-    html += `<th colspan="${totalDataCols}">${thLabelHtml(colLabels[0])}</th>`;
+    html += `<th colspan="${totalDataCols - n}">${thLabelHtml(colLabels[0])}</th>`;
+    html += `<th colspan="${n}" rowspan="${totalCellRowspan}" class="totalcol">Total</th>`;
     html += "</tr>";
 
     for (let level = 0; level < nDimsCol; level++) {
@@ -1216,7 +1218,6 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       pivot.colKeys.forEach((ck, i) => {
         if (colShow[i][level]) html += `<th colspan="${colSpan[i][level] * n}">${thLabelHtml(colsParts[i][level])}</th>`;
       });
-      if (level === 0) html += `<th colspan="${n}" rowspan="${totalCellRowspan}" class="totalcol">Total</th>`;
       html += "</tr>";
 
       // Libellé du niveau suivant, s'il y en a un : juste au-dessus de ses propres catégories, donc
