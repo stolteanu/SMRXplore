@@ -52,7 +52,10 @@
   #recapBox dt { color: var(--gris); font-weight: 600; }
   #recapBox dd { margin: 0; }
   th.exprhead { font-weight: 600; font-size: 0.85em; }
-  #resultWrap { overflow: auto; max-height: 70vh; }
+  /* Plus de plafond de hauteur (retour utilisateur) : le tableau se déploie sur toute sa hauteur
+     réelle, aussi grand soit-il. overflow-x reste nécessaire pour les tableaux très larges (beaucoup
+     de colonnes/sous-totaux), qui débordent sinon la largeur de la page plutôt que de défiler. */
+  #resultWrap { overflow-x: auto; overflow-y: visible; }
   /* width:auto (pas 100%) : chaque colonne se calibre sur son propre contenu (table-layout auto par
      défaut) plutôt que d'être étirée uniformément sur toute la largeur du conteneur — une colonne
      à libellé/valeurs courts (ex. sexe) reste étroite, une colonne à libellé long en profite pour
