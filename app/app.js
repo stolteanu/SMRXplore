@@ -1332,7 +1332,12 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       pivot.colKeys.forEach((ck, i) => {
         if (colShow[i][level]) html += `<th colspan="${colSpan[i][level] * n}">${thLabelHtml(colsParts[i][level])}</th>`;
         if (level === 0 && colSubtotalLastIdx.has(i)) {
-          html += `<th colspan="${n}" rowspan="${totalCellRowspan}" class="colsubtotal">${thLabelHtml("Sous-total : " + colSubtotalLastIdx.get(i))}</th>`;
+          // rowspan = totalCellRowspan - 1 : cette cellule démarre à la 1ère ligne de catégories
+          // (comme "Total" y démarrait avant d'être remonté à la ligne de libellé), donc 1 ligne
+          // plus tard que "Total" — même rowspan qu'elle aurait chevauché la ligne d'expressions,
+          // laissant ses propres cellules "exprhead colsubtotal" sans place (colonnes en trop après
+          // "Total", constaté par l'utilisateur).
+          html += `<th colspan="${n}" rowspan="${totalCellRowspan - 1}" class="colsubtotal">${thLabelHtml("Sous-total : " + colSubtotalLastIdx.get(i))}</th>`;
         }
       });
       html += "</tr>";
