@@ -1207,12 +1207,11 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       html += "</tr>";
     }
     html += "<tr>";
-    // Cellule de coin fusionnée verticalement sur tout le reste du tableau (corps + sous-totaux +
-    // total général) plutôt qu'une cellule vide répétée sur chaque ligne, qui laissait une colonne
-    // fantôme courir sur toute la hauteur du tableau.
-    const subtotalRowsCount = pivot.subtotalGroups ? pivot.subtotalGroups.length : 0;
-    const collabelRowspan = 1 + pivot.rowKeys.length + subtotalRowsCount + 1;
-    html += `<th class="collabel" rowspan="${collabelRowspan}"></th>`;
+    // NB : une tentative de fusionner cette cellule par rowspan sur tout le corps du tableau (pour
+    // éviter la colonne vide répétée ci-dessous) a désaligné les colonnes suivantes — un rowspan
+    // sur un <th> de <thead> ne s'étend pas de façon fiable dans <tbody>. Revenu à une cellule vide
+    // par ligne, plus verbeux mais correct.
+    html += `<th class="collabel"></th>`;
     for (const ck of pivot.colKeys) for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
     for (const e of exprsCfg) html += `<th class="exprhead totalcol">${thLabelHtml(exprLabel(e))}</th>`;
     html += "</tr></thead><tbody>";
@@ -1229,6 +1228,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
 
   pivot.rowKeys.forEach((rk, i) => {
     html += "<tr>";
+    if (nDimsCol > 0) html += `<td class="collabel"></td>`;
     for (let level = 0; level < nDims; level++) {
       if (show[i][level]) {
         const cls = level === 0 ? "rowhead" : "rowhead rowhead-nested";
@@ -1257,7 +1257,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       if (isLastOfGroup) {
         // Deux-points plutôt qu'un tiret cadratin : la valeur groupée peut déjà être au format
         // "code — libellé" (mode "Code — Libellé"), un 2e tiret cadratin à la suite lisait mal.
-        html += `<tr class="subtotalrow"><td class="rowhead" colspan="${nDims}">Sous-total : ${esc(groupKey)}</td>`;
+        html += `<tr class="subtotalrow">${nDimsCol > 0 ? '<td class="collabel"></td>' : ''}<td class="rowhead" colspan="${nDims}">Sous-total : ${esc(groupKey)}</td>`;
         if (nDimsCol > 0) {
           for (const ck of pivot.colKeys) {
             for (const e of exprsCfg) {
@@ -1277,7 +1277,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
     }
   });
 
-  html += `<tr class="totalrow"><td class="rowhead" colspan="${nDims}">Total</td>`;
+  html += `<tr class="totalrow">${nDimsCol > 0 ? '<td class="collabel"></td>' : ''}<td class="rowhead" colspan="${nDims}">Total</td>`;
   if (nDimsCol > 0) {
     for (const ck of pivot.colKeys) {
       for (const e of exprsCfg) {
