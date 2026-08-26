@@ -1191,29 +1191,40 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
   if (nDimsCol > 0) {
     // Imbrication en colonnes, symétrique de celle des lignes : la 1ère dimension se fusionne
     // horizontalement (colspan) sur toutes ses sous-colonnes, la 2e apparaît en détail dessous, etc.
+    // Chaque dimension a sa propre ligne de libellé, juste au-dessus de ses catégories (donc en
+    // dessous des catégories de la dimension précédente) — pas une colonne à part (cf. commit
+    // précédent) ni un libellé unique regroupant toutes les dimensions en haut (retour utilisateur :
+    // chaque niveau doit être identifiable à l'endroit où il s'applique).
     const colLabels = colDimsCfg.map(cfg => labelForDimRow(cfg));
     const colsParts = pivot.colKeys.map(ck => pivot.colPartsByKey.get(ck));
     const { show: colShow, span: colSpan } = computeMerge(colsParts);
-    const headerRows = nDimsCol + 1;
     const totalDataCols = pivot.colKeys.length * n + n;
+    // Lignes d'en-tête total : 1 ligne de libellé + 1 ligne de catégories par niveau, plus la ligne
+    // d'expressions. Le rowspan des lignes/de "Total" démarre à la 1ère ligne de catégories (pas à
+    // la 1ère ligne de libellé, qui n'a pas de colonne "Lignes"/"Total" à ce niveau).
+    const rowLabelsRowspan = 2 * nDimsCol;
+    const totalCellRowspan = 2 * nDimsCol - 1;
 
-    // Nom de la ou des dimension(s) en colonne : une ligne d'en-tête dédiée au-dessus des catégories
-    // elles-mêmes, plutôt qu'une colonne à gauche (repositionné suite au retour utilisateur — la
-    // colonne "collabel" précédente était redondante, désalignait le tableau une fois qu'on a tenté
-    // de la fusionner par rowspan, et restait de toute façon peu lisible même correcte).
     html += "<tr>";
     html += `<th colspan="${nDims}"></th>`;
-    html += `<th colspan="${totalDataCols}">${thLabelHtml(colLabels.join(" / "))}</th>`;
+    html += `<th colspan="${totalDataCols}">${thLabelHtml(colLabels[0])}</th>`;
     html += "</tr>";
 
     for (let level = 0; level < nDimsCol; level++) {
       html += "<tr>";
-      if (level === 0) rowLabels.forEach(lbl => { html += `<th rowspan="${headerRows}">${thLabelHtml(lbl)}</th>`; });
+      if (level === 0) rowLabels.forEach(lbl => { html += `<th rowspan="${rowLabelsRowspan}">${thLabelHtml(lbl)}</th>`; });
       pivot.colKeys.forEach((ck, i) => {
         if (colShow[i][level]) html += `<th colspan="${colSpan[i][level] * n}">${thLabelHtml(colsParts[i][level])}</th>`;
       });
-      if (level === 0) html += `<th colspan="${n}" rowspan="${nDimsCol}" class="totalcol">Total</th>`;
+      if (level === 0) html += `<th colspan="${n}" rowspan="${totalCellRowspan}" class="totalcol">Total</th>`;
       html += "</tr>";
+
+      // Libellé du niveau suivant, s'il y en a un : juste au-dessus de ses propres catégories, donc
+      // juste après ce niveau-ci. N'occupe pas la largeur de la colonne Total, déjà réservée par son
+      // rowspan démarré au niveau 0.
+      if (level + 1 < nDimsCol) {
+        html += `<tr><th colspan="${totalDataCols - n}">${thLabelHtml(colLabels[level + 1])}</th></tr>`;
+      }
     }
     html += "<tr>";
     for (const ck of pivot.colKeys) for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
