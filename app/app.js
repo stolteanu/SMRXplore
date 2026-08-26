@@ -1220,10 +1220,17 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       html += "</tr>";
 
       // Libellé du niveau suivant, s'il y en a un : juste au-dessus de ses propres catégories, donc
-      // juste après ce niveau-ci. N'occupe pas la largeur de la colonne Total, déjà réservée par son
-      // rowspan démarré au niveau 0.
+      // juste après ce niveau-ci — répété une fois par groupe du niveau courant (mêmes colShow/
+      // colSpan que sa ligne de catégories juste au-dessus), pas une seule cellule pleine largeur :
+      // le libellé doit rester dans les limites de chaque case de la variable parente (ex. répété
+      // sous "Femme" et sous "Homme", pas étalé sur les deux). N'occupe pas la colonne Total, déjà
+      // réservée par son rowspan démarré au niveau 0.
       if (level + 1 < nDimsCol) {
-        html += `<tr><th colspan="${totalDataCols - n}">${thLabelHtml(colLabels[level + 1])}</th></tr>`;
+        html += "<tr>";
+        pivot.colKeys.forEach((ck, i) => {
+          if (colShow[i][level]) html += `<th colspan="${colSpan[i][level] * n}">${thLabelHtml(colLabels[level + 1])}</th>`;
+        });
+        html += "</tr>";
       }
     }
     html += "<tr>";
