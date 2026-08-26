@@ -683,6 +683,23 @@ function tagPeriod(rows, sourceKey, periods) {
   }
 }
 
+// RHS ne porte date_fin_sejour que sur la dernière semaine transmise d'un séjour (les semaines
+// précédentes l'ont vide, cf. discussion 2026-08-25 : un séjour HTP de 20 semaines n'a qu'UNE
+// ligne avec une date de sortie renseignée). Recopie cette date sur TOUTES les lignes du séjour
+// dans _date_sortie_sej, pour qu'un regroupement par "mois de sortie" compte l'activité (RHS/DAS/
+// CSARR/...) d'un séjour clos sur son mois de sortie réel plutôt que sur la seule dernière semaine
+// — "(vide)" n'y désigne alors plus que les séjours encore en cours (pas de date_fin_sejour trouvée
+// sur aucune de leurs lignes), pas "cette semaine n'est pas la dernière".
+function tagSejourSortie(rows) {
+  const exitBySejour = new Map();
+  for (const row of rows) {
+    if (row.date_fin_sejour) exitBySejour.set(row.finess_epmsi + "|" + row.numero_admin_sejour, row.date_fin_sejour);
+  }
+  for (const row of rows) {
+    row._date_sortie_sej = exitBySejour.get(row.finess_epmsi + "|" + row.numero_admin_sejour) || null;
+  }
+}
+
 function normVal(v) {
   return (v === null || v === undefined || v === "") ? "(vide)" : String(v);
 }
@@ -700,6 +717,7 @@ function buildForeignIndex(srcKey, finessList, periods) {
   const { sql, params } = buildQuery(srcKey, finessList, periods);
   const rows = queryAll(sql, params);
   tagPeriod(rows, srcKey, periods);
+  if (srcKey === "rhs") tagSejourSortie(rows);
   const idx = new Map();
   for (const row of rows) {
     const key = admKey(row.finess_epmsi, row.numero_admin_sejour);
@@ -1083,6 +1101,21 @@ function computeMultiPivot(rows, rowDimsCfg, colDimsCfg, exprsCfg, foreignIdx, b
   const rowKeys = [...rowKeysSet].sort((a, b) => compareSortKeys(rowSortByKey.get(a), rowSortByKey.get(b)));
   const colKeys = [...colKeysSet].sort((a, b) => compareSortKeys(colSortByKey.get(a), colSortByKey.get(b)));
 
+  // Garde-fou : computeExprPivot() remplit une grille lignes×colonnes (et le rendu HTML ensuite
+  // itère la même grille) — au-delà de quelques centaines de milliers de cellules, ça ne prend pas
+  // "du temps", ça gèle l'onglet. Constaté en croisant deux dimensions à cardinalité quasi unique
+  // (ex. NDA en ligne ET en colonne : jusqu'à ~2,5 M cellules). On échoue explicitement plutôt que
+  // de laisser le navigateur geler sans retour possible pour l'utilisateur.
+  const MAX_PIVOT_CELLS = 200000;
+  if (rowKeys.length * colKeys.length > MAX_PIVOT_CELLS) {
+    throw new Error(
+      `Tableau trop volumineux (${rowKeys.length} lignes × ${colKeys.length} colonnes = ` +
+      `${(rowKeys.length * colKeys.length).toLocaleString("fr-FR")} cellules). Choisissez des ` +
+      `variables moins détaillées (évitez de croiser deux identifiants à forte cardinalité, comme ` +
+      `le NDA ou une date de séjour non agrégée, en lignes ET en colonnes) ou ajoutez un filtre.`
+    );
+  }
+
   // Sous-totaux : un groupe par valeur de la 1ère variable de regroupement en lignes — seulement
   // pertinent dès qu'il y en a une 2e, sinon le sous-total serait identique au total de la ligne.
   let subtotalGroups = null;
@@ -1174,33 +1207,40 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       html += "</tr>";
     }
     html += "<tr>";
-    html += `<th class="collabel"></th>`;
+    // Cellule de coin fusionnée verticalement sur tout le reste du tableau (corps + sous-totaux +
+    // total général) plutôt qu'une cellule vide répétée sur chaque ligne, qui laissait une colonne
+    // fantôme courir sur toute la hauteur du tableau.
+    const subtotalRowsCount = pivot.subtotalGroups ? pivot.subtotalGroups.length : 0;
+    const collabelRowspan = 1 + pivot.rowKeys.length + subtotalRowsCount + 1;
+    html += `<th class="collabel" rowspan="${collabelRowspan}"></th>`;
     for (const ck of pivot.colKeys) for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
     for (const e of exprsCfg) html += `<th class="exprhead totalcol">${thLabelHtml(exprLabel(e))}</th>`;
     html += "</tr></thead><tbody>";
   } else {
+    // Sans dimension en colonne, pivot.colKeys ne contient que la clé synthétique "Total" (cf.
+    // computeMultiPivot) : afficher une colonne par clé PUIS la colonne totalcol dupliquerait deux
+    // fois la même valeur. On n'affiche donc que la colonne totalcol dans ce cas.
     html += '<tr>';
     rowLabels.forEach(lbl => { html += `<th rowspan="2">${thLabelHtml(lbl)}</th>`; });
-    for (const ck of pivot.colKeys) html += `<th colspan="${n}">${thLabelHtml(ck)}</th>`;
-    html += `<th colspan="${n}" class="totalcol">Total</th></tr><tr>`;
-    for (const ck of pivot.colKeys) for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
-    for (const e of exprsCfg) html += `<th class="exprhead totalcol">${thLabelHtml(exprLabel(e))}</th>`;
+    html += `<th colspan="${n}">Total</th></tr><tr>`;
+    for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
     html += "</tr></thead><tbody>";
   }
 
   pivot.rowKeys.forEach((rk, i) => {
     html += "<tr>";
-    if (nDimsCol > 0) html += `<td class="collabel"></td>`;
     for (let level = 0; level < nDims; level++) {
       if (show[i][level]) {
         const cls = level === 0 ? "rowhead" : "rowhead rowhead-nested";
         html += `<td class="${cls}" rowspan="${span[i][level]}">${esc(rowsParts[i][level])}</td>`;
       }
     }
-    for (const ck of pivot.colKeys) {
-      for (const e of exprsCfg) {
-        const pr = pivot.perExpr[e.uid];
-        html += "<td>" + fmtVal(pr.grid[rk][ck], pr.isPct) + "</td>";
+    if (nDimsCol > 0) {
+      for (const ck of pivot.colKeys) {
+        for (const e of exprsCfg) {
+          const pr = pivot.perExpr[e.uid];
+          html += "<td>" + fmtVal(pr.grid[rk][ck], pr.isPct) + "</td>";
+        }
       }
     }
     for (const e of exprsCfg) {
@@ -1215,12 +1255,16 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       const groupKey = rowsParts[i][0];
       const isLastOfGroup = i === pivot.rowKeys.length - 1 || rowsParts[i + 1][0] !== groupKey;
       if (isLastOfGroup) {
-        html += `<tr class="subtotalrow">${nDimsCol > 0 ? '<td class="collabel"></td>' : ''}<td class="rowhead" colspan="${nDims}">Sous-total — ${esc(groupKey)}</td>`;
-        for (const ck of pivot.colKeys) {
-          for (const e of exprsCfg) {
-            const pr = pivot.perExpr[e.uid];
-            const sub = pr.subtotals && pr.subtotals[groupKey];
-            html += "<td>" + fmtVal(sub ? sub.grid[ck] : null, pr.isPct) + "</td>";
+        // Deux-points plutôt qu'un tiret cadratin : la valeur groupée peut déjà être au format
+        // "code — libellé" (mode "Code — Libellé"), un 2e tiret cadratin à la suite lisait mal.
+        html += `<tr class="subtotalrow"><td class="rowhead" colspan="${nDims}">Sous-total : ${esc(groupKey)}</td>`;
+        if (nDimsCol > 0) {
+          for (const ck of pivot.colKeys) {
+            for (const e of exprsCfg) {
+              const pr = pivot.perExpr[e.uid];
+              const sub = pr.subtotals && pr.subtotals[groupKey];
+              html += "<td>" + fmtVal(sub ? sub.grid[ck] : null, pr.isPct) + "</td>";
+            }
           }
         }
         for (const e of exprsCfg) {
@@ -1233,11 +1277,13 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
     }
   });
 
-  html += `<tr class="totalrow">${nDimsCol > 0 ? '<td class="collabel"></td>' : ''}<td class="rowhead" colspan="${nDims}">Total</td>`;
-  for (const ck of pivot.colKeys) {
-    for (const e of exprsCfg) {
-      const pr = pivot.perExpr[e.uid];
-      html += "<td>" + fmtVal(pr.colTotal[ck], pr.isPct) + "</td>";
+  html += `<tr class="totalrow"><td class="rowhead" colspan="${nDims}">Total</td>`;
+  if (nDimsCol > 0) {
+    for (const ck of pivot.colKeys) {
+      for (const e of exprsCfg) {
+        const pr = pivot.perExpr[e.uid];
+        html += "<td>" + fmtVal(pr.colTotal[ck], pr.isPct) + "</td>";
+      }
     }
   }
   for (const e of exprsCfg) {
@@ -1269,6 +1315,7 @@ function generer() {
     const { sql, params } = buildQuery(activeSource, finessList, periods);
     let rows = queryAll(sql, params);
     tagPeriod(rows, activeSource, periods);
+    if (activeSource === "rhs") tagSejourSortie(rows);
 
     // Fichiers tiers réellement utilisés en lignes/colonnes/expressions/filtres globaux : on les
     // interroge et on les indexe par séjour pour rattacher leurs variables aux lignes de la table
@@ -1787,6 +1834,7 @@ function genererListe() {
     const { sql, params } = buildQuery(activeSourceListe, finessList, periods);
     let rows = queryAll(sql, params);
     tagPeriod(rows, activeSourceListe, periods);
+    if (activeSourceListe === "rhs") tagSejourSortie(rows);
 
     const activeGF = activeGlobalFilters();
     const neededForeign = new Set();
@@ -3450,6 +3498,7 @@ function prepareGraphData(setSt) {
   const { sql, params } = buildQuery(activeSourceGraph, finessList, periods);
   let rows = queryAll(sql, params);
   tagPeriod(rows, activeSourceGraph, periods);
+  if (activeSourceGraph === "rhs") tagSejourSortie(rows);
 
   const activeGF = activeGlobalFilters();
   const foreignSrcKeys = new Set(

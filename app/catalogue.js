@@ -34,13 +34,19 @@ const SOURCES = {
     dims: [
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
       { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
-      { id: "sexe", label: "Sexe", col: "sexe" },
-      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
+      { id: "sexe", label: "Sexe", col: "sexe", libDerive: r => LABEL_SEXE(r.sexe) },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation", libDerive: r => LABEL_TYPE_HOSP_RHS(r.type_hospitalisation) },
       { id: "tranche_age", label: "Tranche d'âge (à l'entrée)", derive: r => tranche_age(ageAns(r.date_naissance, r.date_debut_sejour)) },
       { id: "departement_residence", label: "Département de résidence", derive: r => departement(r.code_postal_residence) },
       { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
       ...dateDims("date_debut_sejour", "Date de début de séjour", "date_debut_sejour"),
-      ...dateDims("date_fin_sejour", "Date de fin de séjour", "date_fin_sejour"),
+      // "date_fin_sejour" n'est renseignée par le format RHS que sur la DERNIÈRE semaine transmise
+      // d'un séjour (les semaines précédentes l'ont vide) — grouper dessus directement ferait
+      // apparaître un "(vide)" comptant toutes les semaines non-terminales, pas les séjours encore
+      // en cours (cf. discussion 2026-08-25). _date_sortie_sej (tagSejourSortie, app.js) recopie
+      // cette date sur toutes les lignes du séjour dès qu'elle est connue sur l'une d'elles :
+      // "(vide)" n'y désigne alors plus que les séjours réellement encore ouverts.
+      ...dateDims("date_sortie_sej", "Date de sortie du séjour", "_date_sortie_sej"),
       // sortKey en AAAASS (année puis semaine, ex. 202405) : numero_semaine est stocké SSAAAA
       // (semaine puis année) — trier dessus tel quel mélangerait les années (toutes les "S05" de
       // chaque année se retrouveraient groupées avant les "S12", quelle que soit l'année).
@@ -56,7 +62,7 @@ const SOURCES = {
       // cumulés complets, pas ces caractères isolés.
       { id: "cm", label: "CM (catégorie majeure)", derive: r => (r.code_gme || "").substring(0, 2), libCol: "lib_cm" },
       { id: "gn", label: "GN (groupe nosologique)", derive: r => (r.code_gme || "").substring(0, 4), libCol: "lib_gn" },
-      { id: "gr", label: "Type GR", derive: r => (r.code_gme || "").charAt(4) || null },
+      { id: "gr", label: "Type GR", derive: r => (r.code_gme || "").charAt(4) || null, libDerive: r => LABEL_GR((r.code_gme || "").charAt(4)) },
       { id: "gl", label: "GL", derive: r => (r.code_gme || "").charAt(5) || null },
       { id: "severite", label: "Sévérité (GME)", derive: r => (r.code_gme || "").charAt(6) || null },
       { id: "erreur", label: "Erreur de groupage", col: "code_retour_groupage",
@@ -73,10 +79,10 @@ const SOURCES = {
         libDerive: r => { const n = diagAncestorOfKind(r.affection_etiologique, "chapter"); return n ? n.libelle : null; } },
       { id: "ae_bloc", label: "Bloc/sous-chapitre CIM-10 (AE)", derive: r => { const n = diagAncestorOfKind(r.affection_etiologique, "block"); return n ? n.code : null; },
         libDerive: r => { const n = diagAncestorOfKind(r.affection_etiologique, "block"); return n ? n.libelle : null; } },
-      { id: "mode_entree_um", label: "Mode d'entrée UM", col: "mode_entree_um" },
-      { id: "provenance", label: "Provenance", col: "provenance" },
-      { id: "mode_sortie", label: "Mode de sortie", col: "mode_sortie" },
-      { id: "destination", label: "Destination", col: "destination" },
+      { id: "mode_entree_um", label: "Mode d'entrée UM", col: "mode_entree_um", libDerive: r => LABEL_MODE_ENTREE_UM(r.mode_entree_um) },
+      { id: "provenance", label: "Provenance", col: "provenance", libDerive: r => LABEL_PROVENANCE(r.provenance) },
+      { id: "mode_sortie", label: "Mode de sortie", col: "mode_sortie", libDerive: r => LABEL_MODE_SORTIE(r.mode_sortie) },
+      { id: "destination", label: "Destination", col: "destination", libDerive: r => LABEL_DESTINATION(r.destination) },
       { id: "unite_medicale", label: "Unité médicale", col: "numero_unite_medicale" },
       { id: "type_autorisation_um", label: "Type d'autorisation UM", col: "type_autorisation_um" },
       { id: "type_unite_specifique", label: "Type d'unité spécifique", col: "type_unite_specifique" },
@@ -167,7 +173,7 @@ const SOURCES = {
     dims: [
       { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
       { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
-      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation", libDerive: r => LABEL_TYPE_HOSP_VALO(r.type_hospitalisation) },
       { id: "campagne", label: "Année (campagne)", col: "campagne" },
       { id: "type_um", label: "Type d'UM", col: "type_um" },
       { id: "mode_entree", label: "Mode d'entrée", col: "mode_entree" },
@@ -182,7 +188,7 @@ const SOURCES = {
       // "niveau_lourdeur" (déjà présent dans le fichier Valo) EST le type GL : même valeur, vérifié
       // (ex. code_gme "0145JA0" -> niveau_lourdeur "A" = le 6e caractère) — pas de dérivation propre
       // à refaire, c'est directement la bonne colonne.
-      { id: "gr", label: "Type GR", derive: r => (r.code_gr || "").slice(-1) || null },
+      { id: "gr", label: "Type GR", derive: r => (r.code_gr || "").slice(-1) || null, libDerive: r => LABEL_GR((r.code_gr || "").slice(-1)) },
       { id: "gl", label: "GL", col: "niveau_lourdeur" },
       { id: "severite", label: "Sévérité (GME)", derive: r => (r.code_gme || "").charAt(6) || null },
       { id: "niveau_lourdeur", label: "Niveau de lourdeur (GR)", col: "niveau_lourdeur" },
@@ -257,7 +263,7 @@ const SOURCES = {
       // (semaine puis année) — trier dessus tel quel mélangerait les années (toutes les "S05" de
       // chaque année se retrouveraient groupées avant les "S12", quelle que soit l'année).
       { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null, sortKey: r => r.numero_semaine ? Number(r.numero_semaine.slice(2, 6) + r.numero_semaine.slice(0, 2)) : null },
-      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation", libDerive: r => LABEL_TYPE_HOSP_RHS(r.type_hospitalisation) },
       { id: "code_das", label: "Diagnostic associé (DAS)", col: "code_das", libCol: "lib_das" },
       { id: "das_chapitre", label: "Chapitre CIM-10 (DAS)", derive: r => { const n = diagAncestorOfKind(r.code_das, "chapter"); return n ? n.code : null; },
         libDerive: r => { const n = diagAncestorOfKind(r.code_das, "chapter"); return n ? n.libelle : null; } },
@@ -293,7 +299,7 @@ const SOURCES = {
       // (semaine puis année) — trier dessus tel quel mélangerait les années (toutes les "S05" de
       // chaque année se retrouveraient groupées avant les "S12", quelle que soit l'année).
       { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null, sortKey: r => r.numero_semaine ? Number(r.numero_semaine.slice(2, 6) + r.numero_semaine.slice(0, 2)) : null },
-      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation", libDerive: r => LABEL_TYPE_HOSP_RHS(r.type_hospitalisation) },
       { id: "code_csarr", label: "Acte CSARR (code principal)", col: "code_principal", libCol: "lib_csarr" },
       // Hiérarchie CSARR (nomenclature_csarr_hierarchie, codes pointés "07.01.01…") : le chapitre/
       // sous-chapitre est une troncature du CodeHier de classement de l'acte (nom.parent_code),
@@ -331,7 +337,7 @@ const SOURCES = {
       // (semaine puis année) — trier dessus tel quel mélangerait les années (toutes les "S05" de
       // chaque année se retrouveraient groupées avant les "S12", quelle que soit l'année).
       { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null, sortKey: r => r.numero_semaine ? Number(r.numero_semaine.slice(2, 6) + r.numero_semaine.slice(0, 2)) : null },
-      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation", libDerive: r => LABEL_TYPE_HOSP_RHS(r.type_hospitalisation) },
       { id: "code_csar", label: "Acte CSAR (code principal)", col: "code_principal", libCol: "lib_csar" },
       { id: "intervenant", label: "Type d'intervenant", col: "code_intervenant", libCol: "lib_intervenant" },
       { id: "niveau_technicite", label: "Niveau de technicité", col: "module_niveau_technicite" },
@@ -362,7 +368,7 @@ const SOURCES = {
       // (semaine puis année) — trier dessus tel quel mélangerait les années (toutes les "S05" de
       // chaque année se retrouveraient groupées avant les "S12", quelle que soit l'année).
       { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null, sortKey: r => r.numero_semaine ? Number(r.numero_semaine.slice(2, 6) + r.numero_semaine.slice(0, 2)) : null },
-      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation" },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation", libDerive: r => LABEL_TYPE_HOSP_RHS(r.type_hospitalisation) },
       { id: "code_ccam", label: "Acte CCAM (code)", col: "code_ccam", libCol: "lib_ccam" },
       { id: "code_activite", label: "Code activité", col: "code_activite" },
       ...dateDims("date_realisation", "Date de réalisation", "date_realisation"),
@@ -426,6 +432,40 @@ function ouiNon(v) {
   if (v === null || v === undefined || v === "") return null;
   return Number(v) === 1 ? "Oui" : (Number(v) === 0 ? "Non" : String(v));
 }
+
+// Libellés de modalités ATIH pour les champs codés du format RHS (config/formats/rhs_groupe*.schema.json,
+// champ "modalite") — jusqu'ici jamais exploités hors documentation de format, donc affichés en code
+// brut dans l'Explorateur. mapLabel() retourne null (pas le code) pour une valeur non répertoriée,
+// afin de ne pas laisser croire à un libellé inventé : le code brut reste visible via le mode "Code".
+function mapLabel(map) {
+  return v => {
+    if (v === null || v === undefined || v === "") return null;
+    return Object.prototype.hasOwnProperty.call(map, v) ? map[v] : null;
+  };
+}
+const LABEL_SEXE = mapLabel({ "1": "Homme", "2": "Femme", "3": "Indéterminé" });
+// RHS : "type_hospitalisation" (1 caractère) — identique pour rhs/das/csarr/csar/ccam, tous
+// dérivés du même champ rhs_groupe (jointure). Valo a son propre codage C/P, cf. LABEL_TYPE_HOSP_VALO.
+const LABEL_TYPE_HOSP_RHS = mapLabel({ "1": "Complète", "2": "Partielle de jour", "3": "Partielle de nuit", "4": "Séances" });
+// Valo : "type_hospitalisation" (colonne HOSP du fichier Valorisation) — codage propre au fichier,
+// plus grossier que celui du RHS (pas de distinction jour/nuit), cf. valorisation_sejour.schema.json.
+const LABEL_TYPE_HOSP_VALO = mapLabel({ "C": "Complète", "P": "Temps partiel" });
+const LABEL_MODE_ENTREE_UM = mapLabel({ "6": "Mutation", "7": "Transfert définitif", "0": "Transfert provisoire", "8": "Domicile" });
+const LABEL_MODE_SORTIE = mapLabel({ "6": "Mutation", "7": "Transfert définitif", "0": "Transfert provisoire", "8": "Domicile", "9": "Décès" });
+// Provenance/destination : uniquement renseignées quand mode_entree_um/mode_sortie vaut 6, 7 ou 0
+// (mutation/transfert) — vides sinon (ex. entrée/sortie domicile), ce qui est normal et pas une donnée
+// manquante.
+const LABEL_PROVENANCE = mapLabel({ "1": "MCO", "2": "SMR", "3": "SLD", "4": "Psychiatrie", "5": "Urgences (autre ES)", "6": "HAD", "7": "Structure d'hébergement médicosociale", "U": "Urgences (au sein de l'ES)" });
+const LABEL_DESTINATION = mapLabel({ "1": "MCO", "2": "SMR", "3": "SLD", "4": "Psychiatrie", "6": "HAD", "7": "Structure d'hébergement médicosociale" });
+// Type GR (5e caractère du code GME) — Manuel des GME vol.1 2026, Tableau 6 p.34 (HC) et Tableau 7
+// p.36 (HTP) : deux jeux de lettres disjoints selon le type d'hospitalisation, une seule table
+// suffit donc (pas de collision entre les codes HC et HTP).
+const LABEL_GR = mapLabel({
+  "P": "Réadaptation pédiatrique (HC)", "S": "Réadaptation spécialisée importante (HC)",
+  "T": "Réadaptation globale importante (HC)", "U": "Réadaptation autre (HC)",
+  "H": "Réadaptation pédiatrique (HTP)", "I": "Réadaptation très intense (HTP)",
+  "J": "Réadaptation intense (HTP)", "K": "Réadaptation modérée (HTP)", "L": "Réadaptation indifférenciée (HTP)",
+});
 
 // Dates stockées en "AAAA-MM-JJ" (ISO, cf. fixed_width._cast) — le "T00:00:00"
 // évite tout décalage de fuseau horaire lors du parsing par new Date().
