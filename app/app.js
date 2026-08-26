@@ -1203,7 +1203,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
     // de la fusionner par rowspan, et restait de toute façon peu lisible même correcte).
     html += "<tr>";
     html += `<th colspan="${nDims}"></th>`;
-    html += `<th colspan="${totalDataCols}" class="collabel-row">${thLabelHtml(colLabels.join(" / "))}</th>`;
+    html += `<th colspan="${totalDataCols}">${thLabelHtml(colLabels.join(" / "))}</th>`;
     html += "</tr>";
 
     for (let level = 0; level < nDimsCol; level++) {
