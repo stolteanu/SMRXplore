@@ -4802,21 +4802,52 @@ function ouvrirTableauNouvellePage() {
   openHtmlInNewTab(html);
 }
 
+// Excel (HTML importé via mso) applique très mal les règles de feuille de style à base de
+// sélecteurs (th{...}, tr:last-child td{...} etc.) : le remplissage de cellule n'est fiable que
+// posé en style="" inline sur chaque cellule. On part donc du HTML du tableau déjà généré et on
+// pose les couleurs directement dessus (via un <template> détaché, pas d'insertion dans la page)
+// plutôt que de dupliquer toute la logique de rendu du tableau croisé pour Excel.
+function applyInlineColorsForXls(tableHtml, bleuClair, trendColors) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = tableHtml;
+  const setBg = (sel, bg, bold) => {
+    tpl.content.querySelectorAll(sel).forEach(el => {
+      el.style.backgroundColor = bg;
+      if (bold) el.style.fontWeight = "bold";
+    });
+  };
+  setBg("th", bleuClair, true);
+  setBg("tr.totalrow td, td.totalcol", bleuClair, true);
+  setBg("tr.subtotalrow td, td.colsubtotal", "#f2f6f4", true);
+  setBg("tr.trendrow td", "#f7f5ea", false);
+  // Dégradé de tendance (cf. trendHeatClassAttr) : posé en color-mix() + variable CSS --trend-alpha
+  // à l'écran, illisible par Excel — recalculé ici en hex littéral, alpha par alpha.
+  const mixTrend = (sel, hex) => {
+    tpl.content.querySelectorAll(sel).forEach(el => {
+      const alpha = parseFloat(el.style.getPropertyValue("--trend-alpha")) || 0;
+      el.style.backgroundColor = mixHexColors(hex, "#ffffff", alpha);
+    });
+  };
+  mixTrend(".trend-heat-pos", trendColors.pos);
+  mixTrend(".trend-heat-neg", trendColors.neg);
+  return tpl.innerHTML;
+}
+
 function exportXls() {
   if (!lastResult) return;
-  // Excel (HTML importé via mso) ignore les variables CSS et color-mix() : la teinte claire du
-  // thème doit être un hex littéral, calculée à la main (cf. mixHexColors).
+  // Excel ignore les variables CSS et color-mix() : la teinte claire du thème doit être un hex
+  // littéral, calculée à la main (cf. mixHexColors).
   const bleuClair = mixHexColors(loadThemeColor(), "#ffffff", 0.12);
+  const coloredTableHtml = applyInlineColorsForXls(lastResult.tableHtml, bleuClair, loadTrendColors());
   const xlsHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"><title>${esc(lastResult.titleText)}</title>
 <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
 <x:Name>TDB</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
 </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
 <style>
-table{border-collapse:collapse;} td,th{border:1px solid #999;padding:4px 9px;} th{background:${esc(bleuClair)};font-weight:bold;}
-tr:last-child td{background:${esc(bleuClair)};font-weight:bold;}
+table{border-collapse:collapse;} td,th{border:1px solid #999;padding:4px 9px;}
 </style></head>
-<body><table><tr><td colspan="2"><b>${esc(lastResult.titleText)}</b></td></tr><tr><td colspan="2">${esc(lastResult.metaText)}</td></tr><tr><td></td></tr></table>${lastResult.tableHtml}</body></html>`;
+<body><table><tr><td colspan="2" style="background:${esc(bleuClair)};font-weight:bold;"><b>${esc(lastResult.titleText)}</b></td></tr><tr><td colspan="2">${esc(lastResult.metaText)}</td></tr><tr><td></td></tr></table>${coloredTableHtml}</body></html>`;
   download("tdb_export.xls", xlsHtml, "application/vnd.ms-excel");
 }
 
