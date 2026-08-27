@@ -4804,11 +4804,12 @@ function ouvrirTableauNouvellePage() {
 }
 
 // Excel (HTML importé via mso) applique très mal les règles de feuille de style à base de
-// sélecteurs (th{...}, tr:last-child td{...} etc.) : le remplissage de cellule n'est fiable que
-// posé en style="" inline sur chaque cellule. On part donc du HTML du tableau déjà généré et on
-// pose les couleurs directement dessus (via un <template> détaché, pas d'insertion dans la page)
-// plutôt que de dupliquer toute la logique de rendu du tableau croisé pour Excel.
-function applyInlineColorsForXls(tableHtml, bleuClair, trendColors) {
+// sélecteurs (th{...}, tr:last-child td{...} etc.) : le remplissage de cellule comme le retour à la
+// ligne des en-têtes ne sont fiables que posés en style="" inline sur chaque cellule. On part donc
+// du HTML du tableau déjà généré et on pose ces styles directement dessus (via un <template>
+// détaché, pas d'insertion dans la page) plutôt que de dupliquer toute la logique de rendu du
+// tableau croisé pour Excel.
+function prepareTableHtmlForXls(tableHtml, bleuClair, trendColors) {
   const tpl = document.createElement("template");
   tpl.innerHTML = tableHtml;
   const setBg = (sel, bg, bold) => {
@@ -4831,6 +4832,45 @@ function applyInlineColorsForXls(tableHtml, bleuClair, trendColors) {
   };
   mixTrend(".trend-heat-pos", trendColors.pos);
   mixTrend(".trend-heat-neg", trendColors.neg);
+  // Retour à la ligne des en-têtes (même intention que .th-label / white-space:normal côté écran
+  // et export HTML, cf. explorateur.html). Excel ignore la largeur posée en CSS (style="width:...")
+  // pour dimensionner ses colonnes — il ne respecte que l'attribut HTML historique "width" (px) sur
+  // les cellules ; sans lui, la colonne s'étire à la largeur du texte non replié malgré
+  // white-space:normal, qui ne fait qu'autoriser le retour à la ligne sans jamais le déclencher.
+  //
+  // La largeur posée sur l'en-tête devient la largeur de TOUTE la colonne, cellules de données
+  // comprises — une valeur fixe risquait de tronquer (Excel affiche "###") une colonne de montants
+  // à 7-8 chiffres. On la calcule donc sur le contenu réel le plus long de ce tableau (~8px par
+  // caractère, gras compris pour les totaux, + marges de cellule), pas sur une estimation a priori.
+  let maxCellLen = 0;
+  tpl.content.querySelectorAll("td").forEach(td => {
+    const len = td.textContent.trim().length;
+    if (len > maxCellLen) maxCellLen = len;
+  });
+  // Le libellé d'en-tête le plus long doit lui aussi entrer dans la largeur retenue, réparti sur
+  // ~3 lignes plutôt qu'une seule ligne interminable (ou replié sur bien plus de 3 lignes) : on
+  // calibre une largeur "pour 3 lignes" à partir de sa longueur totale divisée par 3, et on prend
+  // le plus large des deux besoins (données ou en-tête) pour ne sacrifier ni l'un ni l'autre.
+  let maxHeaderLen = 0;
+  tpl.content.querySelectorAll("th").forEach(th => {
+    const colspan = parseInt(th.getAttribute("colspan") || "1", 10);
+    if (colspan <= 1) {
+      const len = th.textContent.trim().length;
+      if (len > maxHeaderLen) maxHeaderLen = len;
+    }
+  });
+  const headerWidthFor3Lines = Math.ceil(maxHeaderLen / 3) * 8 + 24;
+  const colWidthPx = Math.max(90, maxCellLen * 8 + 24, headerWidthFor3Lines);
+  tpl.content.querySelectorAll("th").forEach(el => {
+    el.style.whiteSpace = "normal";
+    el.style.wordBreak = "break-word";
+    el.style.verticalAlign = "middle";
+    // Seules les cellules à colspan=1 correspondent à une vraie colonne : forcer la largeur d'un
+    // en-tête qui en chapeaute plusieurs (ex. le libellé de la variable en colonnes) l'écraserait
+    // au lieu de le laisser s'étaler naturellement sur la largeur cumulée de ses sous-colonnes.
+    const colspan = parseInt(el.getAttribute("colspan") || "1", 10);
+    if (colspan <= 1) el.setAttribute("width", String(colWidthPx));
+  });
   return tpl.innerHTML;
 }
 
@@ -4839,7 +4879,7 @@ function exportXls() {
   // Excel ignore les variables CSS et color-mix() : la teinte claire du thème doit être un hex
   // littéral, calculée à la main (cf. mixHexColors).
   const bleuClair = mixHexColors(loadThemeColor(), "#ffffff", 0.12);
-  const coloredTableHtml = applyInlineColorsForXls(lastResult.tableHtml, bleuClair, loadTrendColors());
+  const coloredTableHtml = prepareTableHtmlForXls(lastResult.tableHtml, bleuClair, loadTrendColors());
   const xlsHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"><title>${esc(lastResult.titleText)}</title>
 <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
