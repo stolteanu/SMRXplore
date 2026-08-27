@@ -123,6 +123,7 @@ let sqlJsEngine = null;
 
 async function init() {
   wireThemeColorPicker(); // indépendant du chargement de la base, doit marcher même si celui-ci échoue
+  PmsiTheme.mount(document.getElementById("themeModeToggle"));
   status("Chargement du moteur SQL (sql.js)…");
   try {
     sqlJsEngine = await initSqlJs({ locateFile: f => "lib/" + f });

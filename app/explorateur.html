@@ -1,55 +1,84 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+<script src="theme.js"></script>
 <meta charset="UTF-8">
+<meta name="color-scheme" content="light dark">
 <title>Explorateur TDB PMSI-SMR</title>
 <style>
+  /* Thème clair/sombre/système (cf. theme.js) : la couleur d'accent --bleu reste celle choisie par
+     l'utilisateur (#trendColorPos et #themeColorPicker dans app.js la pilotent, indépendamment du
+     thème clair/sombre) — seuls les tons neutres (fond, surfaces, texte, bordures) changent avec le
+     thème. Motif à 3 états standard : le bloc nu (:root) est le thème clair par défaut, le bloc
+     @media ne s'applique que si l'OS est en sombre ET qu'aucun choix explicite "clair" n'a été fait,
+     et [data-theme="dark"] gagne dans tous les cas si l'utilisateur a choisi "sombre" à la main. */
   :root {
     --bleu: #1a5276; --bleu-clair: color-mix(in srgb, var(--bleu) 12%, #ffffff); --bordure: #d5dbdb; --vert: #1e8449;
     --texte: #212f3c; --gris: #7f8c8d;
+    --page: #f4f6f7; --surface: #ffffff; --surface-alt: #fafcfd; --surface-alt-2: #fbfcfc;
+    --surface-subtotal: #f2f6f4; --surface-trend: #f7f5ea;
+    --danger: #c0392b; --danger-border: #e6b0aa; --surface-danger: #fdecea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bleu-clair: color-mix(in srgb, var(--bleu) 25%, var(--surface));
+      --bordure: #3a4147; --vert: #2ea866;
+      --texte: #e8ecef; --gris: #9aa5ab;
+      --page: #14181a; --surface: #1e2427; --surface-alt: #242b2e; --surface-alt-2: #262d30;
+      --surface-subtotal: #1c2b23; --surface-trend: #2b2a1e;
+      --danger: #e57368; --danger-border: #6b3330; --surface-danger: #3a2320;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bleu-clair: color-mix(in srgb, var(--bleu) 25%, var(--surface));
+    --bordure: #3a4147; --vert: #2ea866;
+    --texte: #e8ecef; --gris: #9aa5ab;
+    --page: #14181a; --surface: #1e2427; --surface-alt: #242b2e; --surface-alt-2: #262d30;
+    --surface-subtotal: #1c2b23; --surface-trend: #2b2a1e;
+    --danger: #e57368; --danger-border: #6b3330; --surface-danger: #3a2320;
   }
   * { box-sizing: border-box; }
-  body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; padding: 0; background: #f4f6f7; color: var(--texte); }
+  body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; padding: 0; background: var(--page); color: var(--texte); }
   header { background: var(--bleu); color: #fff; padding: 14px 24px; }
   header h1 { margin: 0; font-size: 1.3em; }
   header p { margin: 4px 0 0; font-size: 0.85em; opacity: 0.85; }
   main { max-width: 1300px; margin: 20px auto; padding: 0 16px 60px; }
-  .panel { background: #fff; border: 1px solid var(--bordure); border-radius: 6px; padding: 16px 20px; margin-bottom: 18px; }
+  .panel { background: var(--surface); border: 1px solid var(--bordure); border-radius: 6px; padding: 16px 20px; margin-bottom: 18px; }
   .panel h2 { margin: 0 0 12px; font-size: 1.05em; color: var(--bleu); border-bottom: 2px solid var(--bleu-clair); padding-bottom: 6px; }
   .row { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
   .field { display: flex; flex-direction: column; gap: 4px; min-width: 160px; }
   .field label { font-size: 0.8em; color: var(--gris); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
   select, button { font-family: inherit; font-size: 0.92em; }
-  select { padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; background: #fff; min-width: 200px; }
+  select { padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; background: var(--surface); color: var(--texte); min-width: 200px; }
   .checks { display: flex; flex-wrap: wrap; gap: 10px; }
   .checks label { font-weight: normal; text-transform: none; letter-spacing: normal; font-size: 0.92em; display: flex; align-items: center; gap: 4px; color: var(--texte); }
   button.primary { background: var(--bleu); color: #fff; border: none; padding: 9px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; }
   button.primary:hover { background: color-mix(in srgb, var(--bleu) 82%, #000000); }
-  button.secondary { background: #fff; color: var(--bleu); border: 1px solid var(--bleu); padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+  button.secondary { background: var(--surface); color: var(--bleu); border: 1px solid var(--bleu); padding: 8px 16px; border-radius: 4px; cursor: pointer; }
   button.secondary:hover { background: var(--bleu-clair); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
   .source-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-  .source-tabs button { padding: 8px 18px; border: 1px solid var(--bordure); background: #fff; border-radius: 20px; cursor: pointer; font-weight: 600; color: var(--gris); }
+  .source-tabs button { padding: 8px 18px; border: 1px solid var(--bordure); background: var(--surface); border-radius: 20px; cursor: pointer; font-weight: 600; color: var(--gris); }
   .source-tabs button.active { background: var(--bleu); color: #fff; border-color: var(--bleu); }
   .dims-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   #status { font-size: 0.85em; color: var(--gris); margin-top: 10px; min-height: 1.2em; }
-  #status.err { color: #c0392b; font-weight: 600; }
-  input.champ-err { border-color: #c0392b !important; background: #fdecea; }
-  .champ-err-msg { font-size: 0.78em; color: #c0392b; margin-top: 4px; min-height: 1.1em; }
+  #status.err { color: var(--danger); font-weight: 600; }
+  input.champ-err { border-color: var(--danger) !important; background: var(--surface-danger); }
+  .champ-err-msg { font-size: 0.78em; color: var(--danger); margin-top: 4px; min-height: 1.1em; }
   .var-list { display: flex; flex-direction: column; gap: 8px; }
-  .var-row { display: flex; gap: 6px; align-items: center; background: #fafcfd; border: 1px solid var(--bordure); border-radius: 4px; padding: 6px; }
+  .var-row { display: flex; gap: 6px; align-items: center; background: var(--surface-alt); border: 1px solid var(--bordure); border-radius: 4px; padding: 6px; }
   .var-row select { min-width: 0; flex: 1 1 auto; }
   .var-row select.mode-sel { flex: 0 0 150px; min-width: 130px; }
-  .var-row input.expr-label { flex: 1 1 120px; min-width: 90px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; }
-  .btn-remove { flex: 0 0 auto; background: #fff; border: 1px solid #e6b0aa; color: #c0392b; border-radius: 4px; width: 28px; height: 28px; cursor: pointer; font-weight: 700; line-height: 1; }
-  .btn-remove:hover { background: #fdecea; }
+  .var-row input.expr-label { flex: 1 1 120px; min-width: 90px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; background: var(--surface); color: var(--texte); }
+  .btn-remove { flex: 0 0 auto; background: var(--surface); border: 1px solid var(--danger-border); color: var(--danger); border-radius: 4px; width: 28px; height: 28px; cursor: pointer; font-weight: 700; line-height: 1; }
+  .btn-remove:hover { background: var(--surface-danger); }
   .reorder-btns { flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; }
-  .btn-reorder { background: #fff; border: 1px solid var(--bordure); color: var(--bleu); border-radius: 3px; width: 22px; height: 15px; cursor: pointer; font-size: 0.65em; line-height: 1; padding: 0; }
+  .btn-reorder { background: var(--surface); border: 1px solid var(--bordure); color: var(--bleu); border-radius: 3px; width: 22px; height: 15px; cursor: pointer; font-size: 0.65em; line-height: 1; padding: 0; }
   .btn-reorder:hover:not(:disabled) { background: var(--bleu-clair); }
   .btn-reorder:disabled { opacity: 0.35; cursor: default; }
-  .btn-add { margin-top: 4px; align-self: flex-start; background: #fff; border: 1px dashed var(--bleu); color: var(--bleu); border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.85em; }
+  .btn-add { margin-top: 4px; align-self: flex-start; background: var(--surface); border: 1px dashed var(--bleu); color: var(--bleu); border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.85em; }
   .btn-add:hover { background: var(--bleu-clair); }
-  .btn-toggle-all { margin-left: 8px; background: #fff; border: 1px solid var(--bleu); color: var(--bleu); border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.85em; font-weight: 400; }
+  .btn-toggle-all { margin-left: 8px; background: var(--surface); border: 1px solid var(--bleu); color: var(--bleu); border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.85em; font-weight: 400; }
   .btn-toggle-all:hover { background: var(--bleu-clair); }
   #recapBox { font-size: 0.9em; }
   #recapBox dl { display: grid; grid-template-columns: 160px 1fr; gap: 4px 12px; margin: 0; }
@@ -92,14 +121,14 @@
      tableau et se retrouvait cachée sous la 1ère, restée figée (constaté par l'utilisateur).
      z-index 2 (sous le thead à 3, au-dessus des cellules de données) et 4 pour les en-têtes de
      ligne (coin haut-gauche, doivent rester au-dessus à la fois du thead et des rowhead du corps). */
-  table.pivot td.rowhead { text-align: left; font-weight: 600; background: #fafcfd; position: sticky; left: 0; z-index: 2; }
+  table.pivot td.rowhead { text-align: left; font-weight: 600; background: var(--surface-alt); position: sticky; left: 0; z-index: 2; }
   table.pivot th[data-lvl] { position: sticky; left: 0; z-index: 4; }
-  table.pivot tr:nth-child(even) td:not(.rowhead) { background: #fbfcfc; }
+  table.pivot tr:nth-child(even) td:not(.rowhead) { background: var(--surface-alt-2); }
   table.pivot tr.totalrow td { background: var(--bleu-clair) !important; font-weight: 700; border-top: 2px solid var(--bleu); }
-  table.pivot tr.subtotalrow td { background: #f2f6f4 !important; font-weight: 600; border-top: 1px solid var(--bleu-clair); font-style: italic; }
+  table.pivot tr.subtotalrow td { background: var(--surface-subtotal) !important; font-weight: 600; border-top: 1px solid var(--bleu-clair); font-style: italic; }
   table.pivot td.totalcol { background: var(--bleu-clair) !important; font-weight: 700; border-left: 2px solid var(--bleu); }
   /* Sous-total colonne : même traitement que les sous-totaux ligne (tr.subtotalrow), en colonne. */
-  table.pivot .colsubtotal { background: #f2f6f4 !important; font-weight: 600; font-style: italic; border-left: 1px solid var(--bleu-clair); }
+  table.pivot .colsubtotal { background: var(--surface-subtotal) !important; font-weight: 600; font-style: italic; border-left: 1px solid var(--bleu-clair); }
   /* Tendance (options A/C de la comparaison de maquettes), déclinées indépendamment sur les deux
      axes : fond dégradé + flèche par cellule (delta vs le niveau précédent de la dernière variable
      en colonnes et/ou en lignes), colonne "Tendance" à droite (mini-graphique sur toute la série
@@ -108,35 +137,49 @@
      #trendColorPos/#trendColorNeg dans app.js). Limité aux cellules de détail : les lignes/colonnes
      de sous-total et de total agrègent des ensembles différents d'un groupe à l'autre, un delta n'y
      serait pas comparable (cf. commentaire de renderMultiPivotTable dans app.js). */
-  table.pivot td.trend-heat-pos { background: color-mix(in srgb, var(--trend-pos, #1f7a4d) calc(var(--trend-alpha, 0) * 100%), #fff) !important; }
-  table.pivot td.trend-heat-neg { background: color-mix(in srgb, var(--trend-neg, #b1502f) calc(var(--trend-alpha, 0) * 100%), #fff) !important; }
+  table.pivot td.trend-heat-pos { background: color-mix(in srgb, var(--trend-pos, #1f7a4d) calc(var(--trend-alpha, 0) * 100%), var(--surface)) !important; }
+  table.pivot td.trend-heat-neg { background: color-mix(in srgb, var(--trend-neg, #b1502f) calc(var(--trend-alpha, 0) * 100%), var(--surface)) !important; }
   .trend-arrow { display: inline-block; font-size: 0.62em; margin-right: 4px; vertical-align: middle; }
   .trend-arrow.trend-pos { color: var(--trend-pos, #1f7a4d); }
   .trend-arrow.trend-neg { color: var(--trend-neg, #b1502f); }
   .trend-arrow.trend-flat { color: var(--gris); }
   table.pivot th.trendcol, table.pivot td.trendcol { text-align: left; border-left: 2px solid var(--bleu-clair); }
-  table.pivot tr.trendrow td { background: #f7f5ea !important; border-top: 1px solid var(--bleu-clair); }
+  table.pivot tr.trendrow td { background: var(--surface-trend) !important; border-top: 1px solid var(--bleu-clair); }
   .trend-spark { display: block; color: var(--gris); }
+  /* Ces overrides de graphique (grille/axes/libellés SVG) ne s'appliquent qu'en thème sombre : en
+     clair, les couleurs fixes (CH_MUTED/CH_GRID/CH_AXIS, cf. app.js) restent celles d'origine —
+     seul l'affichage à l'écran est concerné, jamais les exports (SVG/PNG composés à la demande dans
+     un document détaché, cf. buildCombinedGraphSvg). Les couleurs de séries de données (barres,
+     lignes, aires...) ne sont jamais des attributs "line"/"text"/"polygon fill=none" : sélecteurs
+     choisis pour ne toucher que la grille/les axes/les libellés, jamais les données elles-mêmes. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .chart-panel svg text { fill: var(--gris) !important; }
+    :root:not([data-theme="light"]) .chart-panel svg line[stroke-width="1"] { stroke: var(--bordure) !important; }
+    :root:not([data-theme="light"]) .chart-panel svg polygon[fill="none"] { stroke: var(--bordure) !important; }
+  }
+  :root[data-theme="dark"] .chart-panel svg text { fill: var(--gris) !important; }
+  :root[data-theme="dark"] .chart-panel svg line[stroke-width="1"] { stroke: var(--bordure) !important; }
+  :root[data-theme="dark"] .chart-panel svg polygon[fill="none"] { stroke: var(--bordure) !important; }
   .export-bar { display: flex; gap: 10px; margin-top: 14px; }
   .meta-line { font-size: 0.82em; color: var(--gris); margin-bottom: 10px; }
   .mode-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
-  .mode-tabs button { padding: 9px 20px; border: 1px solid var(--bordure); background: #fff; border-radius: 20px; cursor: pointer; font-weight: 700; color: var(--gris); }
+  .mode-tabs button { padding: 9px 20px; border: 1px solid var(--bordure); background: var(--surface); border-radius: 20px; cursor: pointer; font-weight: 700; color: var(--gris); }
   .mode-tabs button.active { background: var(--vert); color: #fff; border-color: var(--vert); }
-  .entry-choice { flex: 1 1 260px; text-align: left; background: #fff; border: 2px solid var(--bordure); border-radius: 8px; padding: 18px 20px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
+  .entry-choice { flex: 1 1 260px; text-align: left; background: var(--surface); border: 2px solid var(--bordure); border-radius: 8px; padding: 18px 20px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
   .entry-choice:hover { border-color: var(--bleu); background: var(--bleu-clair); }
   .entry-choice strong { color: var(--bleu); font-size: 1.05em; }
   .entry-choice span { color: var(--gris); font-size: 0.88em; font-weight: normal; }
   .back-link { margin: 0 0 14px; }
   .back-link a { color: var(--bleu); text-decoration: none; font-size: 0.88em; font-weight: 600; }
   .back-link a:hover { text-decoration: underline; }
-  .filter-row { display: flex; gap: 6px; align-items: center; background: #fafcfd; border: 1px solid var(--bordure); border-radius: 4px; padding: 6px; flex-wrap: wrap; }
+  .filter-row { display: flex; gap: 6px; align-items: center; background: var(--surface-alt); border: 1px solid var(--bordure); border-radius: 4px; padding: 6px; flex-wrap: wrap; }
   .filter-row select.op-sel { flex: 0 0 150px; }
-  .filter-row input.filter-val { flex: 1 1 140px; min-width: 100px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; }
-  .filter-row input.filter-val2 { flex: 1 1 100px; min-width: 80px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; }
+  .filter-row input.filter-val { flex: 1 1 140px; min-width: 100px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; background: var(--surface); color: var(--texte); }
+  .filter-row input.filter-val2 { flex: 1 1 100px; min-width: 80px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; background: var(--surface); color: var(--texte); }
   .filter-row select.filter-multiselect { flex: 1 1 220px; min-height: 88px; }
   .filter-row span.filter-note { font-size: 0.82em; color: var(--gris); }
   .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
-  .chart-panel { border: 1px solid var(--bordure); border-radius: 6px; padding: 12px; background: #fff; display: flex; flex-direction: column; align-items: center; }
+  .chart-panel { border: 1px solid var(--bordure); border-radius: 6px; padding: 12px; background: var(--surface); display: flex; flex-direction: column; align-items: center; }
   .chart-panel h4 { margin: 0 0 8px; font-size: 0.9em; color: var(--bleu); text-align: center; }
   .chart-panel > div { max-width: 100%; }
   .chart-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 16px; margin-top: 8px; font-size: 0.82em; }
@@ -148,14 +191,14 @@
   table.semaines { border-collapse: collapse; width: 100%; font-size: 0.88em; margin-bottom: 16px; }
   table.semaines th, table.semaines td { border: 1px solid var(--bordure); padding: 6px 9px; text-align: left; }
   table.semaines th { background: var(--bleu-clair); }
-  details.semaine-detail { border: 1px solid var(--bordure); border-radius: 4px; margin-bottom: 8px; background: #fff; }
-  details.semaine-detail summary { padding: 8px 12px; cursor: pointer; font-weight: 600; background: #fafcfd; }
+  details.semaine-detail { border: 1px solid var(--bordure); border-radius: 4px; margin-bottom: 8px; background: var(--surface); }
+  details.semaine-detail summary { padding: 8px 12px; cursor: pointer; font-weight: 600; background: var(--surface-alt); }
   details.semaine-detail .semaine-body { padding: 10px 14px; }
   .badge { display: inline-block; background: var(--bleu-clair); color: var(--bleu); border-radius: 3px; padding: 1px 7px; font-size: 0.82em; margin: 2px 4px 2px 0; }
-  .badge.err { background: #fdecea; color: #c0392b; }
+  .badge.err { background: var(--surface-danger); color: var(--danger); }
   table.actes-mini { border-collapse: collapse; width: 100%; font-size: 0.85em; margin: 6px 0 10px; }
   table.actes-mini th, table.actes-mini td { border: 1px solid var(--bordure); padding: 4px 8px; text-align: left; }
-  table.actes-mini th { background: #f4f6f7; }
+  table.actes-mini th { background: var(--surface-alt); }
   #printExport { display: none; }
   @media print {
     body * { visibility: hidden; }
@@ -185,11 +228,14 @@
       <h1>Explorateur TDB — PMSI-SMR</h1>
       <p>Tableau de bord interactif portable (RHS groupé / VID-HOSP / Valorisation) — 100% local, aucune donnée envoyée nulle part.</p>
     </div>
-    <label style="display:flex; align-items:center; gap:8px; font-size:0.82em; white-space:nowrap; color:#fff;">
-      Couleur du thème
-      <input type="color" id="themeColorPicker" value="#1a5276" style="width:34px; height:28px; padding:0; border:none; border-radius:4px; cursor:pointer; background:none;">
-      <button type="button" id="btnThemeColorReset" style="background:transparent; border:1px solid rgba(255,255,255,0.6); color:#fff; border-radius:4px; padding:5px 10px; cursor:pointer; font-size:0.85em;">Réinitialiser</button>
-    </label>
+    <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap; color:#fff;">
+      <div id="themeModeToggle" style="color:#fff;"></div>
+      <label style="display:flex; align-items:center; gap:8px; font-size:0.82em; white-space:nowrap;">
+        Couleur du thème
+        <input type="color" id="themeColorPicker" value="#1a5276" style="width:34px; height:28px; padding:0; border:none; border-radius:4px; cursor:pointer; background:none;">
+        <button type="button" id="btnThemeColorReset" style="background:transparent; border:1px solid rgba(255,255,255,0.6); color:#fff; border-radius:4px; padding:5px 10px; cursor:pointer; font-size:0.85em;">Réinitialiser</button>
+      </label>
+    </div>
   </div>
 </header>
 <main>
