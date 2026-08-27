@@ -829,6 +829,20 @@ function dimValue(dim, mode, row) {
   return libStr || codeStr; // mode "libelle" par défaut, repli sur le code si aucun libellé résolu
 }
 
+// Option "Masquer les valeurs (vide)" : retire des lignes source celles dont au moins une des
+// variables de regroupement fournies (lignes/colonnes du tableau croisé, ou axe X/Série/Vignettes
+// du graphique) vaut "(vide)" — avant le calcul du pivot, pas seulement à l'affichage, pour que les
+// totaux ne les comptent pas non plus (sinon un Total incluant des séjours "cachés" désorienterait
+// l'utilisateur : la somme des lignes visibles ne retomberait plus sur le total affiché).
+function filterHideEmptyDims(rows, dimsCfgList, foreignIdx, baseSrcKey) {
+  const cfgs = dimsCfgList.filter(cfg => cfg && cfg.dimId);
+  if (!cfgs.length) return rows;
+  return rows.filter(row => cfgs.every(cfg => {
+    const srcRow = sourceRowFor(cfg, row, foreignIdx, baseSrcKey);
+    return dimValue(dimDefOf(cfg), cfg.mode, srcRow) !== "(vide)";
+  }));
+}
+
 // Clé de tri d'une valeur de dimension pour l'axe X/lignes/colonnes d'un pivot : celle du catalogue
 // (dim.sortKey, ex. la semaine en AAAASS plutôt que sur son libellé affiché "S05-2024", qui
 // mélangerait les années en triant alphabétiquement) quand elle existe, sinon la valeur affichée
@@ -1515,6 +1529,9 @@ function generer() {
 
     rows = applyGlobalFilters(rows, activeSource, foreignIdx);
     annotateValoCoverage(foreignIdx, activeSource, rows);
+    if (document.getElementById("chkHideEmptyPivot")?.checked) {
+      rows = filterHideEmptyDims(rows, [...rowDimRows, ...colDimRows], foreignIdx, activeSource);
+    }
 
     const chkSubtotal = document.getElementById("chkRowSubtotal");
     const subtotal = !!(chkSubtotal && chkSubtotal.checked && rowDimRows.length > 1);
@@ -3696,6 +3713,9 @@ function prepareGraphData(setSt) {
 
   rows = applyGlobalFilters(rows, activeSourceGraph, foreignIdx);
   annotateValoCoverage(foreignIdx, activeSourceGraph, rows);
+  if (document.getElementById("chkHideEmptyGraph")?.checked) {
+    rows = filterHideEmptyDims(rows, [...graphXDimRows, ...graphSeriesDimRows, ...graphFacetDimRows], foreignIdx, activeSourceGraph);
+  }
 
   const exprsUsed = (chartType === "camembert" || chartType === "sunburst" || chartType === "boxplot" || chartType === "histogramme" || chartType === "sankey") ? graphExprRows.slice(0, 1)
     : chartType === "nuage" ? graphExprRows.slice(0, 2)
