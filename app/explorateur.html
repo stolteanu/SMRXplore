@@ -5,7 +5,7 @@
 <title>Explorateur TDB PMSI-SMR</title>
 <style>
   :root {
-    --bleu: #1a5276; --bleu-clair: #eaf2f8; --bordure: #d5dbdb; --vert: #1e8449;
+    --bleu: #1a5276; --bleu-clair: color-mix(in srgb, var(--bleu) 12%, #ffffff); --bordure: #d5dbdb; --vert: #1e8449;
     --texte: #212f3c; --gris: #7f8c8d;
   }
   * { box-sizing: border-box; }
@@ -24,7 +24,7 @@
   .checks { display: flex; flex-wrap: wrap; gap: 10px; }
   .checks label { font-weight: normal; text-transform: none; letter-spacing: normal; font-size: 0.92em; display: flex; align-items: center; gap: 4px; color: var(--texte); }
   button.primary { background: var(--bleu); color: #fff; border: none; padding: 9px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; }
-  button.primary:hover { background: #154360; }
+  button.primary:hover { background: color-mix(in srgb, var(--bleu) 82%, #000000); }
   button.secondary { background: #fff; color: var(--bleu); border: 1px solid var(--bleu); padding: 8px 16px; border-radius: 4px; cursor: pointer; }
   button.secondary:hover { background: var(--bleu-clair); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -95,9 +95,9 @@
   table.pivot td.rowhead { text-align: left; font-weight: 600; background: #fafcfd; position: sticky; left: 0; z-index: 2; }
   table.pivot th[data-lvl] { position: sticky; left: 0; z-index: 4; }
   table.pivot tr:nth-child(even) td:not(.rowhead) { background: #fbfcfc; }
-  table.pivot tr.totalrow td { background: #eaf2f8 !important; font-weight: 700; border-top: 2px solid var(--bleu); }
+  table.pivot tr.totalrow td { background: var(--bleu-clair) !important; font-weight: 700; border-top: 2px solid var(--bleu); }
   table.pivot tr.subtotalrow td { background: #f2f6f4 !important; font-weight: 600; border-top: 1px solid var(--bleu-clair); font-style: italic; }
-  table.pivot td.totalcol { background: #eaf2f8 !important; font-weight: 700; border-left: 2px solid var(--bleu); }
+  table.pivot td.totalcol { background: var(--bleu-clair) !important; font-weight: 700; border-left: 2px solid var(--bleu); }
   /* Sous-total colonne : même traitement que les sous-totaux ligne (tr.subtotalrow), en colonne. */
   table.pivot .colsubtotal { background: #f2f6f4 !important; font-weight: 600; font-style: italic; border-left: 1px solid var(--bleu-clair); }
   /* Tendance (options A/C de la comparaison de maquettes), déclinées indépendamment sur les deux
@@ -163,15 +163,34 @@
     #printExport { display: block; position: absolute; top: 0; left: 0; width: 100%; }
     #printExport table { border-collapse: collapse; width: 100%; font-size: 11px; table-layout: auto; }
     #printExport th, #printExport td { border: 1px solid #999; padding: 4px 7px; word-break: break-word; }
-    #printExport th { background: #eaf2f8 !important; -webkit-print-color-adjust: exact; }
+    #printExport th { background: var(--bleu-clair) !important; -webkit-print-color-adjust: exact; }
     #printExport img, #printExport svg { max-width: 100%; height: auto; display: block; margin: 0 auto 12px; }
   }
 </style>
+<script>
+// Applique la couleur de thème mémorisée avant le premier rendu (évite le flash de la couleur par
+// défaut). app.js (chargé plus bas) prend ensuite le relais pour le sélecteur et les changements.
+(function () {
+  try {
+    var c = localStorage.getItem("pmsi_explorateur_theme_color");
+    if (c) document.documentElement.style.setProperty("--bleu", c);
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
 <header>
-  <h1>Explorateur TDB — PMSI-SMR</h1>
-  <p>Tableau de bord interactif portable (RHS groupé / VID-HOSP / Valorisation) — 100% local, aucune donnée envoyée nulle part.</p>
+  <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+    <div>
+      <h1>Explorateur TDB — PMSI-SMR</h1>
+      <p>Tableau de bord interactif portable (RHS groupé / VID-HOSP / Valorisation) — 100% local, aucune donnée envoyée nulle part.</p>
+    </div>
+    <label style="display:flex; align-items:center; gap:8px; font-size:0.82em; white-space:nowrap; color:#fff;">
+      Couleur du thème
+      <input type="color" id="themeColorPicker" value="#1a5276" style="width:34px; height:28px; padding:0; border:none; border-radius:4px; cursor:pointer; background:none;">
+      <button type="button" id="btnThemeColorReset" style="background:transparent; border:1px solid rgba(255,255,255,0.6); color:#fff; border-radius:4px; padding:5px 10px; cursor:pointer; font-size:0.85em;">Réinitialiser</button>
+    </label>
+  </div>
 </header>
 <main>
 

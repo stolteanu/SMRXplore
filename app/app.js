@@ -122,6 +122,7 @@ function esc(s) {
 let sqlJsEngine = null;
 
 async function init() {
+  wireThemeColorPicker(); // indépendant du chargement de la base, doit marcher même si celui-ci échoue
   status("Chargement du moteur SQL (sql.js)…");
   try {
     sqlJsEngine = await initSqlJs({ locateFile: f => "lib/" + f });
@@ -1361,6 +1362,55 @@ function buildSparklineSvg(values, isPct) {
     `<path d="${path}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="0.55"/>` +
     `<circle cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="2.5" fill="${endColor}"/>` +
     `</svg>`;
+}
+
+const THEME_COLOR_LS_KEY = "pmsi_explorateur_theme_color";
+const THEME_COLOR_DEFAULT = "#1a5276";
+
+function loadThemeColor() {
+  try { return localStorage.getItem(THEME_COLOR_LS_KEY) || THEME_COLOR_DEFAULT; }
+  catch { return THEME_COLOR_DEFAULT; }
+}
+
+function applyThemeColor(color) {
+  document.documentElement.style.setProperty("--bleu", color);
+}
+
+// Mélange deux couleurs hex (ratio 0-1 pour hexA) — équivalent manuel de color-mix(), pour les
+// exports où le destinataire ne l'interprète pas (Excel : aucun support de CSS moderne dans son
+// HTML importer, ni variables ni color-mix()). Utilisé uniquement pour dériver --bleu-clair en
+// littéral dans exportXls ; l'export HTML/impression peut lui garder color-mix() (cf. buildTableExportHtml).
+function mixHexColors(hexA, hexB, ratioA) {
+  const toRgb = h => {
+    const v = h.replace("#", "");
+    const full = v.length === 3 ? v.split("").map(c => c + c).join("") : v;
+    const num = parseInt(full, 16);
+    return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+  };
+  const a = toRgb(hexA), b = toRgb(hexB);
+  const mix = (x, y) => Math.round(x * ratioA + y * (1 - ratioA));
+  return "#" + [mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b)].map(x => x.toString(16).padStart(2, "0")).join("");
+}
+
+// Couleur d'accent de toute l'interface (en-tête, boutons, bordures d'en-tête de tableau…) —
+// --bleu-clair et le survol de button.primary en sont dérivés par color-mix() dans le CSS
+// (explorateur.html), donc un seul réglage suffit à teinter toute l'appli de façon cohérente.
+// Un script inline dans <head> applique déjà la couleur mémorisée avant le 1er rendu (anti-flash) ;
+// cette fonction prend le relais pour synchroniser le sélecteur et réagir aux changements.
+function wireThemeColorPicker() {
+  const color = loadThemeColor();
+  document.getElementById("themeColorPicker").value = color;
+  applyThemeColor(color);
+  document.getElementById("themeColorPicker").addEventListener("input", () => {
+    const v = document.getElementById("themeColorPicker").value;
+    localStorage.setItem(THEME_COLOR_LS_KEY, v);
+    applyThemeColor(v);
+  });
+  document.getElementById("btnThemeColorReset").addEventListener("click", () => {
+    document.getElementById("themeColorPicker").value = THEME_COLOR_DEFAULT;
+    localStorage.removeItem(THEME_COLOR_LS_KEY);
+    applyThemeColor(THEME_COLOR_DEFAULT);
+  });
 }
 
 const TREND_COLORS_LS_KEY = "pmsi_explorateur_trend_colors";
@@ -4661,6 +4711,7 @@ function download(filename, content, mime) {
 function buildTableExportHtml() {
   if (!lastResult) return null;
   const trendColors = loadTrendColors();
+  const themeColor = loadThemeColor();
   // Heuristique portrait/paysage : au-delà de ~6 colonnes un tableau croisé déborde presque
   // toujours d'une page A4 portrait (ajustable ensuite via le sélecteur d'orientation intégré).
   const orient = (lastResult.nCols || 0) > 6 ? "landscape" : "portrait";
@@ -4673,32 +4724,32 @@ function buildTableExportHtml() {
   // rend n'importe comment avec un CSS générique qui ignore ces classes.
   return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>${esc(lastResult.titleText)}</title>
 <style>
+:root{--bleu:${esc(themeColor)};--bleu-clair:color-mix(in srgb, var(--bleu) 12%, #fff);--trend-pos:${esc(trendColors.pos)};--trend-neg:${esc(trendColors.neg)};}
 body{font-family:Arial,sans-serif;color:#212f3c;margin:24px;}
-h1{color:#1a5276;font-size:1.2em;}
+h1{color:var(--bleu);font-size:1.2em;}
 p{color:#7f8c8d;font-size:0.9em;}
 table.pivot{border-collapse:collapse;width:auto;font-size:0.88em;}
 table.pivot th,table.pivot td{border:1px solid #d5dbdb;padding:6px 10px;text-align:right;white-space:nowrap;}
-table.pivot th{background:#eaf2f8;text-align:center;white-space:normal;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+table.pivot th{background:var(--bleu-clair);text-align:center;white-space:normal;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 table.pivot th .th-label{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;text-overflow:ellipsis;white-space:normal;word-break:break-word;max-width:150px;margin:0 auto;}
 table.pivot td.rowhead{text-align:left;font-weight:600;background:#fafcfd;}
 table.pivot tr:nth-child(even) td:not(.rowhead){background:#fbfcfc;}
-table.pivot tr.totalrow td{background:#eaf2f8!important;font-weight:700;border-top:2px solid #1a5276;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-table.pivot tr.subtotalrow td{background:#f2f6f4!important;font-weight:600;border-top:1px solid #eaf2f8;font-style:italic;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-table.pivot td.totalcol{background:#eaf2f8!important;font-weight:700;border-left:2px solid #1a5276;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-table.pivot .colsubtotal{background:#f2f6f4!important;font-weight:600;font-style:italic;border-left:1px solid #eaf2f8;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-:root{--trend-pos:${esc(trendColors.pos)};--trend-neg:${esc(trendColors.neg)};}
+table.pivot tr.totalrow td{background:var(--bleu-clair)!important;font-weight:700;border-top:2px solid var(--bleu);-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+table.pivot tr.subtotalrow td{background:#f2f6f4!important;font-weight:600;border-top:1px solid var(--bleu-clair);font-style:italic;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+table.pivot td.totalcol{background:var(--bleu-clair)!important;font-weight:700;border-left:2px solid var(--bleu);-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+table.pivot .colsubtotal{background:#f2f6f4!important;font-weight:600;font-style:italic;border-left:1px solid var(--bleu-clair);-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 table.pivot td.trend-heat-pos{background:color-mix(in srgb, var(--trend-pos) calc(var(--trend-alpha, 0) * 100%), #fff)!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 table.pivot td.trend-heat-neg{background:color-mix(in srgb, var(--trend-neg) calc(var(--trend-alpha, 0) * 100%), #fff)!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 .trend-arrow{display:inline-block;font-size:0.62em;margin-right:4px;vertical-align:middle;}
 .trend-arrow.trend-pos{color:var(--trend-pos);}
 .trend-arrow.trend-neg{color:var(--trend-neg);}
 .trend-arrow.trend-flat{color:#7f8c8d;}
-table.pivot th.trendcol,table.pivot td.trendcol{text-align:left;border-left:2px solid #eaf2f8;}
-table.pivot tr.trendrow td{background:#f7f5ea!important;border-top:1px solid #eaf2f8;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+table.pivot th.trendcol,table.pivot td.trendcol{text-align:left;border-left:2px solid var(--bleu-clair);}
+table.pivot tr.trendrow td{background:#f7f5ea!important;border-top:1px solid var(--bleu-clair);-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 .trend-spark{display:block;color:#7f8c8d;}
 body.gris{filter:grayscale(100%);}
 .toolbar{margin-bottom:18px;padding:10px 14px;background:#f4f6f7;border:1px solid #d5dbdb;border-radius:6px;display:flex;gap:16px;align-items:center;font-size:0.85em;}
-.toolbar button{background:#1a5276;color:#fff;border:none;border-radius:4px;padding:7px 14px;cursor:pointer;font-weight:600;}
+.toolbar button{background:var(--bleu);color:#fff;border:none;border-radius:4px;padding:7px 14px;cursor:pointer;font-weight:600;}
 @media print{ .toolbar{display:none;} body{margin:0;} table.pivot{font-size:${orient === "landscape" ? 10 : 11}px;} }
 </style>
 <style id="pageStyle">@page{size:A4 ${orient};margin:${orient === "landscape" ? "10mm" : "12mm"};}</style>
@@ -4753,14 +4804,17 @@ function ouvrirTableauNouvellePage() {
 
 function exportXls() {
   if (!lastResult) return;
+  // Excel (HTML importé via mso) ignore les variables CSS et color-mix() : la teinte claire du
+  // thème doit être un hex littéral, calculée à la main (cf. mixHexColors).
+  const bleuClair = mixHexColors(loadThemeColor(), "#ffffff", 0.12);
   const xlsHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"><title>${esc(lastResult.titleText)}</title>
 <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
 <x:Name>TDB</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
 </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
 <style>
-table{border-collapse:collapse;} td,th{border:1px solid #999;padding:4px 9px;} th{background:#eaf2f8;font-weight:bold;}
-tr:last-child td{background:#eaf2f8;font-weight:bold;}
+table{border-collapse:collapse;} td,th{border:1px solid #999;padding:4px 9px;} th{background:${esc(bleuClair)};font-weight:bold;}
+tr:last-child td{background:${esc(bleuClair)};font-weight:bold;}
 </style></head>
 <body><table><tr><td colspan="2"><b>${esc(lastResult.titleText)}</b></td></tr><tr><td colspan="2">${esc(lastResult.metaText)}</td></tr><tr><td></td></tr></table>${lastResult.tableHtml}</body></html>`;
   download("tdb_export.xls", xlsHtml, "application/vnd.ms-excel");
