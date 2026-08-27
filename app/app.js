@@ -1288,6 +1288,131 @@ function fmtVal(v, isPct) {
   return v.toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
+// ---------- Tendance (options A/C : dégradé+flèche par cellule, sparkline en fin de ligne) ----------
+// Pour chaque clé (colonne ou ligne), retrouve l'index de la clé "de niveau précédent" : même
+// valeur pour toutes les variables de l'axe sauf la dernière (celle qui varie, typiquement
+// l'année). Comme keys est trié par compareSortKeys (donc groupé par préfixe puis ordonné sur le
+// dernier niveau), la clé précédente d'un même groupe est toujours l'entrée juste avant dans le
+// tableau. Générique : utilisé pour l'axe colonnes comme pour l'axe lignes (cf. renderMultiPivotTable).
+function computeTrendPrevIdx(keys, partsByKey, nDimsAxis) {
+  const prevIdx = new Array(keys.length).fill(-1);
+  if (nDimsAxis < 1) return prevIdx;
+  for (let i = 1; i < keys.length; i++) {
+    const partsCur = partsByKey.get(keys[i]);
+    const partsPrev = partsByKey.get(keys[i - 1]);
+    let samePrefix = true;
+    for (let level = 0; level < nDimsAxis - 1; level++) {
+      if (partsCur[level] !== partsPrev[level]) { samePrefix = false; break; }
+    }
+    if (samePrefix) prevIdx[i] = i - 1;
+  }
+  return prevIdx;
+}
+
+const TREND_CAP_PCT = 15; // % de variation (ou points d'écart pour une mesure déjà en %) au-delà duquel la couleur du dégradé sature
+
+// isPct : la mesure est déjà exprimée en % (ex. "part du total") — on affiche alors un écart en
+// points (soustraction simple), pas une variation relative, qui reviendrait à relativiser un
+// pourcentage par rapport à lui-même et donnerait des valeurs absurdes pour de petits pourcentages.
+function trendDelta(cur, prev, isPct) {
+  if (typeof cur !== "number" || typeof prev !== "number" || isNaN(cur) || isNaN(prev)) return null;
+  if (isPct) return cur - prev;
+  if (prev === 0) return null;
+  return (cur - prev) / Math.abs(prev) * 100;
+}
+
+function trendArrowHtml(delta) {
+  if (delta === null) return "";
+  if (Math.abs(delta) < 0.5) return '<span class="trend-arrow trend-flat">▬</span>';
+  return delta > 0
+    ? '<span class="trend-arrow trend-pos">▲</span>'
+    : '<span class="trend-arrow trend-neg">▼</span>';
+}
+
+function trendHeatClassAttr(delta) {
+  if (delta === null || Math.abs(delta) < 0.5) return "";
+  const alpha = Math.min(Math.abs(delta), TREND_CAP_PCT) / TREND_CAP_PCT * 0.55 + 0.08;
+  const cls = delta > 0 ? "trend-heat-pos" : "trend-heat-neg";
+  return ` class="${cls}" style="--trend-alpha:${alpha.toFixed(3)}"`;
+}
+
+// Mini-graphique (sparkline) sur toute la série de colonnes d'une ligne, pour la colonne
+// "Tendance" — répond à "quelle est l'allure globale", complémentaire du delta case par case.
+function buildSparklineSvg(values, isPct) {
+  const pts = [];
+  values.forEach((v, i) => { if (typeof v === "number" && !isNaN(v)) pts.push({ i, v }); });
+  if (pts.length < 2) return "";
+  const w = 74, h = 22, pad = 3;
+  const vs = pts.map(p => p.v);
+  const min = Math.min(...vs), max = Math.max(...vs);
+  const range = (max - min) || 1;
+  const n = values.length;
+  const xy = pts.map(p => ({
+    x: pad + p.i * (w - 2 * pad) / (n - 1),
+    y: h - pad - (p.v - min) / range * (h - 2 * pad),
+  }));
+  const path = xy.map((p, i) => (i === 0 ? "M" : "L") + p.x.toFixed(1) + " " + p.y.toFixed(1)).join(" ");
+  const last = xy[xy.length - 1];
+  const delta = trendDelta(pts[pts.length - 1].v, pts[0].v, isPct);
+  const endColor = delta === null || Math.abs(delta) < 0.5
+    ? "var(--gris)"
+    : (delta > 0 ? "var(--trend-pos, #1f7a4d)" : "var(--trend-neg, #b1502f)");
+  return `<svg class="trend-spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+    `<path d="${path}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="0.55"/>` +
+    `<circle cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="2.5" fill="${endColor}"/>` +
+    `</svg>`;
+}
+
+const TREND_COLORS_LS_KEY = "pmsi_explorateur_trend_colors";
+const TREND_COLORS_DEFAULT = { pos: "#1f7a4d", neg: "#b1502f" };
+
+function loadTrendColors() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TREND_COLORS_LS_KEY) || "{}");
+    return { pos: saved.pos || TREND_COLORS_DEFAULT.pos, neg: saved.neg || TREND_COLORS_DEFAULT.neg };
+  } catch {
+    return { ...TREND_COLORS_DEFAULT };
+  }
+}
+
+function applyTrendColors(colors) {
+  document.documentElement.style.setProperty("--trend-pos", colors.pos);
+  document.documentElement.style.setProperty("--trend-neg", colors.neg);
+}
+
+function updateTrendColorsVisibility() {
+  const show = ["chkTrendHeat", "chkTrendSpark", "chkTrendHeatRow", "chkTrendSparkRow"]
+    .some(id => document.getElementById(id).checked);
+  document.getElementById("trendColorsWrap").style.display = show ? "flex" : "none";
+}
+
+// Couleurs de dégradé/flèche des tableaux croisés (options A/C) : préférence d'affichage locale au
+// navigateur, pas une donnée métier — appliquée immédiatement (pas besoin de recliquer "Générer").
+function wireTrendColorPickers() {
+  const colors = loadTrendColors();
+  document.getElementById("trendColorPos").value = colors.pos;
+  document.getElementById("trendColorNeg").value = colors.neg;
+  applyTrendColors(colors);
+  updateTrendColorsVisibility();
+
+  function onColorChange() {
+    const next = {
+      pos: document.getElementById("trendColorPos").value,
+      neg: document.getElementById("trendColorNeg").value,
+    };
+    localStorage.setItem(TREND_COLORS_LS_KEY, JSON.stringify(next));
+    applyTrendColors(next);
+  }
+  document.getElementById("trendColorPos").addEventListener("input", onColorChange);
+  document.getElementById("trendColorNeg").addEventListener("input", onColorChange);
+  document.getElementById("btnTrendColorsReset").addEventListener("click", () => {
+    document.getElementById("trendColorPos").value = TREND_COLORS_DEFAULT.pos;
+    document.getElementById("trendColorNeg").value = TREND_COLORS_DEFAULT.neg;
+    localStorage.removeItem(TREND_COLORS_LS_KEY);
+    applyTrendColors(TREND_COLORS_DEFAULT);
+  });
+}
+
 // En-tête <th> : le libellé est enveloppé dans un span dédié (plutôt que posé en texte direct dans
 // le <th>) pour que le retour à la ligne/l'ellipse à 3 lignes (CSS .th-label, -webkit-line-clamp)
 // s'applique sans changer le display:table-cell du <th> lui-même — cf. commentaire CSS associé.
@@ -1297,7 +1422,15 @@ function thLabelHtml(text) { return `<span class="th-label">${esc(text)}</span>`
 // après chaque groupe de sous-total colonne, une cellule supplémentaire — symétrique de la logique
 // d'en-tête (colSubtotalLastIdx) dans renderMultiPivotTable. valFn(pr, ck) donne la valeur normale
 // d'une cellule ; subValFn(pr, groupKey) donne celle du sous-total colonne.
-function renderColCells(pivot, exprsCfg, valFn, subValFn) {
+// trendPrevIdx (optionnel) : tableau prevIdx[i] = index de la colonne "niveau précédent" pour
+// pivot.colKeys[i], ou -1 — delta calculé le long de l'axe colonnes. rowPrevValFn(pr, ck)
+// (optionnel) donne la valeur de la même colonne sur la ligne "niveau précédent" — delta calculé
+// le long de l'axe lignes, utilisé seulement si le delta colonnes ne s'applique pas à cette cellule
+// (l'axe colonnes est prioritaire quand les deux dégradés sont actifs en même temps, cf. libellés
+// des cases à cocher dans explorateur.html). Fournis uniquement pour les lignes de détail — les
+// lignes de sous-total/total appellent cette fonction sans ces paramètres (cf. commentaire CSS
+// .trend-heat-* / renderMultiPivotTable).
+function renderColCells(pivot, exprsCfg, valFn, subValFn, trendPrevIdx, rowPrevValFn) {
   let out = "";
   const lastIdxToKey = new Map();
   if (pivot.colSubtotalGroups) {
@@ -1309,7 +1442,19 @@ function renderColCells(pivot, exprsCfg, valFn, subValFn) {
   pivot.colKeys.forEach((ck, i) => {
     for (const e of exprsCfg) {
       const pr = pivot.perExpr[e.uid];
-      out += "<td>" + fmtVal(valFn(pr, ck), pr.isPct) + "</td>";
+      const v = valFn(pr, ck);
+      let delta = null;
+      if (trendPrevIdx && trendPrevIdx[i] >= 0) {
+        delta = trendDelta(v, valFn(pr, pivot.colKeys[trendPrevIdx[i]]), pr.isPct);
+      } else if (rowPrevValFn) {
+        const prevV = rowPrevValFn(pr, ck);
+        if (prevV !== undefined) delta = trendDelta(v, prevV, pr.isPct);
+      }
+      if (delta !== null) {
+        out += `<td${trendHeatClassAttr(delta)}>${trendArrowHtml(delta)}${fmtVal(v, pr.isPct)}</td>`;
+      } else {
+        out += "<td>" + fmtVal(v, pr.isPct) + "</td>";
+      }
     }
     if (lastIdxToKey.has(i)) {
       const key = lastIdxToKey.get(i);
@@ -1317,6 +1462,31 @@ function renderColCells(pivot, exprsCfg, valFn, subValFn) {
         const pr = pivot.perExpr[e.uid];
         out += '<td class="colsubtotal">' + fmtVal(subValFn(pr, key), pr.isPct) + "</td>";
       }
+    }
+  });
+  return out;
+}
+
+// Symétrique de renderColCells, pour la ligne "Tendance" (bas de tableau) : une sparkline par
+// colonne (et par expression), construite sur la série des valeurs de cette colonne à travers
+// toutes les lignes — pas de delta ponctuel ici, juste l'allure globale de chaque colonne.
+function renderColCellsRowTrend(pivot, exprsCfg) {
+  let out = "";
+  const lastIdxToKey = new Map();
+  if (pivot.colSubtotalGroups) {
+    for (const g of pivot.colSubtotalGroups) {
+      const lastCk = g.colKeys[g.colKeys.length - 1];
+      lastIdxToKey.set(pivot.colKeys.indexOf(lastCk), g.key);
+    }
+  }
+  pivot.colKeys.forEach((ck, i) => {
+    for (const e of exprsCfg) {
+      const pr = pivot.perExpr[e.uid];
+      const series = pivot.rowKeys.map(rk => pr.grid[rk][ck]);
+      out += '<td class="trendcol">' + buildSparklineSvg(series, pr.isPct) + "</td>";
+    }
+    if (lastIdxToKey.has(i)) {
+      for (const e of exprsCfg) out += '<td class="trendcol colsubtotal"></td>';
     }
   });
   return out;
@@ -1342,13 +1512,19 @@ function applyRowheadSticky(container) {
   });
 }
 
-function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
+function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg, trendOpts) {
   const n = exprsCfg.length;
   const nDims = rowDimsCfg.length;
   const nDimsCol = colDimsCfg.length;
   const rowLabels = rowDimsCfg.map(cfg => labelForDimRow(cfg));
   const rowsParts = pivot.rowKeys.map(rk => pivot.rowPartsByKey.get(rk));
   const { show, span } = computeMerge(rowsParts);
+  const trendHeat = !!(trendOpts && trendOpts.heat) && nDimsCol > 0;
+  const trendSpark = !!(trendOpts && trendOpts.spark) && nDimsCol > 0;
+  const trendHeatRow = !!(trendOpts && trendOpts.heatRow);
+  const trendSparkRow = !!(trendOpts && trendOpts.sparkRow) && nDimsCol > 0;
+  const trendPrevIdx = trendHeat ? computeTrendPrevIdx(pivot.colKeys, pivot.colPartsByKey, nDimsCol) : null;
+  const trendPrevIdxRow = trendHeatRow ? computeTrendPrevIdx(pivot.rowKeys, pivot.rowPartsByKey, nDims) : null;
 
   let html = '<table class="pivot"><thead>';
 
@@ -1387,6 +1563,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
     html += `<th colspan="${nDims}"></th>`;
     html += `<th colspan="${totalDataCols - n}">${thLabelHtml(colLabels[0])}</th>`;
     html += `<th colspan="${n}" rowspan="${totalCellRowspan}" class="totalcol">Total</th>`;
+    if (trendSpark) html += `<th colspan="${n}" rowspan="${totalCellRowspan}" class="trendcol">${thLabelHtml("Tendance")}</th>`;
     html += "</tr>";
 
     for (let level = 0; level < nDimsCol; level++) {
@@ -1427,6 +1604,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
       }
     });
     for (const e of exprsCfg) html += `<th class="exprhead totalcol">${thLabelHtml(exprLabel(e))}</th>`;
+    if (trendSpark) for (const e of exprsCfg) html += `<th class="exprhead trendcol">${thLabelHtml(exprLabel(e))}</th>`;
     html += "</tr></thead><tbody>";
   } else {
     // Sans dimension en colonne, pivot.colKeys ne contient que la clé synthétique "Total" (cf.
@@ -1447,10 +1625,20 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
         html += `<td class="${cls}" data-lvl="${level}" rowspan="${span[i][level]}">${esc(rowsParts[i][level])}</td>`;
       }
     }
-    if (nDimsCol > 0) html += renderColCells(pivot, exprsCfg, (pr, ck) => pr.grid[rk][ck], (pr, key) => pr.colSubtotals && pr.colSubtotals[key] ? pr.colSubtotals[key].grid[rk] : null);
+    const rowPrevValFn = (trendHeatRow && trendPrevIdxRow[i] >= 0)
+      ? (pr, ck) => pr.grid[pivot.rowKeys[trendPrevIdxRow[i]]][ck]
+      : null;
+    if (nDimsCol > 0) html += renderColCells(pivot, exprsCfg, (pr, ck) => pr.grid[rk][ck], (pr, key) => pr.colSubtotals && pr.colSubtotals[key] ? pr.colSubtotals[key].grid[rk] : null, trendPrevIdx, rowPrevValFn);
     for (const e of exprsCfg) {
       const pr = pivot.perExpr[e.uid];
       html += '<td class="totalcol">' + fmtVal(pr.rowTotal[rk], pr.isPct) + "</td>";
+    }
+    if (trendSpark) {
+      for (const e of exprsCfg) {
+        const pr = pivot.perExpr[e.uid];
+        const series = pivot.colKeys.map(ck => pr.grid[rk][ck]);
+        html += '<td class="trendcol">' + buildSparklineSvg(series, pr.isPct) + "</td>";
+      }
     }
     html += "</tr>";
 
@@ -1473,6 +1661,10 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
           const sub = pr.subtotals && pr.subtotals[groupKey];
           html += '<td class="totalcol">' + fmtVal(sub ? sub.rowTotal : null, pr.isPct) + "</td>";
         }
+        // Pas de delta ni de sparkline sur les lignes de sous-total : elles agrègent un ensemble de
+        // lignes qui peut différer d'une colonne à l'autre (valeurs vides selon la combinaison),
+        // rendant la comparaison d'un niveau à l'autre trompeuse. On garde la cellule pour l'alignement.
+        if (trendSpark) for (const e of exprsCfg) html += '<td class="trendcol"></td>';
         html += "</tr>";
       }
     }
@@ -1484,7 +1676,30 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
     const pr = pivot.perExpr[e.uid];
     html += '<td class="totalcol">' + fmtVal(pr.grandTotal, pr.isPct) + "</td>";
   }
-  html += "</tr></tbody></table>";
+  if (trendSpark) {
+    for (const e of exprsCfg) {
+      const pr = pivot.perExpr[e.uid];
+      const series = pivot.colKeys.map(ck => pr.colTotal[ck]);
+      html += '<td class="trendcol">' + buildSparklineSvg(series, pr.isPct) + "</td>";
+    }
+  }
+  html += "</tr>";
+
+  // Ligne "Tendance" (symétrique de la colonne "Tendance") : une sparkline par colonne, montrant
+  // l'allure de cette colonne à travers toutes les lignes — pas de delta ponctuel (cf.
+  // renderColCellsRowTrend), la colonne totalcol reprend le même principe sur le total de chaque ligne.
+  if (trendSparkRow) {
+    html += `<tr class="trendrow"><td class="rowhead" colspan="${nDims}">Tendance</td>`;
+    html += renderColCellsRowTrend(pivot, exprsCfg);
+    for (const e of exprsCfg) {
+      const pr = pivot.perExpr[e.uid];
+      const series = pivot.rowKeys.map(rk => pr.rowTotal[rk]);
+      html += '<td class="totalcol">' + buildSparklineSvg(series, pr.isPct) + "</td>";
+    }
+    if (trendSpark) for (const e of exprsCfg) html += '<td class="trendcol"></td>';
+    html += "</tr>";
+  }
+  html += "</tbody></table>";
   return html;
 }
 
@@ -1539,7 +1754,13 @@ function generer() {
     const colSubtotal = !!(chkColSubtotal && chkColSubtotal.checked && colDimRows.length > 1);
     const pivot = computeMultiPivot(rows, rowDimRows, colDimRows, exprRows, foreignIdx, activeSource, subtotal, colSubtotal);
     const rowLabel = rowDimRows.map(r => labelForDimRow(r)).join(" / ");
-    const tableHtml = renderMultiPivotTable(pivot, rowDimRows, colDimRows, exprRows);
+    const trendOpts = {
+      heat: !!document.getElementById("chkTrendHeat")?.checked,
+      spark: !!document.getElementById("chkTrendSpark")?.checked,
+      heatRow: !!document.getElementById("chkTrendHeatRow")?.checked,
+      sparkRow: !!document.getElementById("chkTrendSparkRow")?.checked,
+    };
+    const tableHtml = renderMultiPivotTable(pivot, rowDimRows, colDimRows, exprRows, trendOpts);
 
     const titleText = `TDB PMSI-SMR — ${exprRows.map(e => exprLabel(e)).join(", ")} par ${rowLabel} — Établissement(s) ${finessList.join(", ")}`;
     const metaText = `Période : ${periods.map(p => p.label).join(", ")} · Filtres globaux : ${activeGF.length} · Lignes : ${rowLabel} · ` +
@@ -4439,6 +4660,7 @@ function download(filename, content, mime) {
 // les deux usages.
 function buildTableExportHtml() {
   if (!lastResult) return null;
+  const trendColors = loadTrendColors();
   // Heuristique portrait/paysage : au-delà de ~6 colonnes un tableau croisé déborde presque
   // toujours d'une page A4 portrait (ajustable ensuite via le sélecteur d'orientation intégré).
   const orient = (lastResult.nCols || 0) > 6 ? "landscape" : "portrait";
@@ -4464,6 +4686,16 @@ table.pivot tr.totalrow td{background:#eaf2f8!important;font-weight:700;border-t
 table.pivot tr.subtotalrow td{background:#f2f6f4!important;font-weight:600;border-top:1px solid #eaf2f8;font-style:italic;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 table.pivot td.totalcol{background:#eaf2f8!important;font-weight:700;border-left:2px solid #1a5276;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 table.pivot .colsubtotal{background:#f2f6f4!important;font-weight:600;font-style:italic;border-left:1px solid #eaf2f8;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+:root{--trend-pos:${esc(trendColors.pos)};--trend-neg:${esc(trendColors.neg)};}
+table.pivot td.trend-heat-pos{background:color-mix(in srgb, var(--trend-pos) calc(var(--trend-alpha, 0) * 100%), #fff)!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+table.pivot td.trend-heat-neg{background:color-mix(in srgb, var(--trend-neg) calc(var(--trend-alpha, 0) * 100%), #fff)!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+.trend-arrow{display:inline-block;font-size:0.62em;margin-right:4px;vertical-align:middle;}
+.trend-arrow.trend-pos{color:var(--trend-pos);}
+.trend-arrow.trend-neg{color:var(--trend-neg);}
+.trend-arrow.trend-flat{color:#7f8c8d;}
+table.pivot th.trendcol,table.pivot td.trendcol{text-align:left;border-left:2px solid #eaf2f8;}
+table.pivot tr.trendrow td{background:#f7f5ea!important;border-top:1px solid #eaf2f8;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+.trend-spark{display:block;color:#7f8c8d;}
 body.gris{filter:grayscale(100%);}
 .toolbar{margin-bottom:18px;padding:10px 14px;background:#f4f6f7;border:1px solid #d5dbdb;border-radius:6px;display:flex;gap:16px;align-items:center;font-size:0.85em;}
 .toolbar button{background:#1a5276;color:#fff;border:none;border-radius:4px;padding:7px 14px;cursor:pointer;font-weight:600;}
@@ -4734,6 +4966,12 @@ function wireEvents() {
   document.getElementById("btnOuvrirTableauPage").addEventListener("click", ouvrirTableauNouvellePage);
   document.getElementById("btnExportHtml").addEventListener("click", exportHtml);
   document.getElementById("btnExportXls").addEventListener("click", exportXls);
+
+  // ---- Tendance (options A/C) : couleurs hausse/baisse réglables, mémorisées d'une session à
+  // l'autre (préférence d'affichage, pas une donnée métier — clé unique, pas par établissement).
+  wireTrendColorPickers();
+  ["chkTrendHeat", "chkTrendSpark", "chkTrendHeatRow", "chkTrendSparkRow"].forEach(id =>
+    document.getElementById(id).addEventListener("change", updateTrendColorsVisibility));
 
   // ---- Mode "Liste filtrée" ----
   document.querySelectorAll("#sourceTabsListe button").forEach(btn => {

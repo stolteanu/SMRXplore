@@ -100,6 +100,23 @@
   table.pivot td.totalcol { background: #eaf2f8 !important; font-weight: 700; border-left: 2px solid var(--bleu); }
   /* Sous-total colonne : même traitement que les sous-totaux ligne (tr.subtotalrow), en colonne. */
   table.pivot .colsubtotal { background: #f2f6f4 !important; font-weight: 600; font-style: italic; border-left: 1px solid var(--bleu-clair); }
+  /* Tendance (options A/C de la comparaison de maquettes), déclinées indépendamment sur les deux
+     axes : fond dégradé + flèche par cellule (delta vs le niveau précédent de la dernière variable
+     en colonnes et/ou en lignes), colonne "Tendance" à droite (mini-graphique sur toute la série
+     d'une ligne) et ligne "Tendance" en bas (mini-graphique sur toute la série d'une colonne).
+     Couleurs pilotées par --trend-pos/--trend-neg, réglables par l'utilisateur (cf.
+     #trendColorPos/#trendColorNeg dans app.js). Limité aux cellules de détail : les lignes/colonnes
+     de sous-total et de total agrègent des ensembles différents d'un groupe à l'autre, un delta n'y
+     serait pas comparable (cf. commentaire de renderMultiPivotTable dans app.js). */
+  table.pivot td.trend-heat-pos { background: color-mix(in srgb, var(--trend-pos, #1f7a4d) calc(var(--trend-alpha, 0) * 100%), #fff) !important; }
+  table.pivot td.trend-heat-neg { background: color-mix(in srgb, var(--trend-neg, #b1502f) calc(var(--trend-alpha, 0) * 100%), #fff) !important; }
+  .trend-arrow { display: inline-block; font-size: 0.62em; margin-right: 4px; vertical-align: middle; }
+  .trend-arrow.trend-pos { color: var(--trend-pos, #1f7a4d); }
+  .trend-arrow.trend-neg { color: var(--trend-neg, #b1502f); }
+  .trend-arrow.trend-flat { color: var(--gris); }
+  table.pivot th.trendcol, table.pivot td.trendcol { text-align: left; border-left: 2px solid var(--bleu-clair); }
+  table.pivot tr.trendrow td { background: #f7f5ea !important; border-top: 1px solid var(--bleu-clair); }
+  .trend-spark { display: block; color: var(--gris); }
   .export-bar { display: flex; gap: 10px; margin-top: 14px; }
   .meta-line { font-size: 0.82em; color: var(--gris); margin-bottom: 10px; }
   .mode-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -290,6 +307,41 @@
     <label style="display:flex; align-items:center; gap:6px; margin-top:14px; font-size:0.85em;">
       <input type="checkbox" id="chkHideEmptyPivot"> Masquer les valeurs (vide) des variables en lignes/colonnes
     </label>
+
+    <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--bordure);">
+      <div style="display:flex; gap:28px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:0.78em; font-weight:700; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Tendance — colonnes</div>
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.85em;">
+            <input type="checkbox" id="chkTrendHeat"> Surligner l'évolution (fond dégradé + flèche) par rapport au niveau précédent de la dernière variable en colonnes
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; margin-top:8px;">
+            <input type="checkbox" id="chkTrendSpark"> Ajouter une colonne "Tendance" (mini-graphique sur toute la série, à droite)
+          </label>
+        </div>
+        <div>
+          <div style="font-size:0.78em; font-weight:700; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Tendance — lignes</div>
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.85em;">
+            <input type="checkbox" id="chkTrendHeatRow"> Surligner l'évolution (fond dégradé + flèche) par rapport au niveau précédent de la dernière variable en lignes
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; margin-top:8px;">
+            <input type="checkbox" id="chkTrendSparkRow"> Ajouter une ligne "Tendance" (mini-graphique sur toute la série, en bas)
+          </label>
+        </div>
+      </div>
+      <p style="font-size:0.78em; color:var(--gris); margin:8px 0 0;">
+        Si les deux dégradés (lignes et colonnes) sont cochés en même temps sur une même cellule, celui des colonnes est prioritaire.
+      </p>
+      <div id="trendColorsWrap" style="display:none; align-items:center; gap:18px; margin-top:8px; font-size:0.85em;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          Couleur hausse <input type="color" id="trendColorPos" value="#1f7a4d">
+        </label>
+        <label style="display:flex; align-items:center; gap:6px;">
+          Couleur baisse <input type="color" id="trendColorNeg" value="#b1502f">
+        </label>
+        <button type="button" class="btn-toggle-all" id="btnTrendColorsReset">Réinitialiser</button>
+      </div>
+    </div>
   </div>
 
   <div class="panel" id="panelRecap" style="display:none">
