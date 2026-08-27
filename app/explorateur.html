@@ -43,6 +43,10 @@
   .var-row input.expr-label { flex: 1 1 120px; min-width: 90px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; }
   .btn-remove { flex: 0 0 auto; background: #fff; border: 1px solid #e6b0aa; color: #c0392b; border-radius: 4px; width: 28px; height: 28px; cursor: pointer; font-weight: 700; line-height: 1; }
   .btn-remove:hover { background: #fdecea; }
+  .reorder-btns { flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; }
+  .btn-reorder { background: #fff; border: 1px solid var(--bordure); color: var(--bleu); border-radius: 3px; width: 22px; height: 15px; cursor: pointer; font-size: 0.65em; line-height: 1; padding: 0; }
+  .btn-reorder:hover:not(:disabled) { background: var(--bleu-clair); }
+  .btn-reorder:disabled { opacity: 0.35; cursor: default; }
   .btn-add { margin-top: 4px; align-self: flex-start; background: #fff; border: 1px dashed var(--bleu); color: var(--bleu); border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.85em; }
   .btn-add:hover { background: var(--bleu-clair); }
   .btn-toggle-all { margin-left: 8px; background: #fff; border: 1px solid var(--bleu); color: var(--bleu); border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.85em; font-weight: 400; }
@@ -80,8 +84,16 @@
     overflow: hidden; text-overflow: ellipsis;
     white-space: normal; word-break: break-word; max-width: 150px; margin: 0 auto;
   }
-  table.pivot td.rowhead { text-align: left; font-weight: 600; background: #fafcfd; position: sticky; left: 0; }
-  table.pivot td.rowhead.rowhead-nested { position: static; left: auto; }
+  /* Chaque variable de ligne (pas seulement la 1ère) reste figée au défilement horizontal — le
+     décalage "left" exact de chaque niveau (2e variable, 3e...) dépend de la largeur réelle de la
+     colonne précédente, calculée en JS après rendu (cf. applyRowheadSticky) via l'attribut
+     data-lvl posé sur chaque cellule concernée ; le left:0 ci-dessous n'est qu'un repli pour le
+     tout 1er niveau avant ce calcul. Sans ça, la 2e variable de ligne défilait avec le corps du
+     tableau et se retrouvait cachée sous la 1ère, restée figée (constaté par l'utilisateur).
+     z-index 2 (sous le thead à 3, au-dessus des cellules de données) et 4 pour les en-têtes de
+     ligne (coin haut-gauche, doivent rester au-dessus à la fois du thead et des rowhead du corps). */
+  table.pivot td.rowhead { text-align: left; font-weight: 600; background: #fafcfd; position: sticky; left: 0; z-index: 2; }
+  table.pivot th[data-lvl] { position: sticky; left: 0; z-index: 4; }
   table.pivot tr:nth-child(even) td:not(.rowhead) { background: #fbfcfc; }
   table.pivot tr.totalrow td { background: #eaf2f8 !important; font-weight: 700; border-top: 2px solid var(--bleu); }
   table.pivot tr.subtotalrow td { background: #f2f6f4 !important; font-weight: 600; border-top: 1px solid var(--bleu-clair); font-style: italic; }
@@ -326,7 +338,6 @@
     <div class="export-bar">
       <button class="secondary" id="btnOuvrirTableauPage" disabled>Ouvrir dans une nouvelle page ↗</button>
       <button class="secondary" id="btnExportHtml" disabled title="L'impression/export PDF se fait depuis ce fichier HTML (bouton Imprimer intégré)">Exporter en HTML</button>
-      <button class="secondary" id="btnExportDoc" disabled>Exporter en Word (.doc)</button>
       <button class="secondary" id="btnExportXls" disabled>Exporter en Excel (.xls)</button>
     </div>
   </div>

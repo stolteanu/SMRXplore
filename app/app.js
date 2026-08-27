@@ -212,7 +212,7 @@ function populateFiness() {
     cb.type = "checkbox";
     cb.value = r.finess_epmsi;
     cb.className = "finess-check";
-    if (i === 0) cb.checked = true; // par défaut : le premier établissement seul
+    // aucun établissement présélectionné par défaut
     label.appendChild(cb);
     label.appendChild(document.createTextNode(r.finess_epmsi));
     box.appendChild(label);
@@ -266,16 +266,14 @@ function populateMoisSelect() {
 function onFinessChange() {
   updateFinessToggleLabel();
   const finessList = selectedFiness();
-  if (!finessList.length) {
-    document.getElementById("checksAnnees").innerHTML = "";
-    updateRecap();
-    return;
-  }
-  const placeholders = finessList.map(() => "?").join(",");
-  const rows = queryAll(
-    `SELECT DISTINCT substr(numero_semaine,3,4) AS y FROM rhs_groupe WHERE finess_epmsi IN (${placeholders}) AND numero_semaine IS NOT NULL ORDER BY 1`,
-    finessList
-  );
+  // Même sans établissement coché, on affiche la liste complète des années disponibles
+  // (non filtrée), simplement non présélectionnée — pour ne pas faire disparaître le filtre.
+  const rows = finessList.length
+    ? queryAll(
+        `SELECT DISTINCT substr(numero_semaine,3,4) AS y FROM rhs_groupe WHERE finess_epmsi IN (${finessList.map(() => "?").join(",")}) AND numero_semaine IS NOT NULL ORDER BY 1`,
+        finessList
+      )
+    : queryAll(`SELECT DISTINCT substr(numero_semaine,3,4) AS y FROM rhs_groupe WHERE numero_semaine IS NOT NULL ORDER BY 1`);
   const box = document.getElementById("checksAnnees");
   box.innerHTML = "";
   rows.forEach((r, i) => {
@@ -285,7 +283,7 @@ function onFinessChange() {
     cb.type = "checkbox";
     cb.value = r.y;
     cb.id = id;
-    if (i >= rows.length - 2) cb.checked = true; // par défaut : les 2 années les plus récentes
+    // aucune année présélectionnée par défaut
     label.appendChild(cb);
     label.appendChild(document.createTextNode(r.y));
     box.appendChild(label);
@@ -372,6 +370,8 @@ function renderDimsList(containerId, arr, minCount) {
       div.appendChild(modeSel);
     }
 
+    div.appendChild(createReorderButtons(arr, row, () => { renderDimsList(containerId, arr, minCount); updateRecap(); }));
+
     const rm = document.createElement("button");
     rm.className = "btn-remove"; rm.textContent = "✕"; rm.title = "Retirer";
     rm.disabled = arr.length <= minCount;
@@ -389,6 +389,33 @@ function renderDimsList(containerId, arr, minCount) {
   updateGraphAddButtons();
   if (containerId === "rowDimsList") updateRowSubtotalUI(arr);
   if (containerId === "colDimsList") updateColSubtotalUI(arr);
+}
+
+// Boutons ▲▼ pour réordonner un élément dans un tableau de lignes (rowDimRows/colDimRows/exprRows) —
+// l'ordre compte : c'est lui qui fixe l'imbrication des regroupements (et le niveau de sous-total,
+// toujours basé sur le premier élément, cf. updateRowSubtotalUI/updateColSubtotalUI) ou l'ordre des
+// colonnes d'expression dans le tableau généré.
+function createReorderButtons(arr, row, onReorder) {
+  const wrap = document.createElement("span");
+  wrap.className = "reorder-btns";
+  const up = document.createElement("button");
+  up.type = "button"; up.className = "btn-reorder"; up.textContent = "▲"; up.title = "Monter";
+  const down = document.createElement("button");
+  down.type = "button"; down.className = "btn-reorder"; down.textContent = "▼"; down.title = "Descendre";
+  const idx = arr.indexOf(row);
+  up.disabled = idx <= 0;
+  down.disabled = idx < 0 || idx >= arr.length - 1;
+  up.addEventListener("click", () => {
+    const i = arr.indexOf(row);
+    if (i > 0) { [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]]; onReorder(); }
+  });
+  down.addEventListener("click", () => {
+    const i = arr.indexOf(row);
+    if (i >= 0 && i < arr.length - 1) { [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]]; onReorder(); }
+  });
+  wrap.appendChild(up);
+  wrap.appendChild(down);
+  return wrap;
 }
 
 // Case à cocher "Sous-totaux" (section Lignes du tableau croisé) : visible seulement dès qu'il y a
@@ -516,6 +543,8 @@ function renderExprListGeneric(containerId, arr, minCount) {
       div.appendChild(renderAggSelect(row));
       div.appendChild(renderLabelInput(row, () => {}));
     }
+
+    div.appendChild(createReorderButtons(arr, row, () => { renderExprListGeneric(containerId, arr, minCount); updateRecap(); }));
 
     const rm = document.createElement("button");
     rm.className = "btn-remove"; rm.textContent = "✕"; rm.title = "Retirer";
@@ -1279,6 +1308,26 @@ function renderColCells(pivot, exprsCfg, valFn, subValFn) {
   return out;
 }
 
+// Calcule et pose le décalage "left" réel de chaque variable de ligne (data-lvl), pour que la 2e
+// (et suivantes) reste figée à sa juste place au défilement horizontal, au lieu d'être cachée sous
+// la 1ère (position:static héritée du CSS avant ce correctif) — largeur mesurée après rendu, pas
+// supposée fixe, puisque table.pivot est en table-layout auto (chaque colonne se calibre sur son
+// contenu, cf. commentaire plus haut).
+function applyRowheadSticky(container) {
+  const table = container.querySelector("table.pivot");
+  if (!table) return;
+  const headerCells = table.querySelectorAll("thead th[data-lvl]");
+  if (!headerCells.length) return;
+  const widths = [];
+  headerCells.forEach(th => { widths[Number(th.dataset.lvl)] = th.getBoundingClientRect().width; });
+  const offsets = [];
+  let acc = 0;
+  for (let i = 0; i < widths.length; i++) { offsets[i] = acc; acc += widths[i] || 0; }
+  table.querySelectorAll("[data-lvl]").forEach(el => {
+    el.style.left = (offsets[Number(el.dataset.lvl)] || 0) + "px";
+  });
+}
+
 function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
   const n = exprsCfg.length;
   const nDims = rowDimsCfg.length;
@@ -1328,7 +1377,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
 
     for (let level = 0; level < nDimsCol; level++) {
       html += "<tr>";
-      if (level === 0) rowLabels.forEach(lbl => { html += `<th rowspan="${rowLabelsRowspan}">${thLabelHtml(lbl)}</th>`; });
+      if (level === 0) rowLabels.forEach((lbl, lvl) => { html += `<th rowspan="${rowLabelsRowspan}" data-lvl="${lvl}">${thLabelHtml(lbl)}</th>`; });
       pivot.colKeys.forEach((ck, i) => {
         if (colShow[i][level]) html += `<th colspan="${colSpan[i][level] * n}">${thLabelHtml(colsParts[i][level])}</th>`;
         if (level === 0 && colSubtotalLastIdx.has(i)) {
@@ -1370,7 +1419,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
     // computeMultiPivot) : afficher une colonne par clé PUIS la colonne totalcol dupliquerait deux
     // fois la même valeur. On n'affiche donc que la colonne totalcol dans ce cas.
     html += '<tr>';
-    rowLabels.forEach(lbl => { html += `<th rowspan="2">${thLabelHtml(lbl)}</th>`; });
+    rowLabels.forEach((lbl, lvl) => { html += `<th rowspan="2" data-lvl="${lvl}">${thLabelHtml(lbl)}</th>`; });
     html += `<th colspan="${n}">Total</th></tr><tr>`;
     for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
     html += "</tr></thead><tbody>";
@@ -1381,7 +1430,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg) {
     for (let level = 0; level < nDims; level++) {
       if (show[i][level]) {
         const cls = level === 0 ? "rowhead" : "rowhead rowhead-nested";
-        html += `<td class="${cls}" rowspan="${span[i][level]}">${esc(rowsParts[i][level])}</td>`;
+        html += `<td class="${cls}" data-lvl="${level}" rowspan="${span[i][level]}">${esc(rowsParts[i][level])}</td>`;
       }
     }
     if (nDimsCol > 0) html += renderColCells(pivot, exprsCfg, (pr, ck) => pr.grid[rk][ck], (pr, key) => pr.colSubtotals && pr.colSubtotals[key] ? pr.colSubtotals[key].grid[rk] : null);
@@ -1482,10 +1531,12 @@ function generer() {
 
     document.getElementById("panelResult").style.display = "block";
     document.getElementById("resultMeta").textContent = metaText;
-    document.getElementById("resultWrap").innerHTML = tableHtml;
+    const resultWrap = document.getElementById("resultWrap");
+    resultWrap.innerHTML = tableHtml;
+    applyRowheadSticky(resultWrap);
     const nCols = rowDimRows.length + pivot.colKeys.length * exprRows.length + exprRows.length;
     lastResult = { titleText, metaText, tableHtml, nCols, nRows: pivot.rowKeys.length };
-    ["btnOuvrirTableauPage", "btnExportHtml", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
+    ["btnOuvrirTableauPage", "btnExportHtml", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
     status(`Tableau généré (${pivot.rowKeys.length} ligne(s) × ${pivot.colKeys.length} colonne(s) × ${exprRows.length} expression(s)).`);
   } catch (e) {
     status("Erreur : " + e.message, true);
@@ -2024,7 +2075,7 @@ function genererListe() {
     document.getElementById("resultMeta").textContent = metaText;
     document.getElementById("resultWrap").innerHTML = html;
     lastResult = { titleText, metaText, tableHtml: html };
-    ["btnOuvrirTableauPage", "btnExportHtml", "btnExportDoc", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
+    ["btnOuvrirTableauPage", "btnExportHtml", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
     setSt(`${total} ligne(s) trouvée(s)${total > LISTE_ROW_CAP ? `, ${LISTE_ROW_CAP} affichée(s)` : ""}.`);
   } catch (e) {
     setSt("Erreur : " + e.message, true);
@@ -4373,7 +4424,7 @@ function buildTableExportHtml() {
   const orient = (lastResult.nCols || 0) > 6 ? "landscape" : "portrait";
   // width:auto (et non 100%) pour que le tableau se redimensionne à son contenu plutôt que
   // d'étirer les colonnes sur toute la largeur de page — même comportement que l'affichage dans
-  // l'appli (table.pivot { width: auto }) et que l'export Word.
+  // l'appli (table.pivot { width: auto }).
   // Mêmes règles que table.pivot dans l'explorateur (cf. explorateur.html) — la page exportée doit
   // reproduire fidèlement la mise en page à l'écran (en-têtes centrés, rowhead à gauche, lignes/
   // colonnes de sous-total et de total), sinon le tableau croisé (rowspan/colspan multi-niveaux)
@@ -4461,21 +4512,6 @@ tr:last-child td{background:#eaf2f8;font-weight:bold;}
 </style></head>
 <body><table><tr><td colspan="2"><b>${esc(lastResult.titleText)}</b></td></tr><tr><td colspan="2">${esc(lastResult.metaText)}</td></tr><tr><td></td></tr></table>${lastResult.tableHtml}</body></html>`;
   download("tdb_export.xls", xlsHtml, "application/vnd.ms-excel");
-}
-
-function exportDoc() {
-  if (!lastResult) return;
-  const docHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="utf-8"><title>${esc(lastResult.titleText)}</title>
-<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
-<style>
-body{font-family:Calibri,Arial,sans-serif;color:#212f3c;}
-h2{color:#1a5276;} p{color:#555;font-size:0.9em;}
-table{border-collapse:collapse;} td,th{border:1px solid #999;padding:4px 9px;} th{background:#eaf2f8;}
-tr:last-child td{background:#eaf2f8;font-weight:bold;}
-</style></head>
-<body><h2>${esc(lastResult.titleText)}</h2><p>${esc(lastResult.metaText)}</p>${lastResult.tableHtml}</body></html>`;
-  download("tdb_export.doc", docHtml, "application/msword");
 }
 
 // ---------- Exports du graphique ----------
@@ -4644,6 +4680,9 @@ tr:last-child td{background:#eaf2f8;font-weight:bold;}
 // ---------- Câblage évènements ----------
 
 function wireEvents() {
+  // Recalcule le décalage des variables de ligne figées si la fenêtre change de taille (largeur des
+  // colonnes recalibrée par le navigateur en table-layout auto).
+  window.addEventListener("resize", () => applyRowheadSticky(document.getElementById("resultWrap")));
   document.getElementById("checksAnnees").addEventListener("change", () => { updateRecap(); renderGlobalFilterList(); });
   document.getElementById("selMois").addEventListener("change", () => { updateRecap(); renderGlobalFilterList(); });
   document.getElementById("selPeriodeMode").addEventListener("change", () => {
@@ -4674,7 +4713,6 @@ function wireEvents() {
   document.getElementById("btnGenerer").addEventListener("click", generer);
   document.getElementById("btnOuvrirTableauPage").addEventListener("click", ouvrirTableauNouvellePage);
   document.getElementById("btnExportHtml").addEventListener("click", exportHtml);
-  document.getElementById("btnExportDoc").addEventListener("click", exportDoc);
   document.getElementById("btnExportXls").addEventListener("click", exportXls);
 
   // ---- Mode "Liste filtrée" ----
