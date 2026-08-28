@@ -395,7 +395,17 @@ def serve(port: int = 0) -> ThreadingHTTPServer:
 def main() -> None:
     import webbrowser
 
-    httpd = serve(0)
+    # Port fixe (plutôt que 0 = port aléatoire choisi par l'OS) : l'URL reste identique d'un
+    # lancement à l'autre, sinon chaque relance de launch.exe change d'origine (127.0.0.1:PORT)
+    # et fait perdre tout ce que l'explorateur mémorise côté navigateur (localStorage), comme la
+    # dernière sélection de filtres — constaté par l'utilisateur. Repli sur un port aléatoire
+    # seulement si le port fixe est déjà occupé (ex. une autre instance déjà lancée), pour ne
+    # jamais empêcher le démarrage.
+    DEFAULT_PORT = 8743
+    try:
+        httpd = serve(DEFAULT_PORT)
+    except OSError:
+        httpd = serve(0)
     port = httpd.server_address[1]
     url = f"http://127.0.0.1:{port}/"
     print(f"Serveur PMSI-SMR démarré : {url}")
