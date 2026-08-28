@@ -165,9 +165,13 @@ async function onDbFilePicked(evt) {
 function onDbReady() {
   loadDiagHierarchy();
   populateFiness();
+  populateAnnees();
   populateMoisSelect();
   populateFicheFiness();
   wireEvents();
+  // Ne restaure PAS automatiquement la dernière sélection mémorisée : elle reste disponible via le
+  // bouton "Charger la dernière sélection", à la demande — l'utilisateur ne veut pas qu'un ancien
+  // filtre reste en place par défaut au chargement d'une base.
   onFinessChange();
 }
 
@@ -242,6 +246,10 @@ function toggleAllFiness() {
   const allChecked = boxes.length > 0 && [...boxes].every(cb => cb.checked);
   boxes.forEach(cb => { cb.checked = !allChecked; });
   onFinessChange();
+  // Coché/décoché par programme (pas de clic direct sur chaque case) : l'écouteur délégué sur
+  // #panelSelection (qui capte les "change" naturels) ne se déclenche pas ici, donc sauvegarde
+  // explicite pour que "Tout sélectionner/désélectionner" soit bien mémorisé aussi.
+  saveLastSelection();
 }
 
 function onFinessCheckChange(evt) {
@@ -265,17 +273,10 @@ function populateMoisSelect() {
   });
 }
 
-function onFinessChange() {
-  updateFinessToggleLabel();
-  const finessList = selectedFiness();
-  // Même sans établissement coché, on affiche la liste complète des années disponibles
-  // (non filtrée), simplement non présélectionnée — pour ne pas faire disparaître le filtre.
-  const rows = finessList.length
-    ? queryAll(
-        `SELECT DISTINCT substr(numero_semaine,3,4) AS y FROM rhs_groupe WHERE finess_epmsi IN (${finessList.map(() => "?").join(",")}) AND numero_semaine IS NOT NULL ORDER BY 1`,
-        finessList
-      )
-    : queryAll(`SELECT DISTINCT substr(numero_semaine,3,4) AS y FROM rhs_groupe WHERE numero_semaine IS NOT NULL ORDER BY 1`);
+// Liste des années disponibles, indépendante de la sélection FINESS : construite une seule
+// fois au chargement de la base, jamais reconstruite lors d'un changement d'établissement.
+function populateAnnees() {
+  const rows = queryAll(`SELECT DISTINCT substr(numero_semaine,3,4) AS y FROM rhs_groupe WHERE numero_semaine IS NOT NULL ORDER BY 1`);
   const box = document.getElementById("checksAnnees");
   box.innerHTML = "";
   rows.forEach((r, i) => {
@@ -290,11 +291,69 @@ function onFinessChange() {
     label.appendChild(document.createTextNode(r.y));
     box.appendChild(label);
   });
+}
+
+function onFinessChange() {
+  updateFinessToggleLabel();
   document.getElementById("panelModeTabs").style.display = "block";
   document.getElementById("panelPivot").style.display = "block";
   refreshDimUI();
   refreshListeUI();
   renderGlobalFilterList();
+}
+
+// ---------- Mémorisation de la dernière sélection de filtres (1. Filtres) ----------
+// Filtres répétitifs (établissements, années, période, filtres additionnels) : on mémorise
+// automatiquement la dernière combinaison utilisée pour que le bouton "Charger la dernière
+// sélection" la restaure d'un rechargement de base à l'autre, sans tout recocher à la main.
+const LAST_SELECTION_LS_KEY = "pmsi_smr_explorateur_derniere_selection";
+
+function captureSelectionState() {
+  return {
+    finess: selectedFiness(),
+    annees: [...document.querySelectorAll("#checksAnnees input:checked")].map(c => c.value),
+    periodeMode: document.getElementById("selPeriodeMode").value,
+    mois: document.getElementById("selMois").value,
+    periodeDebut: document.getElementById("inpPeriodeDebut").value,
+    periodeFin: document.getElementById("inpPeriodeFin").value,
+    globalFilters: globalFilterRows.map(f => ({
+      srcKey: f.srcKey, kind: f.kind, id: f.id, values: f.values, op: f.op, val: f.val, val2: f.val2
+    })),
+  };
+}
+
+function saveLastSelection() {
+  try { localStorage.setItem(LAST_SELECTION_LS_KEY, JSON.stringify(captureSelectionState())); }
+  catch (e) { /* stockage indisponible (navigation privée, quota) — tant pis, pas bloquant */ }
+}
+
+function loadLastSelection() {
+  let raw;
+  try { raw = localStorage.getItem(LAST_SELECTION_LS_KEY); } catch (e) { raw = null; }
+  if (!raw) { status("Aucune sélection mémorisée pour l'instant.", true); return; }
+  let s;
+  try { s = JSON.parse(raw); } catch (e) { status("Sélection mémorisée illisible.", true); return; }
+
+  document.querySelectorAll("#checksFiness input").forEach(cb => { cb.checked = (s.finess || []).includes(cb.value); });
+  document.querySelectorAll("#checksAnnees input").forEach(cb => { cb.checked = (s.annees || []).includes(cb.value); });
+
+  if (s.periodeMode) document.getElementById("selPeriodeMode").value = s.periodeMode;
+  const perso = document.getElementById("selPeriodeMode").value === "perso";
+  document.getElementById("champMoisCumule").style.display = perso ? "none" : "";
+  document.getElementById("champPeriodePerso").style.display = perso ? "" : "none";
+  if (s.mois) document.getElementById("selMois").value = s.mois;
+  document.getElementById("inpPeriodeDebut").value = s.periodeDebut || "";
+  document.getElementById("inpPeriodeFin").value = s.periodeFin || "";
+  validatePeriodePerso();
+
+  globalFilterRows = (s.globalFilters || []).map(f => ({
+    uid: ++uidCounter, srcKey: f.srcKey, kind: f.kind, id: f.id,
+    values: f.values || [], op: f.op || "between", val: f.val || "", val2: f.val2 || ""
+  }));
+
+  onFinessChange();
+  updateRecap();
+  status("Dernière sélection rechargée.");
 }
 
 // ---------- Listes dynamiques : lignes / colonnes / expressions ----------
@@ -4733,7 +4792,7 @@ table.pivot{border-collapse:collapse;width:auto;font-size:0.88em;}
 table.pivot th,table.pivot td{border:1px solid #d5dbdb;padding:6px 10px;text-align:right;white-space:nowrap;}
 table.pivot th{background:var(--bleu-clair);text-align:center;white-space:normal;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 table.pivot th .th-label{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;text-overflow:ellipsis;white-space:normal;word-break:break-word;max-width:150px;margin:0 auto;}
-table.pivot td.rowhead{text-align:left;font-weight:600;background:#fafcfd;}
+table.pivot td.rowhead{text-align:left;font-weight:600;background:#fafcfd;white-space:normal;word-break:break-word;max-width:260px;}
 table.pivot tr:nth-child(even) td:not(.rowhead){background:#fbfcfc;}
 table.pivot tr.totalrow td{background:var(--bleu-clair)!important;font-weight:700;border-top:2px solid var(--bleu);-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 table.pivot tr.subtotalrow td{background:#f2f6f4!important;font-weight:600;border-top:1px solid var(--bleu-clair);font-style:italic;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
@@ -5071,6 +5130,14 @@ function wireEvents() {
   });
   document.getElementById("inpPeriodeDebut").addEventListener("input", () => { validatePeriodePerso(); updateRecap(); renderGlobalFilterList(); });
   document.getElementById("inpPeriodeFin").addEventListener("input", () => { validatePeriodePerso(); updateRecap(); renderGlobalFilterList(); });
+
+  // Sauvegarde auto de la sélection (1. Filtres) à chaque changement, y compris les filtres
+  // additionnels ajoutés dynamiquement (délégation sur le panneau entier, plus simple et plus
+  // robuste que d'accrocher un listener à chaque contrôle créé au fil de l'eau).
+  document.getElementById("panelSelection").addEventListener("change", saveLastSelection);
+  document.getElementById("panelSelection").addEventListener("input", saveLastSelection);
+  const btnChargerSelection = document.getElementById("btnChargerDerniereSelection");
+  if (btnChargerSelection) btnChargerSelection.addEventListener("click", loadLastSelection);
 
   document.getElementById("btnAddRowDim").addEventListener("click", () => {
     rowDimRows.push({ uid: ++uidCounter, srcKey: activeSource, dimId: null, mode: undefined });

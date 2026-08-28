@@ -121,7 +121,10 @@
      tableau et se retrouvait cachée sous la 1ère, restée figée (constaté par l'utilisateur).
      z-index 2 (sous le thead à 3, au-dessus des cellules de données) et 4 pour les en-têtes de
      ligne (coin haut-gauche, doivent rester au-dessus à la fois du thead et des rowhead du corps). */
-  table.pivot td.rowhead { text-align: left; font-weight: 600; background: var(--surface-alt); position: sticky; left: 0; z-index: 2; }
+  /* Contrairement aux en-têtes de colonne (largeur multipliée par le nombre de colonnes, donc
+     limitée à 3 lignes ci-dessus), l'en-tête de ligne est une seule colonne sticky : le libellé
+     peut s'y afficher en entier, sur autant de lignes que nécessaire, sans ellipse. */
+  table.pivot td.rowhead { text-align: left; font-weight: 600; background: var(--surface-alt); position: sticky; left: 0; z-index: 2; white-space: normal; word-break: break-word; max-width: 260px; }
   table.pivot th[data-lvl] { position: sticky; left: 0; z-index: 4; }
   table.pivot tr:nth-child(even) td:not(.rowhead) { background: var(--surface-alt-2); }
   table.pivot tr.totalrow td { background: var(--bleu-clair) !important; font-weight: 700; border-top: 2px solid var(--bleu); }
@@ -268,7 +271,7 @@
   <p class="back-link"><a href="#" id="btnBackFromRequetes">&larr; Changer de parcours</a></p>
 
   <div class="panel" id="panelSelection">
-    <h2>1. Filtres</h2>
+    <h2>1. Filtres <button type="button" id="btnChargerDerniereSelection" class="btn-toggle-all">Charger la dernière sélection</button></h2>
     <div class="row">
       <div class="field">
         <label>Établissement(s) <button type="button" id="btnToggleFiness" class="btn-toggle-all">Tout sélectionner</button></label>
