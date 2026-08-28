@@ -103,6 +103,13 @@
      leur empilement naturel, seul l'ensemble se fige en haut du cadre défilant. */
   table.pivot thead { position: sticky; top: 0; z-index: 3; }
   table.pivot th { background: var(--bleu-clair); text-align: center; white-space: normal; }
+  /* Tri interactif des lignes (clic sur l'en-tête de la variable en lignes ou sur "Total" d'une
+     expression) — seulement câblé quand il n'y a qu'une variable en lignes (cf. wirePivotSortClicks
+     dans app.js), donc ces classes n'apparaissent jamais en même temps qu'un rowspan de groupe. */
+  table.pivot th.sortable-th { cursor: pointer; }
+  table.pivot th.sortable-th:hover { background: color-mix(in srgb, var(--bleu) 18%, var(--bleu-clair)); }
+  table.pivot th.sort-asc .th-label::after { content: " \25B2"; }
+  table.pivot th.sort-desc .th-label::after { content: " \25BC"; }
   /* Libellé d'en-tête : retour à la ligne dans la largeur calibrée par le contenu (pas de troncature
      à une seule ligne), jusqu'à 3 lignes — au-delà, coupé avec une ellipse plutôt que d'élargir la
      colonne à l'infini pour un seul libellé démesuré. display:-webkit-box (nécessaire pour

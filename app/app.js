@@ -6,6 +6,11 @@ let db = null;
 // fichier, donc ce choix n'affecte plus les résultats, seulement quelle table initie la requête.
 let activeSource = "rhs";
 let lastResult = null; // { titleText, metaText, tableHtml }
+// Tri interactif des lignes du tableau croisé, sur clic d'en-tête — limité au cas à une seule
+// variable en lignes (cf. renderPivotIntoDom) : au-delà, les lignes sont fusionnées par groupe
+// (rowspan, computeMerge) et un tri par valeur mélangerait des groupes, cassant ces fusions.
+let lastPivotCtx = null; // { pivot, rowDimsCfg, colDimsCfg, exprsCfg, trendOpts }
+let pivotSort = null;    // { key: "row" | <uid d'expression>, dir: 1 | -1 }
 let lastGraphResult = null; // { titleText, metaText, panels: [{ title, fragment, tableHtml }] }
 let uidCounter = 0;
 
@@ -1678,7 +1683,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg, trendOpt
 
     for (let level = 0; level < nDimsCol; level++) {
       html += "<tr>";
-      if (level === 0) rowLabels.forEach((lbl, lvl) => { html += `<th rowspan="${rowLabelsRowspan}" data-lvl="${lvl}">${thLabelHtml(lbl)}</th>`; });
+      if (level === 0) rowLabels.forEach((lbl, lvl) => { html += `<th rowspan="${rowLabelsRowspan}" data-lvl="${lvl}" data-sort-row="1">${thLabelHtml(lbl)}</th>`; });
       pivot.colKeys.forEach((ck, i) => {
         if (colShow[i][level]) html += `<th colspan="${colSpan[i][level] * n}">${thLabelHtml(colsParts[i][level])}</th>`;
         if (level === 0 && colSubtotalLastIdx.has(i)) {
@@ -1713,7 +1718,7 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg, trendOpt
         for (const e of exprsCfg) html += `<th class="exprhead colsubtotal">${thLabelHtml(exprLabel(e))}</th>`;
       }
     });
-    for (const e of exprsCfg) html += `<th class="exprhead totalcol">${thLabelHtml(exprLabel(e))}</th>`;
+    for (const e of exprsCfg) html += `<th class="exprhead totalcol" data-expr-uid="${e.uid}">${thLabelHtml(exprLabel(e))}</th>`;
     if (trendSpark) for (const e of exprsCfg) html += `<th class="exprhead trendcol">${thLabelHtml(exprLabel(e))}</th>`;
     html += "</tr></thead><tbody>";
   } else {
@@ -1721,9 +1726,9 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg, trendOpt
     // computeMultiPivot) : afficher une colonne par clé PUIS la colonne totalcol dupliquerait deux
     // fois la même valeur. On n'affiche donc que la colonne totalcol dans ce cas.
     html += '<tr>';
-    rowLabels.forEach((lbl, lvl) => { html += `<th rowspan="2" data-lvl="${lvl}">${thLabelHtml(lbl)}</th>`; });
+    rowLabels.forEach((lbl, lvl) => { html += `<th rowspan="2" data-lvl="${lvl}" data-sort-row="1">${thLabelHtml(lbl)}</th>`; });
     html += `<th colspan="${n}">Total</th></tr><tr>`;
-    for (const e of exprsCfg) html += `<th class="exprhead">${thLabelHtml(exprLabel(e))}</th>`;
+    for (const e of exprsCfg) html += `<th class="exprhead" data-expr-uid="${e.uid}">${thLabelHtml(exprLabel(e))}</th>`;
     html += "</tr></thead><tbody>";
   }
 
@@ -1813,6 +1818,70 @@ function renderMultiPivotTable(pivot, rowDimsCfg, colDimsCfg, exprsCfg, trendOpt
   return html;
 }
 
+// Applique pivotSort à une copie de pivot.rowKeys (jamais au tableau d'origine, réutilisé telle
+// quelle si l'utilisateur change à nouveau de tri). "row" inverse simplement l'ordre naturel déjà
+// trié par computeMultiPivot ; sinon, tri par la valeur du total de ligne de l'expression visée
+// (colonne "Total", seule sûre à trier même avec des colonnes croisées : sa valeur est unique par
+// ligne, contrairement aux cellules détail qui dépendent de la colonne cliquée).
+function sortedPivotRowKeys(pivot, sort) {
+  const keys = pivot.rowKeys.slice();
+  if (!sort) return keys;
+  if (sort.key === "row") {
+    if (sort.dir === -1) keys.reverse();
+    return keys;
+  }
+  const pr = pivot.perExpr[sort.key];
+  if (!pr) return keys;
+  keys.sort((a, b) => {
+    const va = pr.rowTotal[a], vb = pr.rowTotal[b];
+    const na = typeof va === "number" && !isNaN(va), nb = typeof vb === "number" && !isNaN(vb);
+    if (!na && !nb) return 0;
+    if (!na) return 1;
+    if (!nb) return -1;
+    return sort.dir * (va - vb);
+  });
+  return keys;
+}
+
+// Ajoute les clics de tri sur les en-têtes marqués (data-sort-row / data-expr-uid) — seulement
+// quand il y a une unique variable en lignes : au-delà, computeMerge fusionne des lignes contiguës
+// par groupe (rowspan) et un tri par valeur mélangerait des lignes de groupes différents, cassant
+// ces fusions (cf. commentaire sur pivotSort en haut du fichier).
+function wirePivotSortClicks(container, enabled) {
+  if (!enabled) return;
+  const wire = (th, key) => {
+    th.classList.add("sortable-th");
+    th.addEventListener("click", () => {
+      pivotSort = (pivotSort && pivotSort.key === key) ? { key, dir: -pivotSort.dir } : { key, dir: 1 };
+      renderPivotIntoDom();
+    });
+    if (pivotSort && pivotSort.key === key) th.classList.add(pivotSort.dir === 1 ? "sort-asc" : "sort-desc");
+  };
+  container.querySelectorAll('th[data-sort-row]').forEach(th => wire(th, "row"));
+  container.querySelectorAll('th[data-expr-uid]').forEach(th => wire(th, th.getAttribute("data-expr-uid")));
+}
+
+// Ré-affiche le tableau croisé depuis le dernier pivot calculé (lastPivotCtx), en appliquant le
+// tri interactif courant (pivotSort) — utilisé aussi bien pour l'affichage initial (generer()) que
+// pour un re-tri (pas besoin de refaire la requête ni de recalculer le pivot). La tendance par
+// ligne (heatRow/sparkRow) est désactivée pendant un tri actif : elle compare chaque ligne à la
+// "précédente" au sens de l'ordre naturel des variables, ce qui n'a plus de sens une fois les
+// lignes réordonnées par valeur.
+function renderPivotIntoDom() {
+  if (!lastPivotCtx) return;
+  const { pivot, rowDimsCfg, colDimsCfg, exprsCfg, trendOpts } = lastPivotCtx;
+  const sortEnabled = rowDimsCfg.length === 1;
+  const effectiveSort = sortEnabled ? pivotSort : null;
+  const pivotForRender = effectiveSort ? { ...pivot, rowKeys: sortedPivotRowKeys(pivot, effectiveSort) } : pivot;
+  const effectiveTrendOpts = effectiveSort ? { ...trendOpts, heatRow: false, sparkRow: false } : trendOpts;
+  const tableHtml = renderMultiPivotTable(pivotForRender, rowDimsCfg, colDimsCfg, exprsCfg, effectiveTrendOpts);
+  const resultWrap = document.getElementById("resultWrap");
+  resultWrap.innerHTML = tableHtml;
+  applyRowheadSticky(resultWrap);
+  wirePivotSortClicks(resultWrap, sortEnabled);
+  if (lastResult) lastResult.tableHtml = tableHtml;
+}
+
 // ---------- Génération ----------
 
 function generer() {
@@ -1870,8 +1939,6 @@ function generer() {
       heatRow: !!document.getElementById("chkTrendHeatRow")?.checked,
       sparkRow: !!document.getElementById("chkTrendSparkRow")?.checked,
     };
-    const tableHtml = renderMultiPivotTable(pivot, rowDimRows, colDimRows, exprRows, trendOpts);
-
     const titleText = `TDB PMSI-SMR — ${exprRows.map(e => exprLabel(e)).join(", ")} par ${rowLabel} — Établissement(s) ${finessList.join(", ")}`;
     const metaText = `Période : ${periods.map(p => p.label).join(", ")} · Filtres globaux : ${activeGF.length} · Lignes : ${rowLabel} · ` +
       `Colonnes : ${colDimRows.length ? colDimRows.map(r => labelForDimRow(r)).join(" / ") : "(aucune)"} · ` +
@@ -1879,11 +1946,11 @@ function generer() {
 
     document.getElementById("panelResult").style.display = "block";
     document.getElementById("resultMeta").textContent = metaText;
-    const resultWrap = document.getElementById("resultWrap");
-    resultWrap.innerHTML = tableHtml;
-    applyRowheadSticky(resultWrap);
     const nCols = rowDimRows.length + pivot.colKeys.length * exprRows.length + exprRows.length;
-    lastResult = { titleText, metaText, tableHtml, nCols, nRows: pivot.rowKeys.length };
+    lastResult = { titleText, metaText, tableHtml: "", nCols, nRows: pivot.rowKeys.length };
+    lastPivotCtx = { pivot, rowDimsCfg: rowDimRows, colDimsCfg: colDimRows, exprsCfg: exprRows, trendOpts };
+    pivotSort = null;
+    renderPivotIntoDom();
     ["btnOuvrirTableauPage", "btnExportHtml", "btnExportXls"].forEach(id => document.getElementById(id).disabled = false);
     status(`Tableau généré (${pivot.rowKeys.length} ligne(s) × ${pivot.colKeys.length} colonne(s) × ${exprRows.length} expression(s)).`);
   } catch (e) {
