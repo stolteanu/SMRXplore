@@ -595,6 +595,7 @@ function renderExprListGeneric(containerId, arr, minCount) {
     });
 
     measSel.addEventListener("change", () => {
+      row.label = "";
       if (!measSel.value) { row.measureId = null; renderExprListGeneric(containerId, arr, minCount); updateRecap(); return; }
       const [srcKey, measureId] = measSel.value.split("::");
       row.srcKey = srcKey; row.measureId = measureId;
@@ -2775,7 +2776,7 @@ function renderChartOptionsUI() {
   if (!field) return;
   const showLabels = CHART_TYPES_WITH_LABELS.has(activeChartType);
   const showSpline = CHART_TYPES_WITH_SPLINE.has(activeChartType);
-  const showDonut = activeChartType === "camembert" && !graphSeriesDimRows.length;
+  const showDonut = activeChartType === "camembert";
   const show3d = CHART_TYPES_WITH_3D.has(activeChartType);
   field.style.display = (showLabels || showSpline || showDonut || show3d) ? "flex" : "none";
   const labelsField = document.getElementById("selDataLabelsMode")?.closest(".field");
@@ -2813,12 +2814,16 @@ function splitByFacets(rows, facetDimsCfg, foreignIdx, baseSrcKey) {
     const parts = facetDimsCfg.map((cfg, i) => dimValue(dimDefOf(cfg), cfg.mode, srcRows[i]));
     const key = parts.join(" / ");
     if (!groups.has(key)) {
-      groups.set(key, { label: key, rows: [] });
+      // Le libellé de vignette rappelle le nom de la variable, pas seulement sa valeur (ex. "Type
+      // d'hospitalisation : Complète") — une valeur seule (ex. "Oui"/"Non") serait ambiguë une fois
+      // affichée isolément en titre de panneau.
+      const label = facetDimsCfg.map((cfg, i) => `${(dimDefOf(cfg) || {}).label || "?"} : ${parts[i]}`).join(" · ");
+      groups.set(key, { key, label, rows: [] });
       sortByKey.set(key, facetDimsCfg.map((cfg, i) => dimSortValue(dimDefOf(cfg), parts[i], srcRows[i])));
     }
     groups.get(key).rows.push(row);
   }
-  return [...groups.values()].sort((a, b) => compareSortKeys(sortByKey.get(a.label), sortByKey.get(b.label)));
+  return [...groups.values()].sort((a, b) => compareSortKeys(sortByKey.get(a.key), sortByKey.get(b.key)));
 }
 
 // ---- Rendu SVG (aucune dépendance externe : l'application reste 100% locale) ----
@@ -2834,6 +2839,11 @@ function niceCeil(v) {
 function fmtAxisNum(v) {
   if (Math.abs(v) >= 1000) return (v / 1000).toLocaleString("fr-FR", { maximumFractionDigits: 1 }) + "k";
   return v.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+}
+// Valeur non compactée (pas de suffixe "k") pour les étiquettes de données : préférée à fmtAxisNum
+// quand la place le permet (cf. dataLabelText), qui reste réservée aux axes.
+function fmtValFull(v) {
+  return v.toLocaleString("fr-FR", { maximumFractionDigits: 0 });
 }
 function truncLabel(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
@@ -2913,9 +2923,15 @@ function syncGraphSeriesColors() {
 function seriesColTotal(series, catIdx) { return series.reduce((s, ser) => s + (ser.values[catIdx] || 0), 0); }
 function seriesRowTotal(ser) { return ser.values.reduce((a, b) => a + (b || 0), 0); }
 function seriesGrandTotal(series) { return series.reduce((s, ser) => s + seriesRowTotal(ser), 0); }
-function dataLabelText(mode, v, ser, catIdx, series) {
+function dataLabelText(mode, v, ser, catIdx, series, maxWidth) {
   if (mode === "aucune" || v === null || v === undefined) return null;
-  if (mode === "valeurs") return fmtAxisNum(v);
+  if (mode === "valeurs") {
+    const full = fmtValFull(v);
+    // En entier tant qu'il y a la place (maxWidth fourni par l'appelant selon le contexte du
+    // graphique) ; repli sur la forme compactée ("2,1k") seulement si le texte complet déborderait.
+    if (maxWidth === undefined || estTextWidth(full, CH_FS_VAL) <= maxWidth) return full;
+    return fmtAxisNum(v);
+  }
   let total = 0;
   if (mode === "pct_col") total = seriesColTotal(series, catIdx);
   else if (mode === "pct_ligne") total = seriesRowTotal(ser);
@@ -2995,7 +3011,7 @@ function renderBarSvg(categories, series, stacked, valueAxisTitle, dualAxis) {
         // contenir sans déborder sur les segments voisins (sinon on l'omet : l'infobulle au survol
         // reste disponible) — jamais de texte tassé illisible.
         const segH = y0 - y1;
-        const txt = dataLabelText(labelsMode, v, ser, i, series);
+        const txt = dataLabelText(labelsMode, v, ser, i, series, barW - 4);
         if (txt && segH >= CH_FS_VAL + 4 && estTextWidth(txt, CH_FS_VAL) <= barW - 4) {
           svg += `<text x="${(gx + barW / 2).toFixed(1)}" y="${((y0 + y1) / 2 + CH_FS_VAL * 0.35).toFixed(1)}" font-size="${CH_FS_VAL}" font-weight="600" fill="${textColorForBg(ser.color)}" text-anchor="middle">${esc(txt)}</text>`;
         }
@@ -3010,7 +3026,7 @@ function renderBarSvg(categories, series, stacked, valueAxisTitle, dualAxis) {
         svg += `<rect x="${bx.toFixed(1)}" y="${y1.toFixed(1)}" width="${(barW * 0.9).toFixed(1)}" height="${(y0 - y1).toFixed(1)}" fill="${ser.color}"><title>${esc(cat)} — ${esc(ser.label)} : ${esc(fmtVal(v, false))}</title></rect>`;
         // Étiquette au-dessus de la barre, seulement si le texte tient dans la largeur de la barre
         // (sinon omise plutôt que débordant sur les barres voisines).
-        const txt = dataLabelText(labelsMode, v, ser, i, series);
+        const txt = dataLabelText(labelsMode, v, ser, i, series, barW * 0.9 + 6);
         if (txt && estTextWidth(txt, CH_FS_VAL) <= barW * 0.9 + 6) {
           svg += `<text x="${(bx + barW * 0.45).toFixed(1)}" y="${(y1 - 4).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="middle">${esc(txt)}</text>`;
         }
@@ -3075,7 +3091,7 @@ function renderBarSvgH(categories, series, valueAxisTitle) {
       svg += `<rect x="${x0.toFixed(1)}" y="${by.toFixed(1)}" width="${Math.max(0, x1 - x0).toFixed(1)}" height="${(barH * 0.86).toFixed(1)}" fill="${ser.color}"><title>${esc(cat)} — ${esc(ser.label)} : ${esc(fmtVal(v, false))}</title></rect>`;
       // Barres horizontales : la ligne (une par catégorie × série) donne assez de place verticale
       // pour l'étiquette dans la marge de droite tant que la barre elle-même n'est pas trop fine.
-      const txt = dataLabelText(labelsMode, v, ser, i, series);
+      const txt = dataLabelText(labelsMode, v, ser, i, series, W - (x1 + 5) - 4);
       if (txt && barH >= CH_FS_VAL + 2) {
         svg += `<text x="${(x1 + 5).toFixed(1)}" y="${(by + barH * 0.43 + 3.5).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="start">${esc(txt)}</text>`;
       }
@@ -3194,9 +3210,17 @@ function renderLineAreaSvg(categories, series, filled, valueAxisTitle, dualAxis)
       let lastX = -Infinity;
       pts.forEach((p, i) => {
         const catIdx = idxs[i];
-        const txt = dataLabelText(graphDataLabelsMode, ser.values[catIdx], ser, catIdx, series);
+        const v = ser.values[catIdx];
+        let txt = dataLabelText(graphDataLabelsMode, v, ser, catIdx, series);
         if (!txt) return;
-        const halfW = estTextWidth(txt, CH_FS_VAL) / 2;
+        let halfW = estTextWidth(txt, CH_FS_VAL) / 2;
+        // Le texte en entier est essayé en premier ; s'il chevaucherait l'étiquette précédente, on
+        // retente avec la forme compactée avant d'abandonner (comme les graphiques en barres).
+        if (graphDataLabelsMode === "valeurs" && p[0] - halfW < lastX + 4) {
+          const compact = fmtAxisNum(v);
+          const halfWCompact = estTextWidth(compact, CH_FS_VAL) / 2;
+          if (p[0] - halfWCompact >= lastX + 4) { txt = compact; halfW = halfWCompact; }
+        }
         if (p[0] - halfW < lastX + 4) return;
         svg += `<text x="${p[0].toFixed(1)}" y="${(p[1] - 7).toFixed(1)}" font-size="${CH_FS_VAL}" fill="${CH_INK}" text-anchor="middle">${esc(txt)}</text>`;
         lastX = p[0] + halfW;
@@ -3388,7 +3412,7 @@ function renderPieSvg(categories, values, baseColor, donut) {
     if (frac >= 0.08) { // étiquette directe (%) seulement sur les parts assez grandes pour l'accueillir
       const mid = angle + (a2 - angle) / 2, lr = (rIn + r) / 2;
       const lx = cx + lr * Math.cos(mid), ly = cy + lr * Math.sin(mid);
-      svg += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="${CH_FS_VAL}" font-weight="600" fill="${textColorForBg(color)}" text-anchor="middle" dominant-baseline="middle">${(frac * 100).toFixed(0)}%</text>`;
+      svg += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="${CH_FS_VAL}" font-weight="600" fill="${textColorForBg(color)}" text-anchor="middle" dominant-baseline="middle">${(frac * 100).toFixed(1)}%</text>`;
     }
     angle = a2;
   });
@@ -3477,10 +3501,13 @@ function collectAllLevelLabels(root, nRings) {
 // (subdivisant, à angle constant, le secteur du niveau parent — vrai "sunburst" hiérarchique).
 // Légende affichée à partir de l'anneau 1 (Série) ; l'axe X reste en infobulle seule, pouvant
 // compter beaucoup de catégories.
-function renderHierPieSvg(root, nRings, ringNames, ringColors) {
+function renderHierPieSvg(root, nRings, ringNames, ringColors, donut) {
   const W = 480, H = 480, cx = W / 2, cy = H / 2 - 8; // même logique de plafond généreux que renderPieSvg
   const rOuter = Math.min(W, H) / 2 - 34;
-  const rStep = rOuter / nRings;
+  // Comme le camembert simple (renderPieSvg) : un trou central optionnel, qui décale simplement le
+  // rayon de départ de l'anneau 0 — les anneaux suivants gardent la même épaisseur relative.
+  const rHole = donut ? rOuter * 0.35 : 0;
+  const rStep = (rOuter - rHole) / nRings;
   if (!root.value) {
     return `<div style="display:flex;justify-content:center;"><svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;${CH_FONT}"><text x="${cx}" y="${cy}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg></div>`;
   }
@@ -3499,12 +3526,12 @@ function renderHierPieSvg(root, nRings, ringNames, ringColors) {
       const frac = (child.value || 0) / total;
       if (!frac) return;
       const a2c = a + frac * (a2 - a1);
-      const rIn = rStep * ringIdx, rOut = rStep * (ringIdx + 1);
+      const rIn = rHole + rStep * ringIdx, rOut = rHole + rStep * (ringIdx + 1);
       const color = colorFor(ringIdx, child.label);
       svg += `<path d="${annulusPath(cx, cy, rIn, rOut, a, a2c)}" fill="${color}" stroke="#fff" stroke-width="1"><title>${esc(ringNames[ringIdx])} — ${esc(child.label)} : ${esc(fmtVal(child.value, false))} (${(frac * 100).toFixed(1)} %)</title></path>`;
       if (frac >= 0.09 && (a2c - a) * ((rIn + rOut) / 2) > 14) { // secteur assez grand pour accueillir un %
         const mid = a + (a2c - a) / 2, lr = (rIn + rOut) / 2;
-        svg += `<text x="${(cx + lr * Math.cos(mid)).toFixed(1)}" y="${(cy + lr * Math.sin(mid)).toFixed(1)}" font-size="${CH_FS_VAL - 1}" font-weight="600" fill="${textColorForBg(color)}" text-anchor="middle" dominant-baseline="middle">${(frac * 100).toFixed(0)}%</text>`;
+        svg += `<text x="${(cx + lr * Math.cos(mid)).toFixed(1)}" y="${(cy + lr * Math.sin(mid)).toFixed(1)}" font-size="${CH_FS_VAL - 1}" font-weight="600" fill="${textColorForBg(color)}" text-anchor="middle" dominant-baseline="middle">${(frac * 100).toFixed(1)}%</text>`;
       }
       if (child.children) draw(child.children, ringIdx + 1, a, a2c);
       a = a2c;
@@ -3530,7 +3557,7 @@ function renderNestedPieFromRows(rows, foreignIdx, expr) {
   const ringNames = [graphXDimRows.map(r => labelForDimRow(r)).join(" / "), ...graphSeriesDimRows.map(r => labelForDimRow(r))];
   const root = buildPieHierarchy(rows, levelDimsCfgList, expr, measure, expr.aggId, foreignIdx, activeSourceGraph);
   syncGraphRingColors();
-  return renderHierPieSvg(root, levelDimsCfgList.length, ringNames, graphRingColors);
+  return renderHierPieSvg(root, levelDimsCfgList.length, ringNames, graphRingColors, graphDonut);
 }
 
 // Nuage de points / bulles : `exSize` optionnel — absent pour un nuage simple, fourni pour un
@@ -4220,16 +4247,25 @@ function genererGraphique() {
 // attendu par les traces Plotly "sunburst" et "treemap" (même arbre, même API chez Plotly). Un id
 // unique par nœud (chemin complet depuis la racine) est nécessaire même si deux branches
 // différentes partagent un même libellé à un niveau donné.
-function flattenHierarchyForPlotly(root) {
+function flattenHierarchyForPlotly(root, nRings, ringColors) {
   const ids = [], labels = [], parents = [], values = [], colors = [];
-  let topIdx = -1;
-  function addNode(node, parentId, top) {
+  // Une teinte de base par anneau/niveau (ringColors, comme le rendu SVG imbriqué), nuancée par
+  // valeur au sein de ce niveau (shadeForRing) — sans ça, tous les nœuds d'une même branche
+  // héritaient de la couleur unique de leur ancêtre de tête, donc un seul anneau paraissait coloré.
+  const levelLabels = collectAllLevelLabels(root, nRings);
+  function colorFor(ringIdx, label) {
+    if (/^Autres /.test(label)) return CHART_OTHER_COLOR;
+    const lbls = levelLabels[ringIdx] || [];
+    const base = ringColors[ringIdx] || CHART_PALETTE[ringIdx % CHART_PALETTE.length];
+    return shadeForRing(base, lbls.indexOf(label), lbls.length);
+  }
+  function addNode(node, parentId, ringIdx) {
     const id = parentId ? parentId + " ␟ " + node.label : node.label;
     ids.push(id); labels.push(node.label); parents.push(parentId); values.push(node.value || 0);
-    colors.push(/^Autres /.test(node.label) && !parentId ? CHART_OTHER_COLOR : CHART_PALETTE[top % CHART_PALETTE.length]);
-    (node.children || []).forEach(child => addNode(child, id, top));
+    colors.push(colorFor(ringIdx, node.label));
+    (node.children || []).forEach(child => addNode(child, id, ringIdx + 1));
   }
-  (root.children || []).forEach(child => { topIdx++; addNode(child, "", topIdx); });
+  (root.children || []).forEach(child => addNode(child, "", 0));
   return { ids, labels, parents, values, colors };
 }
 
@@ -4282,9 +4318,11 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     // Même arbre que l'aperçu SVG (renderNestedPieFromRows/renderTreemapFromRows) : un seul calcul
     // d'agrégation (buildPieHierarchy), deux mises en forme.
     const root = buildPieHierarchy(g.rows, levelDimsCfgList, expr0, measure, expr0.aggId, foreignIdx, activeSourceGraph);
-    const { ids, labels, parents, values, colors } = flattenHierarchyForPlotly(root);
+    syncGraphRingColors();
+    const { ids, labels, parents, values, colors } = flattenHierarchyForPlotly(root, levelDimsCfgList.length, graphRingColors);
     const type = chartType === "treemap" ? "treemap" : "sunburst";
-    return { label, data: [{ type, ids, labels, parents, values, branchvalues: "total", marker: { colors }, textinfo: "label+percent parent" }], layout: baseLayout };
+    const holeOpt = (chartType === "camembert" && graphDonut) ? { hole: 0.3 } : {};
+    return { label, data: [{ type, ids, labels, parents, values, branchvalues: "total", marker: { colors }, texttemplate: "%{label}<br>%{percentParent:.1%}", ...holeOpt }], layout: baseLayout };
   }
 
   if (chartType === "camembert") {
@@ -4292,7 +4330,7 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     const rawLabels = pivot.rowKeys.map(rk => pivot.rowPartsByKey.get(rk).join(" / "));
     const rawValues = pivot.rowKeys.map(rk => pivot.perExpr[exprsUsed[0].uid].rowTotal[rk] || 0);
     const { labels: pieLabels, values: pieValues } = foldTopN(rawLabels, rawValues, CHART_CAT_CAP);
-    return { label, data: [{ type: "pie", labels: pieLabels, values: pieValues, hole: graphDonut ? 0.55 : 0, marker: { colors: CHART_PALETTE }, textinfo: "label+percent" }], layout: baseLayout };
+    return { label, data: [{ type: "pie", labels: pieLabels, values: pieValues, hole: graphDonut ? 0.55 : 0, marker: { colors: CHART_PALETTE }, texttemplate: "%{label}<br>%{percent:.1%}" }], layout: baseLayout };
   }
 
   // Boîte à moustaches / histogramme : mêmes statistiques que l'aperçu SVG (buildBoxplotGroups /
