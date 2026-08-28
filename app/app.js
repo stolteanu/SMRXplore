@@ -863,8 +863,8 @@ function resolveForeignRow(idx, baseRow) {
     const match = candidates.find(r => String(r._periode_annee) === String(baseYear));
     if (match) return match;
     // Aucune ligne du fichier tiers pour l'année de baseRow (ex. séjour SMR encore ouvert dont la
-    // campagne Valo de l'année en cours n'a pas encore été transmise/close) : "hors périmètre" pour
-    // cette année, pas de repli arbitraire sur une autre année — retomber sur candidates[0] ferait
+    // campagne Valo de l'année en cours n'a pas encore été transmise/close) : "sans correspondance"
+    // pour cette année, pas de repli arbitraire sur une autre année — retomber sur candidates[0] ferait
     // pointer vers une ligne d'une année différente et, avec la répartition au jour de présence
     // (extractValues), lui ferait attribuer une fraction de son montant à la mauvaise année (bug
     // constaté 2026-08-19 : ~5 145 € de MO 2025 comptés en 2026 pour des séjours encore en cours).
@@ -884,7 +884,7 @@ function sourceRowFor(cfg, baseRow, foreignIdx, baseSrcKey) {
 }
 
 function dimValue(dim, mode, row) {
-  if (!row) return "(hors périmètre)";
+  if (!row) return "(sans correspondance)";
   const codeVal = dim.derive ? dim.derive(row) : row[dim.col];
   const codeStr = normVal(codeVal);
   if (!dim.libCol && !dim.libDerive) return codeStr;
@@ -996,6 +996,17 @@ function annotateValoCoverage(foreignIdx, baseSrcKey, baseRows) {
     const valoRow = resolveForeignRow(valoIdx, row);
     if (!valoRow) continue;
     valoRow._joursCouverts = (valoRow._joursCouverts || 0) + rhsJoursPresents(row);
+    // Filet de sécurité séjour "0 jour" (entrée=sortie le même jour calendaire, jours_hors_weekend/
+    // jours_weekend tout à "0") : mémorise la dernière ligne RHS (par numéro de semaine) rattachée à
+    // cette ligne Valo, pour lui attribuer tout le montant si AUCUNE des lignes RHS rattachées n'a de
+    // jour de présence — sinon le montant serait silencieusement perdu (cf. équivalent Python,
+    // _dernier_uf_par_sejour dans src/viz/valorisation.py : écart de 528,94 € constaté sur
+    // [etablissement anonymise]/2026, exactement les 2 séjours 0-jour 27086914/27087145).
+    const week = row.numero_semaine ? Number(row.numero_semaine.slice(0, 2)) : -1;
+    if (!valoRow._dernierRow || week >= valoRow._dernierWeek) {
+      valoRow._dernierRow = row;
+      valoRow._dernierWeek = week;
+    }
   }
 }
 
@@ -1045,7 +1056,15 @@ function extractValues(cellRows, measure, expr, foreignIdx, baseSrcKey) {
       if (!isNaN(v)) {
         if (dayWeighted) {
           const total = r._joursCouverts;
-          v *= total ? (rhsJoursPresents(r0) / total) : 0;
+          if (total) {
+            v *= rhsJoursPresents(r0) / total;
+          } else {
+            // Aucune ligne RHS rattachée n'a de jour de présence (séjour 0-jour) : tout le montant
+            // va à la dernière ligne RHS connue (r._dernierRow, cf. annotateValoCoverage) plutôt que
+            // d'être perdu — comparaison par référence, sûre car r0 et r._dernierRow viennent des
+            // mêmes lignes de requête (rows passées à annotateValoCoverage puis à computeMultiPivot).
+            v = (r._dernierRow === r0) ? v : 0;
+          }
         }
         vals.push(v);
       }
