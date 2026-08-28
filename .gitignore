@@ -24,6 +24,10 @@ app/*
 output/
 temp/
 
+# Sauvegardes automatiques de pmsi.db (tools/sauvegarder_db.py) — données patients réelles,
+# jamais dans git ; rotation locale sur les 5 dernières uniquement.
+backups/
+
 __pycache__/
 *.pyc
 

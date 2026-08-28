@@ -40,6 +40,7 @@ if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.util.paths import project_root  # noqa: E402
+from tools.sauvegarder_db import sauvegarder  # noqa: E402
 
 ROOT = project_root()
 DB_PATH = ROOT / "data/processed/pmsi.db"
@@ -137,6 +138,8 @@ def apercu(finess: str, avec_fichiers_source: bool) -> dict:
 def executer(finess: str, avec_fichiers_source: bool) -> dict:
     """Exécute la suppression pour de bon — à n'appeler qu'après confirmation
     explicite (CLI : réponse "o" ; web : deuxième appel après apercu())."""
+    # Filet de sécurité avant modification irréversible de la base (cf. tools/sauvegarder_db.py).
+    sauvegarder()
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
     lignes = supprimer_base(conn, finess)

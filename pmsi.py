@@ -18,6 +18,9 @@ Usage :
                                        ajouter --fichiers-source pour aussi effacer ses fichiers
                                        source dans input/ (définitif, non régénérable — pas
                                        supprimé par défaut)
+    python pmsi.py sauvegarder        copie pmsi.db vers backups/ (horodatée, 5 dernières gardées) ;
+                                       déclenchée automatiquement avant "charger" et "supprimer",
+                                       inutile en usage normal — utile avant une manip risquée
     python pmsi.py tout               enchaîne nomenclatures + charger + dashboard (tous les
                                        établissements) + publier, dans le bon ordre — la commande
                                        à utiliser au quotidien
@@ -70,6 +73,12 @@ def cmd_supprimer(args: list[str]) -> None:
     supprimer_main(args)
 
 
+def cmd_sauvegarder(args: list[str]) -> None:
+    from tools.sauvegarder_db import main as sauvegarder_main
+
+    sauvegarder_main()
+
+
 def cmd_tout(args: list[str]) -> None:
     from src.viz.tableau_de_bord import connect, list_finess
     from src.util.progress import print_progress
@@ -98,6 +107,7 @@ COMMANDS = {
     "dashboard": cmd_dashboard,
     "publier": cmd_publier,
     "supprimer": cmd_supprimer,
+    "sauvegarder": cmd_sauvegarder,
     "tout": cmd_tout,
 }
 

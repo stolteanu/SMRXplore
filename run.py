@@ -52,6 +52,7 @@ from src.tarifs.gmt import load_from_xlsx as load_tarifs_gmt  # noqa: E402
 from src.storage.tarifs_store import init_table as init_tarifs_table  # noqa: E402
 from src.storage.tarifs_store import insert_rows as insert_tarifs_rows  # noqa: E402
 from src.util.progress import print_progress  # noqa: E402
+from tools.sauvegarder_db import sauvegarder  # noqa: E402
 
 ROOT = project_root()
 
@@ -179,6 +180,9 @@ def main() -> None:
     }
 
     db_path = ROOT / "data/processed/pmsi.db"
+    # Filet de sécurité avant toute modification de la base (cf. tools/sauvegarder_db.py) —
+    # ne fait rien si la base n'existe pas encore (premier lancement).
+    sauvegarder()
     conn = init_db(db_path, list(merged_schemas.values()))
 
     log_lines: list[str] = []
