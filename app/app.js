@@ -48,6 +48,7 @@ let graphSeriesColors = [];  // couleur (hex) par position de série, override p
 let graphDataLabelsMode = "aucune"; // 'aucune' | 'valeurs' | 'pct_col' | 'pct_ligne' | 'pct_total' — barres/lignes/aires/radar
 let graphSpline = false;     // lignes/aires : interpoler la ligne en courbe lissée (spline) plutôt qu'en segments droits
 let graphDonut = false;      // camembert simple (sans Série) : trou central façon anneau plutôt que disque plein
+let graphExploded = false;   // camembert/donut : parts décalées vers l'extérieur ("exploded pie")
 let graph3d = false;         // nuage/bulles/carte de chaleur, uniquement dans "Ouvrir en interactif" (Plotly) : scatter3d / surface
 let graphMovAvgWindow = 0;   // lignes/aires/combo : taille de fenêtre (points) de la moyenne mobile superposée, 0 = désactivée
 
@@ -2772,11 +2773,12 @@ function renderChartOptionsUI() {
   const splineField = document.getElementById("splineField");
   const movAvgField = document.getElementById("movAvgField");
   const donutField = document.getElementById("donutField");
+  const explodedField = document.getElementById("explodedField");
   const graph3dField = document.getElementById("graph3dField");
   if (!field) return;
   const showLabels = CHART_TYPES_WITH_LABELS.has(activeChartType);
   const showSpline = CHART_TYPES_WITH_SPLINE.has(activeChartType);
-  const showDonut = activeChartType === "camembert";
+  const showDonut = activeChartType === "camembert" || activeChartType === "sunburst";
   const show3d = CHART_TYPES_WITH_3D.has(activeChartType);
   field.style.display = (showLabels || showSpline || showDonut || show3d) ? "flex" : "none";
   const labelsField = document.getElementById("selDataLabelsMode")?.closest(".field");
@@ -2785,6 +2787,7 @@ function renderChartOptionsUI() {
   // Moyenne mobile : mêmes types que le lissage spline (lignes/aires/combo — tendance temporelle).
   if (movAvgField) movAvgField.style.display = showSpline ? "block" : "none";
   if (donutField) donutField.style.display = showDonut ? "block" : "none";
+  if (explodedField) explodedField.style.display = showDonut ? "block" : "none";
   if (graph3dField) graph3dField.style.display = show3d ? "block" : "none";
 }
 
@@ -3388,7 +3391,7 @@ function textColorForBg(hex) {
   return lum > 0.6 ? "#1b2631" : "#ffffff";
 }
 
-function renderPieSvg(categories, values, baseColor, donut) {
+function renderPieSvg(categories, values, baseColor, donut, exploded) {
   ({ labels: categories, values } = foldTopN(categories, values, CHART_CAT_CAP));
   // Un camembert n'a pas besoin de s'étirer sur toute la largeur d'un écran large comme un
   // graphique en barres (un cercle immense est disproportionné) : plafond généreux mais borné,
@@ -3400,6 +3403,10 @@ function renderPieSvg(categories, values, baseColor, donut) {
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;${CH_FONT}"><text x="${cx}" y="${cy}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg>`;
   }
   const colorFor = i => shadeForRing(baseColor || CHART_PALETTE[0], i, categories.length);
+  // Effet "exploded" : chaque part est décalée vers l'extérieur le long de sa bissectrice (via un
+  // groupe SVG translaté), sans recalculer sa géométrie propre — même technique que le "pull" natif
+  // d'un camembert Plotly.
+  const pullR = exploded ? r * 0.06 : 0;
   let svg = "";
   let angle = -Math.PI / 2;
   categories.forEach((cat, i) => {
@@ -3408,12 +3415,16 @@ function renderPieSvg(categories, values, baseColor, donut) {
     const frac = v / total;
     const a2 = angle + frac * 2 * Math.PI;
     const color = colorFor(i);
+    const mid = angle + (a2 - angle) / 2;
+    const dx = pullR * Math.cos(mid), dy = pullR * Math.sin(mid);
+    svg += `<g transform="translate(${dx.toFixed(1)},${dy.toFixed(1)})">`;
     svg += `<path d="${annulusPath(cx, cy, rIn, r, angle, a2)}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(cat)} : ${esc(fmtVal(v, false))} (${(frac * 100).toFixed(1)} %)</title></path>`;
     if (frac >= 0.08) { // étiquette directe (%) seulement sur les parts assez grandes pour l'accueillir
-      const mid = angle + (a2 - angle) / 2, lr = (rIn + r) / 2;
+      const lr = (rIn + r) / 2;
       const lx = cx + lr * Math.cos(mid), ly = cy + lr * Math.sin(mid);
       svg += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="${CH_FS_VAL}" font-weight="600" fill="${textColorForBg(color)}" text-anchor="middle" dominant-baseline="middle">${(frac * 100).toFixed(1)}%</text>`;
     }
+    svg += `</g>`;
     angle = a2;
   });
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
@@ -3501,13 +3512,14 @@ function collectAllLevelLabels(root, nRings) {
 // (subdivisant, à angle constant, le secteur du niveau parent — vrai "sunburst" hiérarchique).
 // Légende affichée à partir de l'anneau 1 (Série) ; l'axe X reste en infobulle seule, pouvant
 // compter beaucoup de catégories.
-function renderHierPieSvg(root, nRings, ringNames, ringColors, donut) {
+function renderHierPieSvg(root, nRings, ringNames, ringColors, donut, exploded) {
   const W = 480, H = 480, cx = W / 2, cy = H / 2 - 8; // même logique de plafond généreux que renderPieSvg
   const rOuter = Math.min(W, H) / 2 - 34;
   // Comme le camembert simple (renderPieSvg) : un trou central optionnel, qui décale simplement le
   // rayon de départ de l'anneau 0 — les anneaux suivants gardent la même épaisseur relative.
   const rHole = donut ? rOuter * 0.35 : 0;
   const rStep = (rOuter - rHole) / nRings;
+  const pullR = exploded ? rOuter * 0.05 : 0;
   if (!root.value) {
     return `<div style="display:flex;justify-content:center;"><svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;${CH_FONT}"><text x="${cx}" y="${cy}" text-anchor="middle" font-size="12" fill="${CH_MUTED}">Aucune donnée</text></svg></div>`;
   }
@@ -3519,7 +3531,11 @@ function renderHierPieSvg(root, nRings, ringNames, ringColors, donut) {
     return shadeForRing(base, labels.indexOf(label), labels.length);
   }
   let svg = "";
-  function draw(children, ringIdx, a1, a2) {
+  // draw() dessine dans une chaîne locale (`out`) plutôt que directement dans `svg` : ça permet, au
+  // niveau racine (ringIdx 0), d'envelopper toute une branche (l'anneau 0 et tous ses descendants)
+  // dans un groupe translaté — l'effet "exploded" s'applique ainsi à la branche entière d'un coup,
+  // décalée le long de la bissectrice de son secteur d'anneau 0.
+  function draw(children, ringIdx, a1, a2, out) {
     const total = children.reduce((s, c) => s + (c.value || 0), 0) || 1;
     let a = a1;
     children.forEach(child => {
@@ -3528,16 +3544,34 @@ function renderHierPieSvg(root, nRings, ringNames, ringColors, donut) {
       const a2c = a + frac * (a2 - a1);
       const rIn = rHole + rStep * ringIdx, rOut = rHole + rStep * (ringIdx + 1);
       const color = colorFor(ringIdx, child.label);
-      svg += `<path d="${annulusPath(cx, cy, rIn, rOut, a, a2c)}" fill="${color}" stroke="#fff" stroke-width="1"><title>${esc(ringNames[ringIdx])} — ${esc(child.label)} : ${esc(fmtVal(child.value, false))} (${(frac * 100).toFixed(1)} %)</title></path>`;
+      out.s += `<path d="${annulusPath(cx, cy, rIn, rOut, a, a2c)}" fill="${color}" stroke="#fff" stroke-width="1"><title>${esc(ringNames[ringIdx])} — ${esc(child.label)} : ${esc(fmtVal(child.value, false))} (${(frac * 100).toFixed(1)} %)</title></path>`;
       if (frac >= 0.09 && (a2c - a) * ((rIn + rOut) / 2) > 14) { // secteur assez grand pour accueillir un %
         const mid = a + (a2c - a) / 2, lr = (rIn + rOut) / 2;
-        svg += `<text x="${(cx + lr * Math.cos(mid)).toFixed(1)}" y="${(cy + lr * Math.sin(mid)).toFixed(1)}" font-size="${CH_FS_VAL - 1}" font-weight="600" fill="${textColorForBg(color)}" text-anchor="middle" dominant-baseline="middle">${(frac * 100).toFixed(1)}%</text>`;
+        out.s += `<text x="${(cx + lr * Math.cos(mid)).toFixed(1)}" y="${(cy + lr * Math.sin(mid)).toFixed(1)}" font-size="${CH_FS_VAL - 1}" font-weight="600" fill="${textColorForBg(color)}" text-anchor="middle" dominant-baseline="middle">${(frac * 100).toFixed(1)}%</text>`;
       }
-      if (child.children) draw(child.children, ringIdx + 1, a, a2c);
+      if (child.children) draw(child.children, ringIdx + 1, a, a2c, out);
       a = a2c;
     });
   }
-  draw(root.children, 0, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI);
+  if (pullR) {
+    const total0 = root.children.reduce((s, c) => s + (c.value || 0), 0) || 1;
+    let a = -Math.PI / 2;
+    root.children.forEach(child => {
+      const frac = (child.value || 0) / total0;
+      if (!frac) return;
+      const a2 = a + frac * 2 * Math.PI;
+      const mid = a + (a2 - a) / 2;
+      const dx = pullR * Math.cos(mid), dy = pullR * Math.sin(mid);
+      const branch = { s: "" };
+      draw([child], 0, a, a2, branch);
+      svg += `<g transform="translate(${dx.toFixed(1)},${dy.toFixed(1)})">${branch.s}</g>`;
+      a = a2;
+    });
+  } else {
+    const whole = { s: "" };
+    draw(root.children, 0, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI, whole);
+    svg += whole.s;
+  }
   const svgTag = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;height:auto;display:block;${CH_FONT}">${svg}</svg>`;
   let extraLegend = "";
   for (let ringIdx = 0; ringIdx < nRings; ringIdx++) {
@@ -3557,7 +3591,7 @@ function renderNestedPieFromRows(rows, foreignIdx, expr) {
   const ringNames = [graphXDimRows.map(r => labelForDimRow(r)).join(" / "), ...graphSeriesDimRows.map(r => labelForDimRow(r))];
   const root = buildPieHierarchy(rows, levelDimsCfgList, expr, measure, expr.aggId, foreignIdx, activeSourceGraph);
   syncGraphRingColors();
-  return renderHierPieSvg(root, levelDimsCfgList.length, ringNames, graphRingColors, graphDonut);
+  return renderHierPieSvg(root, levelDimsCfgList.length, ringNames, graphRingColors, graphDonut, graphExploded);
 }
 
 // Nuage de points / bulles : `exSize` optionnel — absent pour un nuage simple, fourni pour un
@@ -4055,7 +4089,7 @@ function renderChartFragment(chartType, pivot, seriesDimsCfg, exprsUsed) {
     // Série, pas via le pivot qui combinerait les variables de Série en une seule clé.
     const { categories, series } = chartSeriesData(pivot, [], exprsUsed);
     syncGraphRingColors();
-    return renderPieSvg(categories, series[0].values, graphRingColors[0], graphDonut);
+    return renderPieSvg(categories, series[0].values, graphRingColors[0], graphDonut, graphExploded);
   }
   if (chartType === "nuage") {
     return renderScatterSvg(pivot, seriesDimsCfg, exprsUsed);
@@ -4321,7 +4355,7 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     syncGraphRingColors();
     const { ids, labels, parents, values, colors } = flattenHierarchyForPlotly(root, levelDimsCfgList.length, graphRingColors);
     const type = chartType === "treemap" ? "treemap" : "sunburst";
-    const holeOpt = (chartType === "camembert" && graphDonut) ? { hole: 0.3 } : {};
+    const holeOpt = ((chartType === "camembert" || chartType === "sunburst") && graphDonut) ? { hole: 0.3 } : {};
     return { label, data: [{ type, ids, labels, parents, values, branchvalues: "total", marker: { colors }, texttemplate: "%{label}<br>%{percentParent:.1%}", ...holeOpt }], layout: baseLayout };
   }
 
@@ -4330,7 +4364,8 @@ function buildPlotlyFigure(chartType, g, src, exprsUsed, foreignIdx) {
     const rawLabels = pivot.rowKeys.map(rk => pivot.rowPartsByKey.get(rk).join(" / "));
     const rawValues = pivot.rowKeys.map(rk => pivot.perExpr[exprsUsed[0].uid].rowTotal[rk] || 0);
     const { labels: pieLabels, values: pieValues } = foldTopN(rawLabels, rawValues, CHART_CAT_CAP);
-    return { label, data: [{ type: "pie", labels: pieLabels, values: pieValues, hole: graphDonut ? 0.55 : 0, marker: { colors: CHART_PALETTE }, texttemplate: "%{label}<br>%{percent:.1%}" }], layout: baseLayout };
+    const pull = graphExploded ? pieValues.map(() => 0.06) : undefined;
+    return { label, data: [{ type: "pie", labels: pieLabels, values: pieValues, hole: graphDonut ? 0.55 : 0, marker: { colors: CHART_PALETTE }, texttemplate: "%{label}<br>%{percent:.1%}", pull }], layout: baseLayout };
   }
 
   // Boîte à moustaches / histogramme : mêmes statistiques que l'aperçu SVG (buildBoxplotGroups /
@@ -5406,6 +5441,7 @@ function wireEvents() {
   document.getElementById("chkSpline").addEventListener("change", e => { graphSpline = e.target.checked; });
   document.getElementById("inpMovAvg").addEventListener("input", e => { graphMovAvgWindow = Math.max(0, parseInt(e.target.value, 10) || 0); });
   document.getElementById("chkDonut").addEventListener("change", e => { graphDonut = e.target.checked; });
+  document.getElementById("chkExploded").addEventListener("change", e => { graphExploded = e.target.checked; });
   document.getElementById("chk3d").addEventListener("change", e => { graph3d = e.target.checked; });
   document.getElementById("btnGenererGraph").addEventListener("click", genererGraphique);
   document.getElementById("btnOuvrirPlotly").addEventListener("click", ouvrirGraphiquePlotly);
