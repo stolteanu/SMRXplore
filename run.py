@@ -42,7 +42,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from src.util.paths import project_root  # noqa: E402
+from src.util.paths import project_root, resource_root  # noqa: E402
 from src.parsing.fixed_width import load_schema, parse_file_multi  # noqa: E402
 from src.parsing.valorisation import load_from_csv  # noqa: E402
 from src.storage.sqlite_store import init_db, insert_record  # noqa: E402
@@ -55,6 +55,10 @@ from src.util.progress import print_progress  # noqa: E402
 from tools.sauvegarder_db import sauvegarder  # noqa: E402
 
 ROOT = project_root()
+# config/ est une ressource déployée avec l'appli (bin/config une fois
+# empaquetée, cf. resource_root()), distincte du bac à sable ROOT — voir
+# src/util/paths.py. En exécution depuis les sources, RES_ROOT == ROOT.
+RES_ROOT = resource_root()
 
 DIRS = [
     "input/rhs",
@@ -64,7 +68,6 @@ DIRS = [
     "input/formats",
     "data/processed",
     "data/logs",
-    "config/formats",
     "src/parsing",
     "src/storage",
     "src/viz",
@@ -90,12 +93,62 @@ def load_registry() -> dict:
     et la table code-de-version -> fichier de schéma de PARSING à utiliser.
     Ce fichier est celui que tools/incorporer_format.py met à jour tout seul
     quand un nouveau format ATIH est incorporé — run.py ne fait que le lire."""
-    return json.loads((ROOT / REGISTRY_PATH).read_text(encoding="utf-8"))
+    return json.loads((RES_ROOT / REGISTRY_PATH).read_text(encoding="utf-8"))
 
 
 def ensure_arborescence() -> None:
     for d in DIRS:
         (ROOT / d).mkdir(parents=True, exist_ok=True)
+    seed_nomenclatures()
+
+
+def seed_nomenclatures() -> None:
+    """Copie les tables nomenclature_* (CIM-10, CCAM, CSARR, CSAR, GME...)
+    dans data/processed/pmsi.db si elles n'y sont pas déjà, à partir d'un
+    seed embarqué dans l'exe (RES_ROOT/data/nomenclatures_seed.db, produit
+    par tools/deployer_smrxplore.py depuis la base déjà chargée du dépôt).
+
+    Ces tables sont une référence quasi-statique (mise à jour annuelle ATIH,
+    cf. pmsi.py nomenclatures) : run.py ne charge lui-même que RHS/VID-HOSP/
+    valorisation/tarifs, jamais les nomenclatures — sans cette copie, un
+    bac à sable neuf (ou un ancien créé avant cette fonctionnalité) n'a pas
+    ces tables et la génération de tableau de bord échoue (ex. "no such
+    table: nomenclature_csarr_intervenants"). Ne touche jamais aux tables
+    de données patients (rhs_groupe, vid_hosp, valorisation_sejour...)."""
+    import sqlite3
+
+    seed_path = RES_ROOT / "data" / "nomenclatures_seed.db"
+    if not seed_path.exists():
+        return
+
+    db_path = ROOT / "data/processed/pmsi.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        existing = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'nomenclature_%'"
+            )
+        }
+        conn.execute("ATTACH DATABASE ? AS seed", (str(seed_path),))
+        seed_tables = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM seed.sqlite_master WHERE type='table' AND name LIKE 'nomenclature_%'"
+            )
+        ]
+        a_copier = [t for t in seed_tables if t not in existing]
+        for t in a_copier:
+            create_sql = conn.execute(
+                "SELECT sql FROM seed.sqlite_master WHERE type='table' AND name=?", (t,)
+            ).fetchone()[0]
+            conn.execute(create_sql)
+            conn.execute(f'INSERT INTO "{t}" SELECT * FROM seed."{t}"')
+        conn.commit()
+        conn.execute("DETACH DATABASE seed")
+    finally:
+        conn.close()
 
 
 def merge_schemas_for_format(canonical: dict, variants: dict[str, dict]) -> dict:
@@ -168,11 +221,11 @@ def main() -> None:
 
     registry = load_registry()
     canonical_schemas = {
-        fmt: load_schema(ROOT / "config/formats" / entry["canonical"]) for fmt, entry in registry.items()
+        fmt: load_schema(RES_ROOT / "config/formats" / entry["canonical"]) for fmt, entry in registry.items()
     }
     version_slices = {fmt: tuple(entry["version_slice"]) for fmt, entry in registry.items()}
     schemas_by_version = {
-        fmt: {v: load_schema(ROOT / "config/formats" / rel) for v, rel in entry["variants"].items()}
+        fmt: {v: load_schema(RES_ROOT / "config/formats" / rel) for v, rel in entry["variants"].items()}
         for fmt, entry in registry.items()
     }
     merged_schemas = {
@@ -212,7 +265,7 @@ def main() -> None:
         done_files += 1
         print_progress(done_files, total_files, "Chargement fichiers", detail=path.name)
 
-    valorisation_schema = json.loads((ROOT / VALORISATION_SCHEMA_PATH).read_text(encoding="utf-8"))
+    valorisation_schema = json.loads((RES_ROOT / VALORISATION_SCHEMA_PATH).read_text(encoding="utf-8"))
     init_valorisation_table(conn, valorisation_schema)
     for path in valorisation_files:
         # <FINESS>.<AAAA>.<MM>.SMR.VisualValoSejours.csv — l'année de la campagne
@@ -232,7 +285,7 @@ def main() -> None:
         done_files += 1
         print_progress(done_files, total_files, "Chargement fichiers", detail=path.name)
 
-    tarifs_schema = json.loads((ROOT / TARIFS_GMT_SCHEMA_PATH).read_text(encoding="utf-8"))
+    tarifs_schema = json.loads((RES_ROOT / TARIFS_GMT_SCHEMA_PATH).read_text(encoding="utf-8"))
     init_tarifs_table(conn, tarifs_schema)
     for path in tarifs_files:
         try:

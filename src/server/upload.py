@@ -43,9 +43,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from src.util.paths import project_root
+from src.util.paths import project_root, resource_root
 
 ROOT = project_root()
+RES_ROOT = resource_root()
 STAGING_ROOT = ROOT / "data/staging"
 
 _FINESS_ANNEE_MOIS_RE = re.compile(r"^(\d{9})[._-](\d{4})[._-](\d{1,2})\b")
@@ -287,7 +288,7 @@ def _valider_rhs_vdh(fmt: str, path: Path) -> dict:
 
     from src.parsing.fixed_width import load_schema, parse_file_multi
 
-    schemas_by_version = {v: load_schema(ROOT / "config/formats" / rel) for v, rel in entry["variants"].items()}
+    schemas_by_version = {v: load_schema(RES_ROOT / "config/formats" / rel) for v, rel in entry["variants"].items()}
 
     total = 0
     ok = 0
@@ -357,7 +358,7 @@ def _valider_rhs_vdh(fmt: str, path: Path) -> dict:
 
 
 def _valider_valorisation(path: Path) -> dict:
-    schema = json.loads((ROOT / "config/formats/valorisation_sejour.schema.json").read_text(encoding="utf-8"))
+    schema = json.loads((RES_ROOT / "config/formats/valorisation_sejour.schema.json").read_text(encoding="utf-8"))
     from src.parsing.valorisation import load_from_csv
 
     try:

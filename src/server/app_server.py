@@ -33,12 +33,32 @@ if not getattr(sys, "frozen", False):
     # via le mécanisme d'import interne au .exe, pas besoin de sys.path.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.util.paths import project_root  # noqa: E402
+from src.util.paths import project_root, resource_root  # noqa: E402
 from src.server import upload as upload_mod  # noqa: E402
 
 ROOT = project_root()
 APP_DIR = (ROOT / "app").resolve()
 GENERATED_DIR = APP_DIR / "generated"
+
+# app/ mélange des fichiers SOURCE (interface, statiques, jamais modifiés à
+# l'exécution) et des artefacts GÉNÉRÉS à partir de données patients réelles
+# (tableaux de bord, app/generated/, app/data/pmsi.db) — cf. .gitignore à la
+# racine du projet, qui distingue déjà les deux avec la même liste. Une fois
+# empaqueté, les fichiers source sont déployés dans bin/app/ (remplaçable
+# lors d'une mise à jour) tandis que le reste continue de vivre sous
+# project_root()/app (bac à sable, jamais écrasé) — voir resource_root().
+BIN_APP_DIR = (resource_root() / "app").resolve()
+_SOURCE_APP_FILES = {
+    "index.html",
+    "admin.html",
+    "tdb-choix.html",
+    "explorateur.html",
+    "catalogue.js",
+    "app.js",
+    "plotly_viewer.html",
+    "theme.js",
+}
+_SOURCE_APP_DIRS = {"lib"}
 
 MAX_ANNEES = 3
 
@@ -176,13 +196,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _resolve_static(self, url_path: str) -> Path | None:
-        """Traduit une URL en chemin sous app/, en refusant toute sortie du
-        dossier (../, chemins absolus, etc.)."""
+        """Traduit une URL en chemin sous app/ (source, bin/app/ une fois
+        empaqueté) ou sous le app/ du bac à sable (artefacts générés),
+        en refusant toute sortie du dossier (../, chemins absolus, etc.)."""
         if url_path == "/":
             url_path = "/index.html"
         rel = url_path.lstrip("/")
-        target = (APP_DIR / rel).resolve()
-        if target != APP_DIR and not str(target).startswith(str(APP_DIR) + os.sep):
+        top = rel.split("/", 1)[0]
+        base = BIN_APP_DIR if (rel in _SOURCE_APP_FILES or top in _SOURCE_APP_DIRS) else APP_DIR
+        target = (base / rel).resolve()
+        if target != base and not str(target).startswith(str(base) + os.sep):
             return None
         return target
 
@@ -394,6 +417,15 @@ def serve(port: int = 0) -> ThreadingHTTPServer:
 
 def main() -> None:
     import webbrowser
+
+    # Crée l'arborescence du bac à sable (input/, data/, app/generated, ...) dès
+    # le démarrage plutôt qu'au premier clic sur "Mettre à jour les données" :
+    # sinon /api/meta plante au tout premier lancement sur un dossier neuf
+    # (data/processed/ absent -> sqlite3.connect échoue, il ne crée pas les
+    # dossiers parents).
+    from run import ensure_arborescence
+
+    ensure_arborescence()
 
     # Port fixe (plutôt que 0 = port aléatoire choisi par l'OS) : l'URL reste identique d'un
     # lancement à l'autre, sinon chaque relance de launch.exe change d'origine (127.0.0.1:PORT)
