@@ -4,5 +4,7 @@
 # bibliothèque standard uniquement, voir requirements.txt).
 #
 # python -m pip install -r requirements-dev.txt
-# python -m PyInstaller --onefile --name launch --distpath . --workpath build --specpath build launch.py
+# python tools/build_launch.py
+# (PAS `pyinstaller launch.py` seul — il manque --add-data pour les
+# fichiers app/, voir tools/build_launch.py et tools/_build_common.py)
 pyinstaller
