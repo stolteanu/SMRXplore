@@ -3,7 +3,8 @@
 > Reconstruction rétroactive du chemin parcouru, en versions incrémentales
 > (façon "release notes" logiciel), écrite le 2026-08-18 à la demande de
 > l'utilisateur pour servir de base à la définition de l'architecture finale
-> du produit et de son périmètre fonctionnel figé.
+> du produit et de son périmètre fonctionnel figé. Mise à jour le 2026-09-02
+> (2.5.2 → 3.6.1, 47 commits reconstruits depuis la dernière mise à jour).
 >
 > **Convention de version** (semver appliqué a posteriori, le projet n'a pas
 > été tagué au fil de l'eau) :
@@ -283,10 +284,168 @@ Bandeau devenu obsolète une fois 2.5.0 vérifié comme donnant des totaux
 exacts — retiré, à ne pas réintroduire sans régression concrète constatée.
 
 ### 2.5.2 — Correctif GR/GL/Sévérité (caractère isolé, pas le code cumulé)
-`1ce601d` (2026-08-18) — **dernier commit à ce jour**
+`1ce601d` (2026-08-18)
 `app/catalogue.js` : le code GR/GL/Sévérité doit être lu comme un caractère
 de type isolé dans le code GME, pas comme le code cumulé jusqu'à cette
 position.
+
+### 2.6.0 — DMS vraie (durée moyenne de séjour, durée complète)
+`2fe2617` (2026-08-18)
+
+### 2.7.0 — Chaque mesure compte sur son propre fichier + période personnalisée
+`bfb7c45` (2026-08-18)
+Correctif méthodologique de fond : une mesure croisée (ex. "Nombre de DAS")
+comptait auparavant via le "meilleur candidat" résolu vers un fichier
+tiers puis dédupliqué, ce qui sous-comptait tout fichier détail
+(DAS/CSARR/CSAR/CCAM, plusieurs lignes par séjour) et faisait varier le
+résultat selon l'onglet de base choisi. Chaque expression compte désormais
+sur les lignes réelles de SON PROPRE fichier — seul le croisement RHS→Valo
+garde un mécanisme dédié (répartition au jour de présence, la seule clé de
+répartition fiable disponible). + période personnalisée (mêmes jour/mois
+chaque année, pas seulement "cumulé depuis janvier").
+
+### 2.8.0 — Sous-totaux, validation de période, exports graphiques, mesures Valo manquantes
+`1b0640f` (2026-08-19)
+
+### 2.9.0 — Donut, graphiques 3D, mixte barres+lignes, double axe Y
+`7877088` (2026-08-19)
+
+### 2.9.1 — Sélecteurs sans défaut implicite + correctif année croisée RHS/Valo
+`273d9a8` (2026-08-19)
+Plus aucun sélecteur de variable ne présélectionne une valeur par défaut
+(risque de génération sur une sélection implicite, jamais voulue) ; correctif
+d'un désalignement d'année lors d'un croisement RHS/Valorisation.
+
+### 2.9.2 — Tri chronologique de la semaine sur plusieurs années
+`d5cc3fb` (2026-08-19)
+
+### 2.10.0 — [RETIRÉ EN 3.1.2] Moyenne mobile + expressions sur mesure (formule/ratio)
+`e342ebe` (2026-08-19)
+Première tentative d'une **variable calculée** dans l'Explorateur (formule/
+ratio sur une expression) — retirée 5 jours plus tard (3.1.2, `1f9fea0`,
+2026-08-24) : "trop confuse en l'état". Précédent direct à garder en tête
+pour toute réintroduction future de ce type de fonctionnalité — le problème
+n'était pas la faisabilité technique mais l'ergonomie de sélection.
+
+### 2.11.0 — Bouton "Ouvrir dans une nouvelle page", largeur au contenu en export HTML
+`7095c07` (2026-08-20)
+
+---
+
+## 3.x — Administration web des données + Explorateur, itérations continues
+
+Rupture nette avec l'existant : jusqu'ici, charger/supprimer des données
+était réservé au mainteneur en ligne de commande (`run.py`,
+`tools/supprimer_etablissement.py`). L'ajout d'une interface web
+d'administration (upload, suppression) est un nouveau composant structurant
+— assez substantiel pour justifier le changement de version majeure. Le
+reste de cette branche est une longue série d'itérations et de correctifs
+sur l'Explorateur (tableau croisé, graphiques, export, thème) — groupés ici
+par lot cohérent plutôt qu'un commit = une version, pour rester lisible.
+
+### 3.0.0 — Admin web : upload UI (RHS/VID-HOSP/VisualValoSejours) + suppression d'établissement
+`6c2e5e0`, `1f7e7b8` (2026-08-20/21)
+Plus besoin de copier des fichiers dans `input/` à la main ni d'utiliser la
+CLI pour retirer un établissement — les deux passent par `app/admin.html`.
+
+### 3.0.1 — Sépare montant BR séjour et suppléments (transport/MO/cancéro) dans la valorisation
+`a8a4edb` (2026-08-21)
+
+### 3.0.2 — Distingue erreurs bloquantes et avertissements contournables à l'upload
+`b28bc1f` (2026-08-21)
+
+### 3.0.3 — Ajoute `date_entree_um` à la clé naturelle `rhs_groupe`
+`ba8f09e` (2026-08-21)
+
+### 3.0.4 — Format M1B, exclusion M1C/M1B pour aligner le Nb RHS sur ATIH
+`b1b380d` (2026-08-24)
+
+### 3.0.5 — Correctif réinitialisation des variables Explorateur au changement d'établissement
+`903b926` (2026-08-24)
+
+### 3.1.0 — Dimensions Explorateur (âge, département, indicateurs nv_*) + regroupements temporels
+`4524b17` (2026-08-24)
+
+### 3.1.1 — Clarifie les mesures de comptage DAS/CSARR/CSAR/CCAM
+`cce9a59` (2026-08-24)
+
+### 3.1.2 — Retire les expressions Formule/Ratio (trop confuses en l'état)
+`1f9fea0` (2026-08-24)
+Retrait de la fonctionnalité ajoutée en 2.10.0 — voir la note associée.
+
+### 3.2.0 — Retire la limite de 5 établissements, tout sélectionner/désélectionner, valeurs vides en filtre
+`aa9a0ed` (2026-08-25)
++ correctif du libellé des colonnes du tableau croisé et de la valorisation
+par groupe d'UF, dans le même commit.
+
+### 3.2.1 — Regroupement/filtre UF du TDB secondaire : case à cocher, historique des noms, perf, contraste
+`a60ed07` (2026-08-25)
+
+### 3.2.2 — Groupes UF proposés en case à cocher séparée (décochée par défaut)
+`f73283f` (2026-08-25)
+Corrige aussi le chevauchement entre groupes.
+
+### 3.2.3 — Correctifs tableau croisé dédoublé + gel navigateur, libellés de variables codées
+`6eb6696` (2026-08-26)
+
+### 3.2.4 — Refonte de l'en-tête colonne du tableau croisé (9 itérations rapides)
+`125bddd` → `7328ff6` (2026-08-26)
+Série resserrée le même jour : annulation d'un correctif de colonne
+fantôme qui désalignait les totaux, repositionnement du libellé de
+dimension colonne (au-dessus, style standard, répété par groupe, bon
+niveau d'imbrication), colonne Total sur toute la hauteur d'en-tête,
+sous-totaux par colonne (symétriques des sous-totaux par ligne), correctif
+du rowspan sous-total, en-tête collant posé en bloc sur `<thead>`, retrait
+du plafond de hauteur, correctif du rendu cassé en export HTML/nouvelle page.
+
+### 3.3.0 — Filtres non présélectionnés, réordonnancement des variables, sticky multi-lignes, retrait export Word
+`39ad60a` (2026-08-27)
+
+### 3.3.1 — Option pour masquer les valeurs (vide) des variables
+`532c697` (2026-08-27)
+
+### 3.4.0 — Tendance : dégradé/flèche + sparkline sur lignes et colonnes
+`207bf89` (2026-08-27)
+
+### 3.4.1 — Thème clair/sombre/système, couleur personnalisable
+`9b36af1`, `b9b8e06` (2026-08-27)
+
+### 3.4.2 — Correctifs export Excel (couleurs B&W manquantes, largeur de colonne dynamique)
+`68ccb49`, `6b9a0b6` (2026-08-27)
+
+### 3.4.3 — Mémorise la dernière sélection de filtres, années indépendantes des FINESS
+`7cef331` (2026-08-28)
+
+### 3.4.4 — Port fixe (8743) pour préserver le stockage local du navigateur
+`906d9e0` (2026-08-28)
+
+### 3.4.5 — Sauvegarde automatique de `pmsi.db` avant "charger"/"supprimer"
+`195fb86` (2026-08-28)
+
+### 3.4.6 — Tri interactif des lignes du tableau croisé (clic d'en-tête)
+`77d58f2` (2026-08-28)
+
+### 3.4.7 — Répartition Valo→UF des séjours 0-jour, libellé "(sans correspondance)"
+`9b3e29c` (2026-08-28)
+
+### 3.4.8 — Correctifs graphiques (libellés, étiquettes de données, camembert imbriqué)
+`d3a74fd` (2026-08-28)
+
+### 3.5.0 — Option "parts écartées" (exploded) pour camembert/donut/sunburst
+`5b4f61c` (2026-09-02)
+
+### 3.6.0 — Déploiement portable SMRXplore (ressources embarquées, exe unique)
+`ccf542e` (2026-09-02)
+`SMRXPLORE\SMRXplore.exe` redistribuable seul (PyInstaller `--add-data`,
+`src/util/paths.py::resource_root()`) — même mécanisme requis, découvert
+insuffisamment répercuté sur `launch.exe`, cf. 3.6.1.
+
+### 3.6.1 — Corrige la reconstruction de `launch.exe` (`--add-data` manquant)
+`9d9908b` (2026-09-02) — **dernier commit à ce jour**
+La commande de build documentée pour `launch.exe` ne l'embarquait plus
+depuis 3.6.0 — reconstruction silencieusement périmée. `tools/build_launch.py`
+ajouté, factorisé avec `tools/deployer_smrxplore.py` dans
+`tools/_build_common.py`.
 
 ---
 
@@ -298,23 +457,39 @@ position.
 |---|---|---|
 | Pipeline Python (`run.py`, `src/parsing/`, `src/storage/`) | Parse RHS groupé + VID-HOSP + Valorisation, stocke en SQLite, dédoublonne | Stable depuis 0.2.x, mainteneur uniquement |
 | Nomenclatures (`src/nomenclatures/`, `tools/charger_nomenclatures.py`) | CIM-10, CCAM, CSARR, CSAR, GME + hiérarchies | Complet depuis 0.3.0 |
-| Moteur de valorisation (`src/viz/valorisation.py`) | Répartition des montants au jour de présence RHS, par campagne | Stable depuis 0.4.1, affiné en 2.5.0 |
-| TDB fixe (`src/viz/tableau_de_bord.py`, `render_dashboard.py`) | Rapport officiel, 9 sections, validé cellule par cellule contre la référence ATIH | Gelé depuis 1.0.0, patché en 1.x |
-| TDB secondaire UF/HC-HTP | Ventilation par unité fonctionnelle / type d'hospitalisation | Depuis 1.1.0, affiné en 1.5-1.6 |
-| Launcher + build `.exe` (PyInstaller) | Distribution autonome, non-développeur | Depuis 1.2.0 |
-| Explorateur interactif (`app/`, sql.js/WebAssembly) | 4 modes : Tableau croisé, Liste filtrée, Fiche séjour (NDA), Graphique — 100% front-end statique, zéro serveur à l'usage | Depuis 1.1.1 (base), 2.0.0+ (graphiques) |
-| Moteur graphique (SVG intégré + Plotly.js interactif) | 10+ types de graphiques, cohérents entre les deux moteurs de rendu | Depuis 2.0.0, complété jusqu'à 2.3.0 |
+| Admin web (`app/admin.html`) | Upload RHS/VID-HOSP/VisualValoSejours + suppression complète d'un établissement, depuis le navigateur | Depuis 3.0.0 |
+| Moteur de valorisation (`src/viz/valorisation.py`) | Répartition des montants au jour de présence RHS, par campagne | Stable depuis 0.4.1, affiné en 2.5.0 et 3.0.1 (suppléments séparés) |
+| TDB fixe (`src/viz/tableau_de_bord.py`, `render_dashboard.py`) | Rapport officiel, 9 sections, validé cellule par cellule contre la référence ATIH | Gelé depuis 1.0.0, patché en 1.x-3.x |
+| TDB secondaire UF/HC-HTP | Ventilation par unité fonctionnelle / type d'hospitalisation | Depuis 1.1.0, affiné en 1.5-1.6 et 3.2.x |
+| Launcher + build `.exe` (PyInstaller) | Distribution autonome, non-développeur — `launch.exe` (interne) et `SMRXPLORE\SMRXplore.exe` (portable, ressources embarquées) | Depuis 1.2.0, ressources embarquées depuis 3.6.0 |
+| Explorateur interactif (`app/`, sql.js/WebAssembly) | 4 modes : Tableau croisé, Liste filtrée, Fiche séjour (NDA), Graphique — 100% front-end statique, zéro serveur à l'usage | Depuis 1.1.1 (base), 2.0.0+ (graphiques), itéré en continu jusqu'à 3.6.x |
+| Moteur graphique (SVG intégré + Plotly.js interactif) | 10+ types de graphiques (dont donut, 3D, mixte, sunburst, Sankey, parts écartées), cohérents entre les deux moteurs de rendu | Depuis 2.0.0, complété jusqu'à 3.5.0 |
 
 ### Fonctionnalités actuellement couvertes
 - Ingestion multi-version, multi-établissement, multi-campagne des 3
-  familles de fichiers source.
+  familles de fichiers source — désormais aussi via upload web (Admin), plus
+  seulement en copiant des fichiers dans `input/`.
 - Résolution code → libellé sur 5 nomenclatures + hiérarchies complètes.
-- Valorisation exacte, répartie au jour, robuste à tout regroupement.
-- Rapport officiel figé (TDB) + rapport secondaire par UF/HC-HTP.
-- Exploration libre : pivot, filtres multi-critères inter-sources, fiche
-  séjour détaillée, 10+ types de graphiques (dont interactifs).
-- Export HTML/PDF/Word/Excel depuis l'explorateur.
-- Distribution en exécutable autonome (`launch.exe`).
+- Valorisation exacte, répartie au jour, robuste à tout regroupement ;
+  suppléments (transport/MO/cancéro) distingués du montant séjour.
+- Rapport officiel figé (TDB) + rapport secondaire par UF/HC-HTP (regroupement
+  d'UF en services, personnalisable).
+- Exploration libre : pivot (tri interactif, sous-totaux ligne/colonne,
+  tendance), filtres multi-critères inter-sources, fiche séjour détaillée,
+  10+ types de graphiques (dont interactifs), thème clair/sombre/système.
+- Export HTML/PDF/Excel depuis l'explorateur (export Word retiré en 3.3.0,
+  jamais fiable).
+- Distribution en exécutable autonome — `launch.exe` (usage interne) ou
+  `SMRXPLORE\SMRXplore.exe` (portable, un seul fichier, redistribuable).
+
+### Fonctionnalité tentée puis retirée
+- **Expressions Formule/Ratio dans l'Explorateur** (2.10.0 → retirée en
+  3.1.2, 2026-08-19→24) : première tentative d'une "variable calculée" —
+  jugée trop confuse en l'état par l'utilisateur. Une seconde approche
+  (mesure ÷ mesure, prototype dédié) a été explorée et validée
+  fonctionnellement le 2026-09-02 avant d'être explicitement annulée par
+  l'utilisateur — voir la session correspondante, pas de trace dans le
+  dépôt (aucun commit).
 
 ### Dette et périmètre explicitement hors scope (voir aussi [TODO.md](TODO.md))
 - Score RR / GR officiel non reconstruit (barème ATIH complet manquant).
