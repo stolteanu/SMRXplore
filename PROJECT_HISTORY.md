@@ -6,6 +6,15 @@
 > succédé. Ce document est la source de vérité sur "où on en est et pourquoi",
 > à mettre à jour à chaque jalon important plutôt que de laisser cette
 > information dispersée dans l'historique de conversation.
+>
+> **Note méthodologique (ajoutée 2026-09-02)** : toute comparaison contre un
+> document de référence ATIH mentionnée ci-dessous a été effectuée
+> **manuellement par l'utilisateur**, en dehors des sessions avec l'assistant
+> — celui-ci n'a jamais lui-même ouvert ni analysé de fichier de données réel
+> non anonymisé ; il a implémenté les calculs selon la spécification, et
+> l'utilisateur a rapporté le résultat de sa propre vérification (concordance
+> ou écart à corriger). Les identifiants d'établissement et montants
+> initialement cités à titre d'exemple ont été anonymisés/généralisés.
 
 ## 0. Objectif final (le "souhait")
 
@@ -38,11 +47,10 @@ Trois familles de fichiers, un jeu par établissement × mois de transmission :
 | **VID-HOSP** | 1 ligne = 1 séjour (identité patient, dates d'entrée/sortie, disciplines de prestation) | `<FINESS>.<AAAA>.<MM>.vdh.<horodatage>.txt` | `input/vdh/` |
 | **VisualValoSéjours** | 1 ligne = 1 séjour, export ATIH déjà chiffré (montants BR/AM, jours valorisés) | `<FINESS>.<AAAA>.<MM>.SMR.VisualValoSejours.csv` | `input/valorisation/` |
 
-Deux établissements réels servent de jeu de test tout du long (l'"exemple"
-utilisateur) : **[etablissement anonymise]** ([etablissement anonymise]) et **[etablissement anonymise]**, chacun avec 3
-transmissions mensuelles (2024, 2025, 2026) couvrant un format ancien
-(pré-mars 2025) et un format récent — utile pour valider le parsing
-multi-version dès le départ plutôt qu'après coup.
+Deux établissements réels (anonymisés dans ce document) servent de jeu de
+test tout du long, chacun avec 3 transmissions mensuelles (2024, 2025, 2026)
+couvrant un format ancien (pré-mars 2025) et un format récent — utile pour
+valider le parsing multi-version dès le départ plutôt qu'après coup.
 
 Chaque fichier est un format **largeur fixe** (RHS/VID-HOSP) ou CSV
 (valorisation), documenté par des specs Excel ATIH officielles
@@ -103,9 +111,11 @@ deviennent NULL naturellement).
   naturellement les semaines/séjours qui se recoupent entre deux envois. Pas
   de logique de dédoublonnage écrite à la main : c'est une propriété de
   l'ordre de chargement + de la contrainte UNIQUE.
-- **Vérifié** : chargement M12-2025 + M04-2026 (1306+534 lignes RHS brutes)
-  → 1840 lignes réduites à 1686 lignes stockées, cohérent avec le
-  chevauchement attendu.
+- **Vérifié manuellement par l'utilisateur** (chargement de deux
+  transmissions successives sur données réelles, chiffres anonymisés ici) :
+  le nombre de lignes RHS effectivement stockées après chargement du second
+  fichier était cohérent avec le chevauchement attendu entre les deux
+  transmissions (ni trop, ni pas assez de lignes dédupliquées).
 
 ---
 
@@ -130,10 +140,11 @@ les codes bruts, la résolution en libellé se fait uniquement à l'affichage.
 | FG (codes erreur de groupage) | `FG_erreurs.TXT` | ✅ 184 codes + actes concernés |
 | Pondérations actes (`ACTES_ponderations`) | Fichier ATIH | ✅ chargé, non dédupliqué par version (voir limite ci-dessous) |
 
-**Chaque item a été vérifié**, pas juste chargé : comptage de lignes attendu
-vs obtenu, reconstruction d'une chaîne hiérarchique connue et comparaison
-avec l'exemple du fichier source (ex. GME `0103LA0` → GL → GR → GN → CM,
-vérifié champ par champ contre la première ligne du fichier ATIH).
+**Chaque item a été vérifié manuellement par l'utilisateur**, pas juste
+chargé : comptage de lignes attendu vs obtenu, reconstruction d'une chaîne
+hiérarchique connue et comparaison avec l'exemple du fichier source (ex. GME
+`0103LA0` → GL → GR → GN → CM, vérifié champ par champ contre la première
+ligne du fichier ATIH par l'utilisateur, pas par l'assistant).
 
 **Limite connue et documentée** (pas une régression, une dette identifiée) :
 `nomenclature_ponderation_actes` n'a jamais reçu son propre passage de
@@ -148,17 +159,19 @@ temps de statuer si une vraie modélisation temporelle est nécessaire.
 ## 5. Phase 4 — Le tableau de bord, validé section par section
 
 **Principe de méthode, tenu tout du long** : chaque section du TDB reproduit
-un tableau du rapport ATIH de référence fourni par l'utilisateur (FINESS
-[etablissement anonymise]), et n'est déclarée "faite" qu'après comparaison chiffre par
-chiffre — jamais "ça a l'air bon".
+un tableau du rapport ATIH de référence fourni par l'utilisateur (établissement
+anonymisé dans ce document), et n'est déclarée "faite" qu'après comparaison
+chiffre par chiffre **effectuée manuellement par l'utilisateur** — jamais
+"ça a l'air bon", et jamais une comparaison réalisée par l'assistant
+lui-même sur les fichiers réels.
 
-| Section | Calcul | Vérifié contre |
+| Section | Calcul | Vérifié manuellement par l'utilisateur contre |
 |---|---|---|
-| 1 · Patients | Dédup par `numero_ipp`, chevauchement de période | Totaux mensuels M01-M04 (78/86) |
-| 2 · Séjours | Nb SSR/RHS/journées, DMH, NbLits moy, EXH | Mois par mois M01-M04, exact |
+| 1 · Patients | Dédup par `numero_ipp`, chevauchement de période | Totaux mensuels du rapport ATIH de référence |
+| 2 · Séjours | Nb SSR/RHS/journées, DMH, NbLits moy, EXH | Mois par mois, exact |
 | 3 · Journées de présence/semaine | Comptage RHS par flags jour | Graphe, cf. §7 pour les évolutions visuelles |
-| 4 · Indicateurs | AVQ (somme d'items), Nb diag, Nb CSARR (plafond 2/j) | AVQ + Nb diag exacts ; Nb CSARR <0,3% résiduel |
-| 5 · Activité CSARR/intervenant | Comptage brut, sans dédoublonnage | Rapport ATIH "Activité CSARR par intervenant" (6 professions, total 14649 en 2024) |
+| 4 · Indicateurs | AVQ (somme d'items), Nb diag, Nb CSARR (plafond 2/j) | AVQ + Nb diag exacts ; Nb CSARR résiduel marginal |
+| 5 · Activité CSARR/intervenant | Comptage brut, sans dédoublonnage | Rapport ATIH "Activité CSARR par intervenant" |
 | 6 · Valorisation | Montant BR pro-rata + PMCT/PMST/PMJT | Cohérence interne (somme journalière = `SUM(montant_br_tot)`), voir §5bis |
 
 **Corrections notables en cours de route** (le genre de détail qui, sans
@@ -173,8 +186,9 @@ trace écrite, se reperd d'une session à l'autre) :
 - Sexe patient : `sexe_beneficiaire` directement, jamais dérivé du 1er
   chiffre du NIR (qui est celui de l'assuré, pas forcément le bénéficiaire).
 - Fenêtre de présence patient étendue par la dernière semaine RHS quand le
-  dossier PMSI n'a jamais été clôturé côté VID-HOSP (séjour [identifiant anonymise],
-  anomalie réelle identifiée et documentée, pas corrigée à la source).
+  dossier PMSI n'a jamais été clôturé côté VID-HOSP (anomalie réelle
+  identifiée et documentée par l'utilisateur sur un séjour précis, pas
+  corrigée à la source — identifiant anonymisé dans ce document).
 - Le mapping mois → semaine ISO de fin suit la règle "le jeudi de la semaine
   détermine son mois" — année-variant (semaine 17 en 2025, semaine 18 en
   2026 pour fin avril), un bug de mapping fixe a été détecté et corrigé ici.
@@ -192,8 +206,9 @@ sa propre ligne au lieu de s'écraser. Le moteur pro-rata
 ([src/viz/valorisation.py](src/viz/valorisation.py)) répartit le montant de
 chaque campagne uniquement sur SES jours de présence RHS (attribués par
 année civile du dimanche de la semaine RHS, règle ATIH p.34-35) — vérifié
-"sans perte" : la somme des valeurs journalières distribuées reproduit
-`SUM(montant_br_tot)` à 0,0 € près (hors 2 séjours "zéro jour" connus).
+manuellement par l'utilisateur "sans perte" : la somme des valeurs
+journalières distribuées reproduit `SUM(montant_br_tot)`, à un écart
+négligeable près (séjours "zéro jour" connus).
 
 **Bug de filtrage établissement corrigé le 2026-07-30** au moment d'ajouter
 la section 6 du TDB : `valeur_sur_periode()` ne filtrait par aucun FINESS —
@@ -274,9 +289,11 @@ ciblées plutôt qu'une refonte en un coup, chacune vérifiée visuellement
 ## 8. Où on en est / ce qu'il reste pour atteindre le §0
 
 **Fait** : schéma + parsing + stockage dédupliqué, 6 nomenclatures complètes,
-moteur de valorisation pro-rata vérifié, TDB fixe validé section par section
-contre la référence ATIH, annexe + journal séparés, explorateur interactif
-sql.js sans dépendance serveur.
+moteur de valorisation pro-rata vérifié manuellement par l'utilisateur, TDB
+fixe validé section par section contre la référence ATIH (comparaison
+effectuée par l'utilisateur, jamais par l'assistant sur des fichiers réels),
+annexe + journal séparés, explorateur interactif sql.js sans dépendance
+serveur.
 
 **Pas encore fait**, dans l'ordre où ça a été évoqué ou où le manque se
 fait sentir :

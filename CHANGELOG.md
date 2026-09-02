@@ -21,6 +21,15 @@
 > des dates de mémoire de session, pas de commits. À partir de **1.0.0**,
 > chaque entrée correspond à un commit réel (hash entre parenthèses),
 > `git log --reverse` faisant foi pour l'ordre et les dates.
+>
+> **Note méthodologique (ajoutée 2026-09-02)** : toute mention de
+> vérification/validation "contre la référence ATIH" ci-dessous a été
+> effectuée **manuellement par l'utilisateur**, jamais par l'assistant en
+> analysant lui-même des fichiers de données réels non anonymisés — celui-ci
+> a implémenté les calculs, l'utilisateur a comparé le résultat à ses propres
+> références et rapporté la concordance ou l'écart à corriger. Les
+> identifiants d'établissement et montants réels initialement cités à titre
+> d'exemple ont été anonymisés/généralisés dans ce document.
 
 ---
 
@@ -82,15 +91,17 @@ répartition uniforme du montant sur les jours de présence RHS du séjour
 technique ATIH officielle : la valorisation SMR est incrémentale par
 campagne (seuls les jours non facturés en N-1 peuvent l'être en N). La
 `natural_key` de `valorisation_sejour` passe de `(finess, numadmin)` à
-`(finess, numadmin, campagne)`. Vérifié "sans perte" : somme des valeurs
-journalières = `SUM(montant_br_tot)` à 0,0 € près.
+`(finess, numadmin, campagne)`. Vérifié manuellement par l'utilisateur
+"sans perte" : somme des valeurs journalières = `SUM(montant_br_tot)`, écart
+négligeable.
 
 ### 0.5.0 — Tableau de bord fixe, sections 1-6
 [src/viz/tableau_de_bord.py](src/viz/tableau_de_bord.py) +
 [render_dashboard.py](src/viz/render_dashboard.py). Chaque section validée
-chiffre par chiffre contre le rapport ATIH de référence (patients, séjours,
-journées/semaine, indicateurs AVQ, activité CSARR/intervenant,
-valorisation).
+chiffre par chiffre par l'utilisateur (manuellement, sur données réelles
+anonymisées dans cette documentation) contre le rapport ATIH de référence
+(patients, séjours, journées/semaine, indicateurs AVQ, activité
+CSARR/intervenant, valorisation).
 
 ### 0.6.0 — Refonte visuelle du TDB
 Neuf itérations ciblées, chacune vérifiée en navigateur avant la suivante :
@@ -144,8 +155,9 @@ d'un bug de performance bloquant.
 ### 1.3.0 — Exclusion NV_CHAIN/NV_ATTENTE_DTS + colonne « manque à gagner »
 `abc5f22` (2026-08-05)
 Ces séjours ne doivent pas compter dans le montant BR officiel — exclusion
-validée sur les 4 établissements, avec une colonne dédiée pour rendre visible
-ce qui est exclu plutôt que de le faire disparaître silencieusement.
+validée manuellement par l'utilisateur sur plusieurs établissements réels
+(anonymisés), avec une colonne dédiée pour rendre visible ce qui est exclu
+plutôt que de le faire disparaître silencieusement.
 
 ### 1.3.1 — [ESSAI] Estimation des recettes des séjours <90j en cours
 `78ad2d5` (2026-08-05)
@@ -274,14 +286,16 @@ RHS↔Valorisation se faisait par séjour/semaine seul, ce qui donnait des
 totaux différents selon la variable de regroupement utilisée (GN, GR...).
 Remplacé par une répartition au prorata des jours de présence RHS — les
 totaux sont désormais identiques quel que soit le regroupement, écart
-résiduel de [montant anonymise] entièrement expliqué par des lignes Valorisation
-sans RHS correspondant (désalignement de fichiers source, pas une erreur
-de calcul).
+résiduel marginal entièrement expliqué par des lignes Valorisation sans RHS
+correspondant (désalignement de fichiers source, pas une erreur de calcul).
+Écart quantifié et vérifié manuellement par l'utilisateur, pas par
+l'assistant sur les fichiers réels.
 
 ### 2.5.1 — Retrait du bandeau d'avertissement croisement RHS/Valorisation
 `18609c2` (2026-08-18)
-Bandeau devenu obsolète une fois 2.5.0 vérifié comme donnant des totaux
-exacts — retiré, à ne pas réintroduire sans régression concrète constatée.
+Bandeau devenu obsolète une fois 2.5.0 vérifié manuellement par l'utilisateur
+comme donnant des totaux exacts — retiré, à ne pas réintroduire sans
+régression concrète constatée.
 
 ### 2.5.2 — Correctif GR/GL/Sévérité (caractère isolé, pas le code cumulé)
 `1ce601d` (2026-08-18)
@@ -459,7 +473,7 @@ ajouté, factorisé avec `tools/deployer_smrxplore.py` dans
 | Nomenclatures (`src/nomenclatures/`, `tools/charger_nomenclatures.py`) | CIM-10, CCAM, CSARR, CSAR, GME + hiérarchies | Complet depuis 0.3.0 |
 | Admin web (`app/admin.html`) | Upload RHS/VID-HOSP/VisualValoSejours + suppression complète d'un établissement, depuis le navigateur | Depuis 3.0.0 |
 | Moteur de valorisation (`src/viz/valorisation.py`) | Répartition des montants au jour de présence RHS, par campagne | Stable depuis 0.4.1, affiné en 2.5.0 et 3.0.1 (suppléments séparés) |
-| TDB fixe (`src/viz/tableau_de_bord.py`, `render_dashboard.py`) | Rapport officiel, 9 sections, validé cellule par cellule contre la référence ATIH | Gelé depuis 1.0.0, patché en 1.x-3.x |
+| TDB fixe (`src/viz/tableau_de_bord.py`, `render_dashboard.py`) | Rapport officiel, 9 sections, validé cellule par cellule par l'utilisateur (manuellement) contre la référence ATIH | Gelé depuis 1.0.0, patché en 1.x-3.x |
 | TDB secondaire UF/HC-HTP | Ventilation par unité fonctionnelle / type d'hospitalisation | Depuis 1.1.0, affiné en 1.5-1.6 et 3.2.x |
 | Launcher + build `.exe` (PyInstaller) | Distribution autonome, non-développeur — `launch.exe` (interne) et `SMRXPLORE\SMRXplore.exe` (portable, ressources embarquées) | Depuis 1.2.0, ressources embarquées depuis 3.6.0 |
 | Explorateur interactif (`app/`, sql.js/WebAssembly) | 4 modes : Tableau croisé, Liste filtrée, Fiche séjour (NDA), Graphique — 100% front-end statique, zéro serveur à l'usage | Depuis 1.1.1 (base), 2.0.0+ (graphiques), itéré en continu jusqu'à 3.6.x |
