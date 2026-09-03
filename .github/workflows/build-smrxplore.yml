@@ -1,7 +1,9 @@
 name: Build SMRXplore (multiplateforme)
 
 # Construit SMRXplore.exe/SMRXplore pour Windows, Linux, macOS Apple Silicon
-# (arm64) et macOS Intel (x86_64) — 2 binaires macOS distincts, PyInstaller
+# (arm64) et macOS Intel (x86_64, runner macos-15-intel — macos-13 retiré
+# par GitHub début décembre 2025 ; macos-15-intel est la dernière image
+# Intel prévue, jusqu'à août 2027) — 2 binaires macOS distincts, PyInstaller
 # ne fait pas de compilation croisée ni de binaire universel2 par défaut.
 # Déclenchement MANUEL uniquement (ou sur un tag vX.Y.Z) — jamais à chaque
 # push, conformément à la règle "SMRXplore = branche de déploiement,
@@ -38,7 +40,7 @@ jobs:
             artifact_name: SMRXplore
             release_name: SMRXplore-macos-arm64
             artifact_label: macos-arm64
-          - os: macos-13
+          - os: macos-15-intel
             artifact_name: SMRXplore
             release_name: SMRXplore-macos-intel
             artifact_label: macos-intel
