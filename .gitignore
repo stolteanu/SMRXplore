@@ -48,3 +48,9 @@ SMRXPLORE/
 # Fichiers de travail ponctuels (extraits de debug/investigation) laissés à
 # la racine — peuvent contenir des données patients réelles, jamais dans git.
 scratch_*
+
+# Sortie de tools/anonymiser_sources.py — même anonymisée, jamais versionnée
+# par précaution (contient aussi anon/_seed.secret.json, la clé qui permet
+# de reproduire la correspondance réel->pseudonyme : à protéger comme un
+# secret, jamais partagée).
+anon/
