@@ -15,6 +15,15 @@
 > l'utilisateur a rapporté le résultat de sa propre vérification (concordance
 > ou écart à corriger). Les identifiants d'établissement et montants
 > initialement cités à titre d'exemple ont été anonymisés/généralisés.
+>
+> Les fichiers source (RHS groupé, VID-HOSP, VisualValoSéjours) ont été
+> anonymisés en dehors de toute session avec l'assistant Claude, avant tout
+> partage de fichier réel. Le procédé : NDA, NIR/numéro d'immatriculation et
+> IPP sont régénérés à partir d'une seed aléatoire, en conservant la
+> correspondance entre les trois fichiers source (même identifiant réel →
+> même pseudonyme partout) ; la date de naissance est décalée d'un nombre de
+> jours aléatoire entre -5 et +5 ; la commune de résidence est randomisée en
+> conservant le département.
 
 ## 0. Objectif final (le "souhait")
 
