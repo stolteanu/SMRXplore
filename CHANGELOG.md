@@ -519,6 +519,21 @@ bouton "Mettre à jour" de l'admin web). Installé localement par accident
 chargement de fichier xlsx. `openpyxl` déclaré dans `requirements.txt`,
 workflow CI installe désormais `requirements.txt` + `requirements-dev.txt`.
 
+### 3.7.3 — Corrige le seed nomenclatures committé (vrai bug, silencieux)
+`98701ea` (2026-09-03) — **dernier commit à ce jour**
+La taille des binaires publiés restait anormalement basse même après 3.7.1 —
+en téléchargeant et lançant réellement le binaire de la release `v3.7.2`
+(dans un bac à sable isolé, jamais sur ce dépôt), `/api/charger` produisait
+un `pmsi.db` sans aucune table `nomenclature_*`. Cause : le fichier committé
+en 3.7.1 s'appelait `seed.db`, mais `run.py::seed_nomenclatures()` cherche
+`nomenclatures_seed.db` dans le bundle PyInstaller — le seed était bien
+embarqué (d'où l'augmentation de taille observée) mais jamais copié dans
+`pmsi.db`, échec resté invisible faute de message d'erreur. Renommé
+`config/nomenclatures/seed.db` → `nomenclatures_seed.db` ; `run.py` signale
+désormais un seed manquant au lieu d'échouer silencieusement. Retesté de
+bout en bout après correctif : 16/16 tables `nomenclature_*` présentes,
+contenu identique à l'original.
+
 ---
 
 ## Où en est le produit maintenant (référence pour l'architecture finale)
