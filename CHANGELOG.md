@@ -534,6 +534,22 @@ désormais un seed manquant au lieu d'échouer silencieusement. Retesté de
 bout en bout après correctif : 16/16 tables `nomenclature_*` présentes,
 contenu identique à l'original.
 
+### 3.7.4 — Corrige un module manquant en CI (src.viz.render_dashboard)
+`4224066` (2026-09-03) — **dernier commit à ce jour**
+Signalé par l'utilisateur en testant le vrai binaire `v3.7.3` : la
+génération d'un tableau de bord simple plantait avec `ModuleNotFoundError:
+No module named 'src.viz.render_dashboard'`. Comparaison des archives
+PyInstaller (`pyi-archive_viewer`) entre le binaire publié et deux
+reconstructions locales identiques : le module (importé uniquement à
+l'intérieur d'une fonction de `app_server.py`, route déclenchée à la
+demande) manquait du binaire CI mais était bien présent en local — même
+code, même version de PyInstaller (6.22.2), seule différence connue Python
+3.11 (CI) vs 3.12 (local). Détection statique des imports différée
+apparemment peu fiable selon l'environnement. Les modules concernés (`run`,
+`src.viz.render_dashboard`, `tools.publier_explorateur`,
+`tools.supprimer_etablissement`) sont désormais déclarés explicitement en
+`--hidden-import`, indépendamment de la détection automatique.
+
 ---
 
 ## Où en est le produit maintenant (référence pour l'architecture finale)
