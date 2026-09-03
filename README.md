@@ -78,6 +78,20 @@ Au premier lancement, `SMRXplore` crée à côté de lui son propre bac à
 sable (`input/`, `data/`, `output/`, `backups/`) — rien n'est écrit
 ailleurs sur la machine.
 
+### Compatibilité par plateforme
+
+| Binaire | OS minimum | Vérifié comment |
+|---|---|---|
+| `SMRXplore-windows.exe` | Windows 10 | Version minimale de Python/PyInstaller pour ce binaire ; VCRUNTIME140 embarqué, aucune installation Visual C++ requise côté utilisateur |
+| `SMRXplore-linux` | Distribution avec glibc ≥ 2.39 (Ubuntu 24.04+, Debian 13+, Fedora 39+...) | Construit sur le runner GitHub `ubuntu-latest` (24.04 LTS) — un Linux plus ancien peut refuser de le lancer (glibc trop ancienne) |
+| `SMRXplore-macos-arm64` | macOS 11 (Big Sur) | Lu directement dans l'en-tête Mach-O du binaire (`LC_BUILD_VERSION`, `minos`) — plancher technique, aucun Mac Apple Silicon n'existait avant |
+| `SMRXplore-macos-intel` | macOS 10.13 (High Sierra) | Lu directement dans l'en-tête Mach-O du binaire (`LC_VERSION_MIN_MACOSX`) |
+
+Construire *sur* une version récente d'un OS (ex. le runner macOS 15 pour
+le binaire Intel) ne relève pas la version minimale d'exécution — c'est la
+version de Python utilisée pour le build qui la fixe, et elle vise par
+défaut une compatibilité large.
+
 ## Développement (contribuer au code source)
 
 **Python 3.11**, verrouillé pour matcher exactement `.github/workflows/build-smrxplore.yml`
