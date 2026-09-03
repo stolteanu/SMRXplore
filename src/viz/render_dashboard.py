@@ -1,7 +1,7 @@
 """Génère app/tableau_de_bord.html à partir des agrégats de tableau_de_bord.build().
 
 Reprend la structure du tableau de bord PMSI de référence (fourni par
-l'utilisateur, FINESS [etablissement anonymise]) : sections 1 (Patients), 2 (Séjours),
+l'utilisateur, établissement réel anonymisé) : sections 1 (Patients), 2 (Séjours),
 3 (Journées de présence), 4 (Indicateurs), 5 (Activité CSARR), 6
 (Valorisation — montant BR pro-rata + PMCT/PMST/PMJT, ajoutée 2026-07-30), 7-8
 (Palmarès CM/GN — top 5 codes les plus fréquents par nomenclature de
@@ -228,8 +228,8 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
         "attente de droits) ou <code>nv_nonfactam</code> (non facturable à l'Assurance Maladie) — voir "
         "<code>EXCLUSION_MONTANT_OFFICIEL</code> dans <code>src/viz/valorisation.py</code>. Ces 3 "
         "exclusions ont été trouvées empiriquement (2026-08-05) en reproduisant EXACTEMENT au centime près "
-        "deux totaux d'un tableau ATIH externe fourni par l'utilisateur ([etablissement anonymise] et [etablissement anonymise], campagne "
-        "2026), puis confirmées sur les 2 autres établissements. D'autres variables NV_* du fichier "
+        "deux totaux d'un tableau ATIH externe fourni par l'utilisateur (deux établissements, campagne "
+        "2026), puis confirmées sur les autres établissements. D'autres variables NV_* du fichier "
         "VisualValoSejours existent (nv_cm90, nv_nonclos, nv_pie, nv_varano, nv_article51, nv_telereadapt, "
         "nv_evcepr, nv_gmt9999, nv_horsperiode) mais n'ont montré aucune contribution sur ces cas de test "
         "— non exclues, faute de preuve empirique. Avant le 2026-08-21, ce montant incluait aussi les "
@@ -277,8 +277,8 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
         "déclenche qu'à la clôture ou au seuil de 90j) ET sans anomalie <code>nv_chain</code>/"
         "<code>nv_attente_dts</code>/<code>nv_nonfactam</code> (voir "
         "<code>sejours_non_factures_sans_anomalie</code>) — distinction trouvée nécessaire en creusant un "
-        "écart signalé par l'utilisateur : sur [etablissement anonymise]/2026, 18 des 20 séjours \"jamais facturés\" "
-        "étaient en fait marqués <code>nv_chain</code>, pas de simples séjours en attente. Le montant "
+        "écart signalé par l'utilisateur : sur un établissement réel, la grande majorité des séjours "
+        "\"jamais facturés\" étaient en fait marqués <code>nv_chain</code>, pas de simples séjours en attente. Le montant "
         "appliqué à leurs journées de présence RHS est le PMJT déjà calculé (montant_br_pt / nb journées "
         "observées, voir PMCT/PMST/PMJT) — jamais recalculé à partir de cette estimation, pour éviter "
         "toute boucle. <b>Écart</b> = Montant BR TOT (fact.) − Montant BR estimé PRT : un grand écart en "

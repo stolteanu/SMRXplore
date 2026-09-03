@@ -15,7 +15,7 @@ année civile. Deux cas bien distincts pour déterminer "les jours qui
 correspondent" à un montant donné :
 
 1. **Séjour à plusieurs campagnes valorisées (>90j, facturation
-   INCRÉMENTALE)** — ex. [identifiant anonymise], séjour PMSI jamais clôturé : confirmé par
+   INCRÉMENTALE)** — ex. un séjour PMSI réel jamais clôturé : confirmé par
    la notice technique ATIH SMR (input/documentation/), « seules les
    journées non facturées en N-1 peuvent être facturées en N ». Chaque
    campagne valorise des jours différents, et l'attribution jour -> campagne
@@ -25,7 +25,7 @@ correspondent" à un montant donné :
    mnt_br_pt par année civile = montant_br_tot par campagne.
 
 2. **Séjour à une seule campagne valorisée, <90j, facturé à la clôture**
-   (règle étendue le 2026-07-31, cf. séjours 12092797/12092888) — la
+   (règle étendue le 2026-07-31, cf. deux séjours réels rencontrés) — la
    facturation est un versement UNIQUE fait à la sortie, mais le séjour peut
    avoir démarré une année civile antérieure (ex. admis fin novembre 2024,
    clos début janvier 2025 : montant enregistré sous la campagne 2025, alors
@@ -45,9 +45,9 @@ correspondent" à un montant donné :
    dans ce cas précis (règle générale : un jour ne compte que si le patient
    est "présent à minuit", jamais vrai ici) — le RHS a donc bien 0 jour
    marqué présent, ce n'est pas un défaut de données. Pourtant ATIH facture
-   quand même un montant. Vérifié empiriquement (2026-07-31, 4 séjours,
-   [etablissement anonymise] et [etablissement anonymise]) : ce montant reproduit EXACTEMENT (à l'arrondi
-   près) le Supplément Zone Basse (SZB) du barème input/tarifs/tarifs_qv.xlsx
+   quand même un montant. Vérifié empiriquement par l'utilisateur (2026-07-31,
+   plusieurs séjours réels sur deux établissements) : ce montant reproduit
+   EXACTEMENT (à l'arrondi près) le Supplément Zone Basse (SZB) du barème input/tarifs/tarifs_qv.xlsx
    multiplié par coeff_segur — c'est-à-dire le tarif d'exactement UN jour de
    zone basse. Ces séjours sont donc traités comme un cas particulier du cas
    2 (versement unique) où, à défaut de jour de présence RHS, on retombe sur
@@ -56,8 +56,8 @@ correspondent" à un montant donné :
 Le nombre de jours utilisé comme dénominateur vient du RHS (toujours
 disponible), pas de valorisation_sejour.nb_jours_valorises_gmt/gmth : les
 deux sont normalement identiques (vérifié empiriquement) mais NBJV_GMT/GMTH
-peuvent être vides sur un séjour anormalement long (constaté sur [identifiant anonymise],
-campagne 2026, GMT=9999) — utiliser le RHS évite de perdre ce montant.
+peuvent être vides sur un séjour anormalement long (constaté sur un séjour
+réel, campagne 2026, GMT=9999) — utiliser le RHS évite de perdre ce montant.
 
 Point d'attention rencontré : rhs_groupe.numero_admin_sejour est zero-paddé
 (ex. "024870040") alors que valorisation_sejour.numero_admin_sejour ne l'est
@@ -141,8 +141,8 @@ def _dernier_uf_par_sejour(conn: sqlite3.Connection, finess: str | None = None) 
     jour à répartir en %, donc tout son montant va à cette dernière UF
     connue plutôt que d'être silencieusement perdu (trouvé en vérifiant que
     la somme sur toutes les UF reproduit exactement le total établissement —
-    exigence explicite de l'utilisateur — écart de 528.94€ sur [etablissement anonymise]/2026
-    avant ce correctif, exactement les 2 séjours "0 jour" 27086914/27087145)."""
+    exigence explicite de l'utilisateur — écart constaté sur un établissement
+    réel avant ce correctif, exactement les séjours "0 jour" concernés)."""
     clause = "WHERE numero_unite_medicale IS NOT NULL AND numero_unite_medicale != ''"
     params: list = []
     if finess is not None:
@@ -282,13 +282,11 @@ EXCLUSION_MONTANT_OFFICIEL = (
 `valorisation_sejour.montant_br_tot` est sommé pour affichage :
 
 - `nv_nonfactam` ("non facturable Assurance Maladie", exclu 2026-07-31) :
-  vérifié sur [etablissement anonymise]/2026, 1 séjour HC à 37703.63€.
+  vérifié manuellement par l'utilisateur sur un établissement réel, un séjour HC concerné.
 - `nv_chain` ("chaînage") et `nv_attente_dts` ("en attente de droits", ajoutés
   2026-08-05) : trouvés empiriquement en reproduisant EXACTEMENT au centime
-  près deux totaux d'un tableau ATIH externe fourni par l'utilisateur —
-  [etablissement anonymise]/2026 (765717.70€ − 2 séjours NV_CHAIN à 40618.11€ = 725099.59€)
-  et [etablissement anonymise]/2026 (630123.81€ − 4 séjours NV_ATTENTE_DTS à 23141.53€ − 1
-  séjour NV_CHAIN à 7117.00€ = 599865.28€).
+  près deux totaux d'un tableau ATIH externe fourni par l'utilisateur, sur
+  deux établissements réels (identifiants et montants non conservés ici).
 
 Toutes les AUTRES variables NV_* du fichier VisualValoSejours (nv_cm90,
 nv_nonclos, nv_pie, nv_varano, nv_article51, nv_telereadapt, nv_evcepr,
@@ -414,7 +412,7 @@ def compute_valeur_journaliere(
     # ainsi marqué porte quand même un montant (valeur de production), mais
     # ce n'est pas une vraie facturation AM — l'inclure gonflait notre total
     # par rapport à la restitution ATIH de référence (trouvé 2026-07-31 sur
-    # [etablissement anonymise]/2026 : 1 séjour HC à 37703.63€, marqué nv_nonfactam=1).
+    # un établissement réel, un séjour marqué nv_nonfactam=1).
     clause = f"WHERE montant_br_sej IS NOT NULL AND montant_br_sej != 0 AND {EXCLUSION_MONTANT_OFFICIEL}"
     params: list = []
     if finess is not None:
@@ -515,15 +513,15 @@ def montant_br_tot_campagne(conn: sqlite3.Connection, campagne: int, finess: str
     la même année civile pour visualiser l'écart dû aux séjours facturés à
     cheval sur le 31/12 (cf. docstring module).
 
-    montant_br_trans (suppléments transport) EXCLU : vérifié 2026-07-31 sur
-    [etablissement anonymise]/2026 face à la restitution Ovalide « Casemix par GME/GMT »
-    (input/valorisation/ovalide/) — le total HC officiel qu'elle affiche
-    (847380.16€) est EXACTEMENT la somme de sa colonne « Montant BR Total
-    séjour (A+B+C) » = GMT + GMT hebdo + suppléments cancérologie, et exclut
-    le transport (reporté ailleurs par ATIH). montant_br_tot (colonne du CSV
-    VisualValoSejours), lui, inclut le transport — sans cette exclusion notre
-    total dépassait le leur de 17907.81€, exactement la somme de
-    montant_br_trans sur les séjours HC concernés."""
+    montant_br_trans (suppléments transport) EXCLU : vérifié manuellement par
+    l'utilisateur (2026-07-31, sur un établissement réel) face à la
+    restitution Ovalide « Casemix par GME/GMT » (input/valorisation/ovalide/)
+    — le total HC officiel qu'elle affiche est EXACTEMENT la somme de sa
+    colonne « Montant BR Total séjour (A+B+C) » = GMT + GMT hebdo +
+    suppléments cancérologie, et exclut le transport (reporté ailleurs par
+    ATIH). montant_br_tot (colonne du CSV VisualValoSejours), lui, inclut le
+    transport — sans cette exclusion le total dépassait le leur exactement de
+    la somme de montant_br_trans sur les séjours HC concernés."""
     clause = f"WHERE campagne = ? AND montant_br_tot IS NOT NULL AND {EXCLUSION_MONTANT_OFFICIEL}"
     params: list = [campagne]
     if finess is not None:
@@ -568,11 +566,11 @@ Utilisé pour ventiler montant_br_tot par type d'hospitalisation (2026-08-05,
 demande utilisateur) : contrairement à l'UF (aucune colonne équivalente dans
 VisualValoSejours), le type d'hospitalisation EST une colonne native du
 fichier de valorisation — chaque ligne y est déjà typée à la source, pas
-besoin de la déduire du RHS. Vérifié sur [etablissement anonymise]/2026 : la somme HC+HTP
-(847380.16€ + 130354.22€ = 977734.38€) reproduit EXACTEMENT le total
-établissement déjà validé, et le montant HC seul (847380.16€) est le même
-chiffre déjà confirmé le 2026-07-31 contre la restitution Ovalide "Casemix
-par GME/GMT" (voir docstring montant_br_tot_campagne)."""
+besoin de la déduire du RHS. Vérifié manuellement par l'utilisateur sur un
+établissement réel : la somme HC+HTP reproduit EXACTEMENT le total
+établissement déjà validé, et le montant HC seul est le même chiffre déjà
+confirmé le 2026-07-31 contre la restitution Ovalide "Casemix par GME/GMT"
+(voir docstring montant_br_tot_campagne)."""
 
 
 def montant_br_tot_campagne_comparable(
@@ -856,9 +854,9 @@ def sejours_non_factures_sans_anomalie(conn: sqlite3.Connection, finess: str, ca
     clos, GMT=9999 par construction — cf. docstring module) ET qui ne
     portent AUCUNE des 3 anomalies d'EXCLUSION_MONTANT_OFFICIEL
     (nv_chain/nv_attente_dts/nv_nonfactam). Distinction importante trouvée
-    empiriquement en creusant un écart signalé par l'utilisateur : sur
-    [etablissement anonymise]/2026, 18 des 20 séjours "jamais facturés" sont en fait
-    marqués nv_chain — pas de simples séjours en attente, mais des
+    empiriquement en creusant un écart signalé par l'utilisateur : sur un
+    établissement réel, la grande majorité des séjours "jamais facturés"
+    étaient en fait marqués nv_chain — pas de simples séjours en attente, mais des
     anomalies à part. Seuls les séjours vraiment "propres" sont candidats
     à l'estimation ci-dessous."""
     actifs = {

@@ -189,9 +189,9 @@ def _period_filter(
     confirmé (voir [[pmsi_smr_ecart_ovalide_htp_transmission]]) — ce seul
     établissement génère encore des lignes au format M1C (obsolète depuis la
     bascule S10/2025) pour des séjours HTP qui auraient dû être transmis en
-    M1D ; ATIH ne les reconnaît pas ("RHA de l'année N"). Vérifié : en les
-    excluant, le Nb RHS 2026 (680000973, semaines 01-26) tombe exactement à
-    3880, identique au Tableau F du rapport Ovalide 1.D.0.RTP. Scoping
+    M1D ; ATIH ne les reconnaît pas ("RHA de l'année N"). Vérifié manuellement
+    par l'utilisateur : en les excluant, le Nb RHS 2026 tombe exactement au
+    chiffre du Tableau F du rapport Ovalide 1.D.0.RTP. Scoping
     volontairement restreint à cet établissement (pas une règle générique
     par date de bascule) — M1C reste le format légitime pour 2023-2025 sur
     tous les établissements, un filtre global aurait vidé ces années-là.
@@ -292,8 +292,8 @@ def _last_rhs_presence_by_sejour(conn: sqlite3.Connection, finess: str) -> dict[
     physique complète : son date_sortie peut donc être antérieur à la fin réelle du
     séjour alors que le patient est toujours suivi semaine après semaine en RHS. On
     utilise cette date RHS comme borne de fin minimale pour ne pas perdre ces
-    patients (vu empiriquement : séjour [identifiant anonymise], VID-HOSP date_sortie 20/06/2024,
-    mais RHS toujours présent semaine 18-2026).
+    patients (vu empiriquement sur un séjour réel : VID-HOSP date_sortie
+    antérieure, mais RHS toujours présent plusieurs semaines après).
     """
     rows = conn.execute(
         "SELECT finess_epmsi, numero_admin_sejour, numero_semaine FROM rhs_groupe "
@@ -771,11 +771,11 @@ def section_incoherences_vidhosp_rhs(conn: sqlite3.Connection, finess: str) -> l
     du VID-HOSP (dossier PMSI non clôturé alors que le RHS continue d'être transmis),
     ou séjour RHS sans aucun enregistrement VID-HOSP du tout.
 
-    Repéré empiriquement sur le séjour [identifiant anonymise] : dossier administratif clôturé le
-    20/06/2024 (un autre dossier, EHPAD, ouvre le même jour — hors périmètre PMSI-SSR,
-    0 ligne RHS), mais la clôture PMSI/VID-HOSP n'a jamais été faite : le RHS continue
-    à être transmis semaine après semaine jusqu'à la semaine 18-2026 alors que le
-    VID-HOSP reste bloqué à une sortie du 20/06/2024.
+    Repéré empiriquement sur un séjour réel : dossier administratif clôturé (un
+    autre dossier, EHPAD, ouvre le même jour — hors périmètre PMSI-SSR, 0 ligne
+    RHS), mais la clôture PMSI/VID-HOSP n'a jamais été faite : le RHS continue
+    à être transmis semaine après semaine bien après la date de sortie
+    officielle, alors que le VID-HOSP reste bloqué à cette date de sortie.
     """
     rhs_rows = conn.execute(
         "SELECT finess_epmsi, numero_admin_sejour, numero_semaine, date_debut_sejour, date_fin_sejour "
@@ -877,9 +877,9 @@ def valeurs_axe(conn: sqlite3.Connection, periods: list[dict], finess: str, cham
     présence, toutes années confondues (séjours à cheval), donc un séjour
     facturé sur la campagne 2025 mais ayant fréquenté une UF UNIQUEMENT en
     2024 ou 2026 doit quand même voir cette UF proposée, sous peine de faire
-    disparaître sa part du total (23365.31€ manquants constatés sur
-    [etablissement anonymise]/2025 avant ce correctif, 5 séjours ayant visité l'UF 6002 hors
-    de la fenêtre 2025). `type_hospitalisation` reste restreinte aux périodes
+    disparaître sa part du total (un montant non négligeable manquant constaté
+    sur un établissement réel avant ce correctif, plusieurs séjours ayant
+    visité une UF hors de la fenêtre de campagne). `type_hospitalisation` reste restreinte aux périodes
     demandées : sa ventilation est scopée par CAMPAGNE (colonne SQL exacte,
     pas de présence multi-année à couvrir), donc pas concernée par ce bug."""
     if champ == "numero_unite_medicale":
@@ -1229,12 +1229,12 @@ def section_valorisation(
     filtre (voir valeur_sur_periode/compute_valeur_journaliere).
 
     `montant_br_tot` par axe (2026-08-05, précisé après question utilisateur
-    en pratique — "pourquoi rien pour [etablissement anonymise] en HTP ?", puis corrigé après
-    remarque utilisateur sur la méthode UF, voir ci-dessous) :
+    en pratique sur un cas réel où rien ne s'affichait pour l'axe HTP, puis
+    corrigé après remarque utilisateur sur la méthode UF, voir ci-dessous) :
     - `type_hospitalisation` : ventilation EXACTE, via la colonne NATIVE
       `valorisation_sejour.type_hospitalisation` (C/P — indépendante du champ
-      RHS, voir RHS_VERS_VALO_TYPE_HOSPITALISATION). Vérifié sur
-      [etablissement anonymise]/2026 : HC (847380.16€) + HTP (130354.22€) = 977734.38€,
+      RHS, voir RHS_VERS_VALO_TYPE_HOSPITALISATION). Vérifié manuellement par
+      l'utilisateur sur un établissement réel : HC + HTP reconstitue
       exactement le total établissement déjà validé, et le montant HC seul
       déjà confirmé contre la restitution Ovalide le 2026-07-31.
     - `numero_unite_medicale` : AUCUNE colonne équivalente dans

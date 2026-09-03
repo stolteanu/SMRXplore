@@ -160,7 +160,8 @@ const SOURCES = {
     // période courante — le filtre l'excluait alors même que "Oui" ET "Non"
     // étaient tous deux cochés, faisant disparaître à tort des lignes RHS/VID-
     // HOSP de séjours par ailleurs parfaitement valides (constaté empiriquement
-    // 2026-08-21 : 97 lignes RHS 680000973/2026 disparaissaient ainsi). Exclure
+    // 2026-08-21 sur l'établissement concerné : des dizaines de lignes RHS
+    // disparaissaient ainsi). Exclure
     // directement ici, dans la table SOURCE, ne touche que les lignes Valo
     // elles-mêmes et ne peut plus jamais fausser un comptage RHS/VID-HOSP.
     sql: `SELECT va.*, cm.libelle_long AS lib_cm

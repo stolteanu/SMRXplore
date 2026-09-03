@@ -100,7 +100,7 @@
   "validation_notes": [
     "Somme des tailles du bloc fixe = 470 (vérifié).",
     "Taille du bloc DMT = 50 (3+2+8+8+3+7+8+3+8), vérifiée conforme.",
-    "Positions vérifiées empiriquement sur [etablissement anonymise].2026.04.vdh.20260528.111812.txt (ligne 1, N=0001, un seul bloc DMT, longueur totale 520).",
+    "Positions vérifiées empiriquement sur un fichier VID-HOSP réel (N=0001, un seul bloc DMT, longueur totale 520).",
     "Anomalie relevée sur le fichier réel : le champ prix_unitaire (pos 25-31 du bloc DMT) contenait un caractère '.' littéral au lieu d'une valeur purement numérique à échelle implicite (5+2). Le parseur devra tolérer ce cas (log + valeur brute conservée) plutôt que de rejeter la ligne."
   ]
 }

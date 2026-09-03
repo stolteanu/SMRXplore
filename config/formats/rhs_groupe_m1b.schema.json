@@ -1,6 +1,6 @@
 {
   "format": "RHS_groupe",
-  "spec_source": "input/formats/formats_ssr2021_0.xlsx (feuille 'RHS groupé', spécification 2021, versions M1B/M0B) — dérivé le 2026-08-24 pour décoder les 9 lignes M1B trouvées dans 680000973.2026.06.rhs...txt (bug WEB100T : rétrograde des séjours HTP ouverts depuis 2020-2021 jusqu'au format de leur ouverture).",
+  "spec_source": "input/formats/formats_ssr2021_0.xlsx (feuille 'RHS groupé', spécification 2021, versions M1B/M0B) — dérivé le 2026-08-24 pour décoder des lignes M1B trouvées sur un établissement réel (bug WEB100T : rétrograde des séjours HTP ouverts depuis 2020-2021 jusqu'au format de leur ouverture).",
   "record_length_formula": "186 + 8*n1 + 35*n2 + 23*n4 (vérifié : les 6 longueurs réelles distinctes observées — 232/283/291/316/253 — se décomposent toutes en entiers n1/n2/n4 ≥ 0 valides selon cette formule ; pas de bloc CSAR, comme M1C)",
   "version_field": {"start": 11, "end": 13, "values": ["M1B"]},
   "note": "Schéma de PARSING uniquement. Quasi identique à rhs_groupe_m1c.schema.json, décalé de 1 position à partir de code_gme car ce dernier ne fait ici que 6 caractères (pas encore de dimension GL/niveau de lourdeur dans la classification 2021 — code_gme = CM(2)+GN(2)+GR/Subdivision(1)+Sévérité(1), une décomposition à 4 sous-champs dans le xlsx source, stockée ici en un seul champ atomique comme pour les autres variantes). Champ 'Finalité principale de prise en charge' (144-151) existait déjà en 2021 mais est un filler dans M1C/M1D — nommé explicitement ici, non repris dans la table canonique (ignoré silencieusement à l'insertion, comme tout champ absent du schéma canonique — cf. run.py merge_schemas_for_format). Blocs DAS/CSARR/CCAM identiques champ pour champ à M1C (noms de champs réutilisés à l'identique pour rester dans les mêmes colonnes SQLite).",
@@ -91,8 +91,8 @@
     }
   ],
   "validation_notes": [
-    "9/9 lignes M1B présentes dans 680000973.2026.06.rhs.20260807.102156.txt (3 séjours : [identifiant anonymise] x2, [identifiant anonymise] x6, [identifiant anonymise] x1) valident la formule 186+8n1+35n2+23n4 avec des n1/n2/n4 entiers ≥0 cohérents pour chacune des 6 longueurs distinctes observées (232/283/291/316/253).",
+    "9/9 lignes M1B présentes dans un fichier réel (3 séjours) valident la formule 186+8n1+35n2+23n4 avec des n1/n2/n4 entiers ≥0 cohérents pour chacune des 6 longueurs distinctes observées (232/283/291/316/253).",
     "code_gme observé sur ces lignes = '9096Z0' (placeholder d'erreur de groupage, cf. pmsi_smr_regroupement_hierarchique_gme_csarr_cim10) avec code_retour_groupage 051/054 et indicateur_erreur='X' — cohérent avec le bug WEB100T déjà documenté (pmsi_smr_ecart_ovalide_htp_transmission), pas des séjours groupés normalement.",
-    "finess_epmsi='680000973' et numero_admin_sejour cohérents ([identifiant anonymise], [identifiant anonymise]) confirmés par comparaison avec le fichier M01-2026 (transmission antérieure au bug, mêmes séjours en format M1D propre)."
+    "finess_epmsi et numero_admin_sejour cohérents confirmés par comparaison avec le fichier M01-2026 (transmission antérieure au bug, mêmes séjours en format M1D propre)."
   ]
 }

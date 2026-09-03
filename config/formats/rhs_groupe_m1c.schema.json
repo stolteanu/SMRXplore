@@ -1,6 +1,6 @@
 {
   "format": "RHS_groupe",
-  "spec_source": "Déduit empiriquement de [etablissement anonymise].2025.12.rhs.20260205.142036_regex.txt (version M1C, avant M3 2025) + historique de mise à jour de formats_smr_2025_0.xlsx (\"nouveau CSAR à partir de M3 2025\")",
+  "spec_source": "Déduit empiriquement d'un fichier RHS réel (version M1C, avant M3 2025) + historique de mise à jour de formats_smr_2025_0.xlsx (\"nouveau CSAR à partir de M3 2025\")",
   "record_length_formula": "187 + 8*n1 + 35*n2 + 23*n4 (pas de bloc CSAR avant M3 2025 : confirmé par l'utilisateur)",
   "version_field": {"start": 11, "end": 13, "values": ["M1C"]},
   "note": "Schéma de PARSING uniquement (positions différentes de rhs_groupe.schema.json) — même 'format' donc même table SQLite (n3_nb_csar et le bloc CSAR restent NULL/absents pour ces lignes). Identique à rhs_groupe.schema.json jusqu'à n2_nb_csarr (fin 179) ; pas de champ n3 (CSAR n'existait pas) donc n4 suit directement n2, et tout le reste du bloc fixe est décalé de 3 positions plus tôt.",
@@ -91,7 +91,7 @@
     }
   ],
   "validation_notes": [
-    "310/310 lignes M1C de [etablissement anonymise].2025.12.rhs.20260205.142036_regex.txt valident exactement la formule 187+8n1+35n2+23n4 (vérifié programmatiquement).",
+    "310/310 lignes M1C d'un fichier RHS réel valident exactement la formule 187+8n1+35n2+23n4 (vérifié programmatiquement).",
     "Absence de bloc CSAR confirmée explicitement par l'utilisateur : CSAR n'existait pas avant M3 2025, seul CSARR existait.",
     "Bloc fixe 187 vérifié empiriquement : DAS commence en position 188 avec 10 codes CIM10 parfaitement cadrés à gauche (ex. 'R296    ', 'Z958    ', 'M180    ', ...) ; le bloc CSARR (35 car/acte) démarre ensuite exactement là où n2 l'annonce, avec des codes CSARR valides (ex. 'PZE+057')."
   ]

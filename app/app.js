@@ -1002,8 +1002,8 @@ function annotateValoCoverage(foreignIdx, baseSrcKey, baseRows) {
     // jours_weekend tout à "0") : mémorise la dernière ligne RHS (par numéro de semaine) rattachée à
     // cette ligne Valo, pour lui attribuer tout le montant si AUCUNE des lignes RHS rattachées n'a de
     // jour de présence — sinon le montant serait silencieusement perdu (cf. équivalent Python,
-    // _dernier_uf_par_sejour dans src/viz/valorisation.py : écart de 528,94 € constaté sur
-    // [etablissement anonymise]/2026, exactement les 2 séjours 0-jour 27086914/27087145).
+    // _dernier_uf_par_sejour dans src/viz/valorisation.py : écart constaté sur un établissement
+    // réel, exactement les séjours 0-jour concernés).
     const week = row.numero_semaine ? Number(row.numero_semaine.slice(0, 2)) : -1;
     if (!valoRow._dernierRow || week >= valoRow._dernierWeek) {
       valoRow._dernierRow = row;
