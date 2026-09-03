@@ -567,6 +567,16 @@ intermédiaire, même patron que le code équivalent plus bas dans le fichier.
 Retesté de bout en bout sur le vrai binaire CI téléchargé : génération de
 TDB fonctionnelle.
 
+### 3.7.6 — Ajoute un binaire macOS Intel (x86_64)
+`7661969`, `c7b9fae` (2026-09-03) — **dernier commit à ce jour**
+`macos-latest` (GitHub Actions) est un runner Apple Silicon (arm64) — le
+binaire macOS ne tournait donc que sur Mac récents (M1+), pas du tout sur
+Mac Intel (mauvaise architecture). Ajout d'une 4e branche de build sur
+macos-13 (Intel), produisant `SMRXplore-macos-intel` en plus de
+`SMRXplore-macos-arm64`. Python verrouillé en 3.11 en local (`.venv`,
+`tools/_build_common.py::check_python_version()`) pour matcher exactement
+la CI, après le bug de compilation invisible du correctif précédent.
+
 ---
 
 ## Où en est le produit maintenant (référence pour l'architecture finale)
