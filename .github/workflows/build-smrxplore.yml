@@ -1,6 +1,8 @@
 name: Build SMRXplore (multiplateforme)
 
-# Construit SMRXplore.exe/SMRXplore pour Windows, Linux et macOS.
+# Construit SMRXplore.exe/SMRXplore pour Windows, Linux, macOS Apple Silicon
+# (arm64) et macOS Intel (x86_64) — 2 binaires macOS distincts, PyInstaller
+# ne fait pas de compilation croisée ni de binaire universel2 par défaut.
 # Déclenchement MANUEL uniquement (ou sur un tag vX.Y.Z) — jamais à chaque
 # push, conformément à la règle "SMRXplore = branche de déploiement,
 # reconstruite sur demande uniquement" (voir mémoire du projet).
@@ -34,8 +36,12 @@ jobs:
             artifact_label: linux
           - os: macos-latest
             artifact_name: SMRXplore
-            release_name: SMRXplore-macos
-            artifact_label: macos
+            release_name: SMRXplore-macos-arm64
+            artifact_label: macos-arm64
+          - os: macos-13
+            artifact_name: SMRXplore
+            release_name: SMRXplore-macos-intel
+            artifact_label: macos-intel
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

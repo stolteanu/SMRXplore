@@ -60,8 +60,9 @@ cible).
   souhaitée.
 - **Via GitHub Actions** ([`.github/workflows/build-smrxplore.yml`](.github/workflows/build-smrxplore.yml)) :
   déclenchement manuel (onglet *Actions* → *Run workflow*) ou sur un tag
-  `vX.Y.Z`, construit les 3 binaires (Windows, Linux, macOS) en parallèle
-  et les attache au run en artefacts téléchargeables.
+  `vX.Y.Z`, construit les 4 binaires (Windows, Linux, macOS Apple Silicon,
+  macOS Intel) en parallèle et les attache au run en artefacts
+  téléchargeables — sur tag, aussi directement à la Release GitHub.
 - **En le construisant vous-même**, depuis ce dépôt (sur la plateforme
   cible — Windows pour `SMRXplore.exe`, Linux/macOS pour `SMRXplore`) :
   ```bash
