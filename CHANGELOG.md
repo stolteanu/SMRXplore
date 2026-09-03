@@ -507,6 +507,18 @@ Deux correctifs découverts en testant une vraie release `v3.7.0` :
   en repli par `tools/_build_common.py` pour que tout build (local ou CI)
   produise un exécutable réellement utilisable dès le téléchargement.
 
+### 3.7.2 — Corrige openpyxl manquant dans les builds CI (2e écart de taille)
+`2623a86` (2026-09-03) — **dernier commit à ce jour**
+Après le correctif 3.7.1, les binaires CI restaient plus légers que le
+build local (15 Mo vs 23-27 Mo) — `requirements.txt` affirmait à tort
+"bibliothèque standard uniquement" alors que `run.py` importe `openpyxl`
+au niveau module (`src/tarifs/gmt.py`, grille tarifaire GMT chargée au
+bouton "Mettre à jour" de l'admin web). Installé localement par accident
+(jamais déclaré), jamais en CI (`requirements-dev.txt` n'installait que
+`pyinstaller`) : les binaires publiés auraient planté au premier
+chargement de fichier xlsx. `openpyxl` déclaré dans `requirements.txt`,
+workflow CI installe désormais `requirements.txt` + `requirements-dev.txt`.
+
 ---
 
 ## Où en est le produit maintenant (référence pour l'architecture finale)
