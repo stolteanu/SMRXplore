@@ -20,6 +20,7 @@ Usage :
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -49,6 +50,7 @@ def build_exe(nomenclatures_seed):
             str(DEPLOY_BUILD_DIR),
             *add_data_args(nomenclatures_seed),
             *hidden_import_args(),
+            *(["--log-level", "DEBUG"] if os.environ.get("PYI_DEBUG") else []),
             str(ROOT / "launch.py"),
         ],
         cwd=ROOT,
