@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools._build_common import ROOT, add_data_args, build_nomenclatures_seed, hidden_import_args  # noqa: E402
+from tools._build_common import ROOT, add_data_args, build_nomenclatures_seed, check_warn_file, hidden_import_args  # noqa: E402
 
 DEPLOY_DIR = ROOT / "SMRXPLORE"
 DEPLOY_BUILD_DIR = DEPLOY_DIR / "_build"
@@ -61,6 +61,7 @@ def main() -> None:
     DEPLOY_DIR.mkdir(exist_ok=True)
     nomenclatures_seed = build_nomenclatures_seed(DEPLOY_BUILD_DIR)
     exe_path = build_exe(nomenclatures_seed)
+    check_warn_file(DEPLOY_BUILD_DIR, "SMRXplore")
     shutil.rmtree(DEPLOY_BUILD_DIR, ignore_errors=True)
     print(f"\nOK — {exe_path} à jour (fichier unique, bac à sable non touché).")
 

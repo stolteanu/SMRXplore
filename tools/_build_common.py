@@ -52,6 +52,30 @@ def hidden_import_args() -> list[str]:
     return args
 
 
+def check_warn_file(build_dir: Path, exe_name: str) -> None:
+    """Affiche toute ligne du fichier warn-<exe_name>.txt de PyInstaller
+    mentionnant un des HIDDEN_IMPORTS — diagnostic ajouté le 2026-09-03 après
+    un cas où src.viz.render_dashboard manquait du binaire malgré
+    --hidden-import (échec constaté seulement en CI, jamais reproduit en
+    local ni dans un venv minimal identique) : ce fichier, jusque-là
+    supprimé avec build_dir sans être lu, aurait donné la vraie raison
+    (ImportError sous-jacent ?) au lieu de deviner. Ne fait rien si le
+    fichier n'existe pas (ex. nom différent selon la structure de build)."""
+    warn_path = build_dir / exe_name / f"warn-{exe_name}.txt"
+    if not warn_path.exists():
+        return
+    hits = [
+        line
+        for line in warn_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if any(m in line for m in HIDDEN_IMPORTS)
+    ]
+    if hits:
+        print(f"\n--- Avertissements PyInstaller concernant HIDDEN_IMPORTS ({warn_path}) ---")
+        for line in hits:
+            print(line)
+        print("---")
+
+
 COMMITTED_SEED = ROOT / "config" / "nomenclatures" / "nomenclatures_seed.db"
 
 
