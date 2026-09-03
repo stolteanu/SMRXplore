@@ -490,10 +490,11 @@ def render(data: dict, axis_label: str | None = None) -> str:
     ref_lines_svg = ""
     for value, dash, _ in ref_specs:
         ry = y_for(value)
+        dash_attr_ref = f' stroke-dasharray="{dash}"' if dash else ""
         ref_lines_svg += (
             f'<line x1="{pad_l:.1f}" y1="{ry:.1f}" x2="{chart_w - pad_r + 4:.1f}" y2="{ry:.1f}" '
             f'stroke="var(--muted)" stroke-width="1" opacity="0.5"'
-            f'{f" stroke-dasharray=\"{dash}\"" if dash else ""} />'
+            f'{dash_attr_ref} />'
         )
     ref_legend_bg = f'<rect x="{pad_l:.1f}" y="10" width="172" height="36" fill="var(--surface)" opacity="0.85" rx="4" />'
     ref_legend_svg = ""

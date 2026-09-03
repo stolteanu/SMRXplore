@@ -47,9 +47,6 @@ jobs:
       - name: Installer les dépendances (runtime + build)
         run: python -m pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: TEMP debug encodage
-        run: python debug_encoding.py
-
       - name: Construire SMRXplore
         run: python tools/deployer_smrxplore.py
 
