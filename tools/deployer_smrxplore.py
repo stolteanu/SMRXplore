@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools._build_common import ROOT, add_data_args, build_nomenclatures_seed  # noqa: E402
+from tools._build_common import ROOT, add_data_args, build_nomenclatures_seed, hidden_import_args  # noqa: E402
 
 DEPLOY_DIR = ROOT / "SMRXPLORE"
 DEPLOY_BUILD_DIR = DEPLOY_DIR / "_build"
@@ -48,6 +48,7 @@ def build_exe(nomenclatures_seed):
             "--specpath",
             str(DEPLOY_BUILD_DIR),
             *add_data_args(nomenclatures_seed),
+            *hidden_import_args(),
             str(ROOT / "launch.py"),
         ],
         cwd=ROOT,

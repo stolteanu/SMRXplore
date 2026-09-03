@@ -27,6 +27,30 @@ SOURCE_APP_FILES = [
     "theme.js",
 ]
 
+# Modules importés uniquement à l'intérieur de fonctions dans
+# src/server/app_server.py (routes déclenchées à la demande, jamais au
+# démarrage du serveur) — l'analyse statique de PyInstaller les détecte en
+# général sans aide, mais s'est montrée peu fiable au moins une fois en CI
+# (src.viz.render_dashboard absent du build v3.7.3 alors qu'il l'était bien
+# dans deux reconstructions locales identiques, même version de PyInstaller
+# 6.22.2 — seule différence connue : Python 3.11 en CI vs 3.12 en local).
+# Déclarés ici en --hidden-import pour ne plus dépendre de cette détection :
+# la génération des tableaux de bord (`_generate`, route /api/tableaux) et
+# la suppression d'établissement plantaient sinon avec "No module named ...".
+HIDDEN_IMPORTS = [
+    "run",
+    "src.viz.render_dashboard",
+    "tools.publier_explorateur",
+    "tools.supprimer_etablissement",
+]
+
+
+def hidden_import_args() -> list[str]:
+    args = []
+    for name in HIDDEN_IMPORTS:
+        args += ["--hidden-import", name]
+    return args
+
 
 COMMITTED_SEED = ROOT / "config" / "nomenclatures" / "nomenclatures_seed.db"
 
