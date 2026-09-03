@@ -455,11 +455,27 @@ du plafond de hauteur, correctif du rendu cassé en export HTML/nouvelle page.
 insuffisamment répercuté sur `launch.exe`, cf. 3.6.1.
 
 ### 3.6.1 — Corrige la reconstruction de `launch.exe` (`--add-data` manquant)
-`9d9908b` (2026-09-02) — **dernier commit à ce jour**
+`9d9908b` (2026-09-02)
 La commande de build documentée pour `launch.exe` ne l'embarquait plus
 depuis 3.6.0 — reconstruction silencieusement périmée. `tools/build_launch.py`
 ajouté, factorisé avec `tools/deployer_smrxplore.py` dans
 `tools/_build_common.py`.
+
+### 3.6.2 — Publication : licence GPL-3.0, README, anonymisation de la documentation
+`94a2b90`, `21847e1` (2026-09-02/03) — **dernier commit à ce jour**
+Préparation à la publication du dépôt (privé) sur GitHub :
+- `LICENSE` (GPL-3.0, verbatim), `README.md`, `THIRD-PARTY-LICENSES.md`
+  (Plotly.js et sql.js, toutes deux MIT).
+- `CHANGELOG.md`/`PROJECT_HISTORY.md` anonymisés : retrait des identifiants
+  d'établissement réels et montants cités à titre d'exemple ; clarification
+  que toute comparaison contre une référence ATIH mentionnée dans ces
+  documents a été effectuée **manuellement par l'utilisateur**, jamais par
+  l'assistant en analysant lui-même des fichiers de données réels non
+  anonymisés.
+- Historique Git réécrit (`git filter-branch`) pour purger ces mêmes
+  identifiants des révisions passées de ces documents avant le premier push
+  — l'historique complet d'origine reste conservé localement (jamais poussé)
+  pour dépannage interne, voir la mémoire projet dédiée.
 
 ---
 
