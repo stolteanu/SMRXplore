@@ -92,6 +92,27 @@ le binaire Intel) ne relève pas la version minimale d'exécution — c'est la
 version de Python utilisée pour le build qui la fixe, et elle vise par
 défaut une compatibilité large.
 
+### Premier lancement sur Linux/macOS
+
+Un binaire téléchargé depuis une Release GitHub (navigateur) n'a ni le bit
+exécutable, ni de signature Apple — deux blocages successifs, normaux pour
+un build non commercial :
+
+```bash
+chmod +x SMRXplore-linux        # ou SMRXplore-macos-arm64 / SMRXplore-macos-intel
+```
+
+Sur macOS uniquement, ensuite : **clic droit → Ouvrir** (pas un double-clic)
+pour que Gatekeeper propose "Ouvrir quand même", ou en ligne de commande :
+
+```bash
+xattr -d com.apple.quarantine SMRXplore-macos-arm64   # ou -intel
+```
+
+Sans ces étapes, macOS peut ouvrir le fichier avec un éditeur de texte au
+lieu de l'exécuter (permissions manquantes) plutôt que d'afficher une
+erreur explicite.
+
 ## Développement (contribuer au code source)
 
 **Python 3.11**, verrouillé pour matcher exactement `.github/workflows/build-smrxplore.yml`
