@@ -92,21 +92,24 @@ le binaire Intel) ne relève pas la version minimale d'exécution — c'est la
 version de Python utilisée pour le build qui la fixe, et elle vise par
 défaut une compatibilité large.
 
-### Premier lancement sur Linux/macOS
+### Premier lancement sur Linux/macOS (utilisateur final, sans Terminal)
 
-C'est une app en ligne de commande (elle démarre un serveur local et ouvre
-le navigateur elle-même) — **la lancer depuis le Terminal**, pas par
-double-clic dans Finder/l'explorateur de fichiers : Finder associe souvent
-un exécutable sans extension à un éditeur de texte (double-clic = ouverture
-avec TextEdit au lieu d'une exécution), en plus du bit exécutable manquant
-et de la signature Apple absente sur un téléchargement de navigateur.
+Les binaires Linux/macOS sont distribués en `.zip` (`SMRXplore-linux.zip`,
+`SMRXplore-macos-arm64.zip`, `SMRXplore-macos-intel.zip`) — pas en fichier
+brut : un téléchargement de navigateur ne préserve jamais le bit exécutable
+Unix, mais l'extraction native (double-clic sur le zip, Archive
+Utility/Finder ou équivalent Linux) le restaure correctement, puisqu'il a
+déjà été posé avant l'empaquetage. Aucun `chmod` à faire soi-même.
 
-```bash
-cd ~/Downloads   # ou le dossier où le binaire a été téléchargé
-chmod +x SMRXplore-linux        # ou SMRXplore-macos-arm64 / SMRXplore-macos-intel
-xattr -d com.apple.quarantine SMRXplore-macos-arm64   # macOS uniquement — ou -intel
-./SMRXplore-macos-arm64         # ou -intel / SMRXplore-linux
-```
+1. **Double-cliquer sur le `.zip` téléchargé** pour l'extraire.
+2. **macOS uniquement** : double-cliquer sur le fichier extrait affiche un
+   avertissement Gatekeeper ("développeur non identifié" — normal pour un
+   build non signé par Apple, aucune donnée n'est en jeu). **Clic droit →
+   Ouvrir**, puis confirmer "Ouvrir quand même" — à faire une seule fois,
+   les lancements suivants n'affichent plus l'avertissement.
+3. Linux : double-clic direct sur le fichier extrait (ou activer "Autoriser
+   l'exécution" dans les propriétés du fichier selon le gestionnaire de
+   fichiers).
 
 ## Développement (contribuer au code source)
 
