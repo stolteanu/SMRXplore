@@ -502,7 +502,7 @@ Deux correctifs découverts en testant une vraie release `v3.7.0` :
   empêchant toute génération de tableau de bord. Les nomenclatures ATIH
   (CIM-10, CCAM, CSARR, CSAR, GME) sont des données publiques, pas la
   propriété de l'ATIH — leur contenu peut être redistribué sans
-  restriction. Ajout de `config/nomenclatures/seed.db` (extraction des
+  restriction. Ajout de `config/nomenclatures/nomenclatures_seed.db` (extraction des
   tables `nomenclature_*` uniquement, jamais de données patients), utilisé
   en repli par `tools/_build_common.py` pour que tout build (local ou CI)
   produise un exécutable réellement utilisable dès le téléchargement.

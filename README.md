@@ -105,7 +105,7 @@ Aucun — les référentiels ATIH (CIM-10, CCAM, CSARR, CSAR, GME) sont des
 données **publiques** et sont embarqués directement dans `SMRXplore` (voir
 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)). Pour la maintenance du
 dépôt (mise à jour d'une nomenclature), voir `python pmsi.py nomenclatures`
-et `config/nomenclatures/seed.db`.
+et `config/nomenclatures/nomenclatures_seed.db`.
 
 ## Licence
 

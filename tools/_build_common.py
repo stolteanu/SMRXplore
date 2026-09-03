@@ -28,7 +28,7 @@ SOURCE_APP_FILES = [
 ]
 
 
-COMMITTED_SEED = ROOT / "config" / "nomenclatures" / "seed.db"
+COMMITTED_SEED = ROOT / "config" / "nomenclatures" / "nomenclatures_seed.db"
 
 
 def build_nomenclatures_seed(build_dir: Path) -> Path | None:

@@ -119,6 +119,12 @@ def seed_nomenclatures() -> None:
 
     seed_path = RES_ROOT / "data" / "nomenclatures_seed.db"
     if not seed_path.exists():
+        # Ne devrait plus arriver (COMMITTED_SEED garantit un seed dans
+        # tout build depuis 2026-09-03) — signalé plutôt que silencieux,
+        # après un bug où un nom de fichier différent (seed.db committé vs
+        # nomenclatures_seed.db attendu ici) avait fait échouer cette copie
+        # sans aucun message, laissant les binaires publiés sans nomenclatures.
+        print(f"ATTENTION : seed nomenclatures introuvable ({seed_path}) — tableaux de bord indisponibles.")
         return
 
     db_path = ROOT / "data/processed/pmsi.db"
