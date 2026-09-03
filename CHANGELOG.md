@@ -550,6 +550,23 @@ apparemment peu fiable selon l'environnement. Les modules concernés (`run`,
 `tools.supprimer_etablissement`) sont désormais déclarés explicitement en
 `--hidden-import`, indépendamment de la détection automatique.
 
+### 3.7.5 — Corrige la VRAIE cause : f-string incompatible Python 3.11 (ligne 496)
+`481df62` (2026-09-03) — **dernier commit à ce jour**
+Le module manquant persistait malgré 3.7.4 (--hidden-import) — trouvé avec
+un script diagnostique autonome exécuté directement en CI (Python 3.11
+réel) : `SyntaxError: f-string expression part cannot include a backslash`
+à `src/viz/render_dashboard.py:497`, une f-string imbriquée avec des
+guillemets échappés dans la partie `{expression}` d'une f-string englobante.
+Restriction du langage levée seulement en Python 3.12 (PEP 701) — compile
+silencieusement en local (3.12), échoue en CI (3.11 sur les 3 runners).
+PyInstaller catche cette `SyntaxError` en interne et exclut le module comme
+« invalid » sans erreur visible, d'où l'inefficacité de `--hidden-import`
+(force l'inclusion d'un import, pas la compilation d'un fichier syntaxiquement
+invalide pour la version Python utilisée). Remplacé par une variable
+intermédiaire, même patron que le code équivalent plus bas dans le fichier.
+Retesté de bout en bout sur le vrai binaire CI téléchargé : génération de
+TDB fonctionnelle.
+
 ---
 
 ## Où en est le produit maintenant (référence pour l'architecture finale)
