@@ -585,6 +585,20 @@ décembre 2025 (pas une panne ponctuelle). Remplacé par `macos-15-intel`,
 le label de remplacement (dernière image Intel prévue par GitHub, jusqu'à
 août 2027).
 
+### 3.7.8 — Distribue Linux/macOS en .zip (bit exécutable préservé)
+`9f5a07a` (2026-09-03) — **dernier commit à ce jour**
+Signalé par l'utilisateur en testant réellement sur un Mac Intel : même
+après "Ouvrir quand même" (Gatekeeper), le binaire s'ouvrait dans TextEdit
+— et un utilisateur final ne peut de toute façon pas faire `chmod +x` en
+Terminal lui-même. Un téléchargement de navigateur ne préserve jamais le
+bit exécutable Unix d'un fichier brut ; un `.zip` où ce bit a déjà été posé
+avant l'empaquetage le restaure correctement à l'extraction native
+(Archive Utility/Finder, gestionnaires de fichiers Linux). Workflow :
+`chmod +x` + `zip -j` pour Linux/macOS (Windows inchangé). Procédure
+utilisateur ramenée à : double-clic sur le zip pour extraire, puis clic
+droit → Ouvrir une fois sur macOS (Gatekeeper, incontournable sans
+signature Apple payante) — plus de Terminal requis.
+
 ---
 
 ## Où en est le produit maintenant (référence pour l'architecture finale)
