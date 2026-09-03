@@ -28,18 +28,31 @@ SOURCE_APP_FILES = [
 ]
 
 
+COMMITTED_SEED = ROOT / "config" / "nomenclatures" / "seed.db"
+
+
 def build_nomenclatures_seed(build_dir: Path) -> Path | None:
-    """Extrait les seules tables nomenclature_* (référence ATIH quasi-statique :
-    CIM-10, CCAM, CSARR, CSAR, GME...) de data/processed/pmsi.db vers un petit
-    fichier à part, embarquable dans un exe — jamais les tables de données
-    patients (rhs_groupe, vid_hosp, valorisation_sejour...). Permet à un
-    déploiement neuf de générer des tableaux de bord sans avoir à relancer
-    `python pmsi.py nomenclatures` (maintenance interne, fichiers sources
-    ATIH bruts non embarqués) — cf. run.seed_nomenclatures(). Renvoie None
-    (rien à embarquer) si data/processed/pmsi.db est absent localement."""
+    """Extrait les seules tables nomenclature_* (référence ATIH quasi-statique,
+    données PUBLIQUES — pas la propriété de l'ATIH, voir mémoire projet du
+    2026-09-03 : CIM-10, CCAM, CSARR, CSAR, GME...) de data/processed/pmsi.db
+    vers un petit fichier à part, embarquable dans un exe — jamais les
+    tables de données patients (rhs_groupe, vid_hosp, valorisation_sejour...).
+    Permet à un déploiement neuf de générer des tableaux de bord sans avoir
+    à relancer `python pmsi.py nomenclatures` (maintenance interne, fichiers
+    sources ATIH bruts non embarqués) — cf. run.seed_nomenclatures().
+
+    Si data/processed/pmsi.db est absent localement (cas d'un build CI, qui
+    n'a jamais cette base — voir .gitignore) : repli sur COMMITTED_SEED, un
+    seed déjà extrait et committé dans le dépôt, pour que les binaires
+    publiés (GitHub Actions) restent fonctionnels dès le téléchargement.
+    Régénérer ce fichier committé à la main après toute mise à jour des
+    nomenclatures (voir README, section build)."""
     source_db = ROOT / "data" / "processed" / "pmsi.db"
     if not source_db.exists():
-        print("(pas de data/processed/pmsi.db local — seed nomenclatures ignoré)")
+        if COMMITTED_SEED.exists():
+            print(f"(pas de data/processed/pmsi.db local — repli sur {COMMITTED_SEED})")
+            return COMMITTED_SEED
+        print("(pas de data/processed/pmsi.db local, ni de seed committé — seed nomenclatures ignoré)")
         return None
 
     build_dir.mkdir(parents=True, exist_ok=True)

@@ -97,11 +97,11 @@ variante interne pour tester sur cette machine sans passer par
 
 ## Prérequis
 
-Les référentiels ATIH (CIM-10, CCAM, CSARR, CSAR, GME) doivent être
-chargés séparément via `python pmsi.py nomenclatures` à partir de fichiers
-source que vous vous procurez auprès de l'ATIH — ce dépôt ne redistribue
-que le *schéma* de ces référentiels (leur format), jamais leur contenu
-(voir [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)).
+Aucun — les référentiels ATIH (CIM-10, CCAM, CSARR, CSAR, GME) sont des
+données **publiques** et sont embarqués directement dans `SMRXplore` (voir
+[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)). Pour la maintenance du
+dépôt (mise à jour d'une nomenclature), voir `python pmsi.py nomenclatures`
+et `config/nomenclatures/seed.db`.
 
 ## Licence
 

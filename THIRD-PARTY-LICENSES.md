@@ -54,12 +54,15 @@ Emscripten — aucune obligation de licence supplémentaire pour SQLite.
 
 ## Nomenclatures ATIH (`config/nomenclatures/`)
 
-Les fichiers de ce dossier sont des **schémas JSON décrivant le format**
-des référentiels publiés par l'ATIH (CIM-10, CCAM, CSARR, CSAR, GME) — noms
-de colonnes, types, clés naturelles. **Aucune donnée de référence ATIH
-elle-même (le contenu des tables, ex. la liste complète des codes CIM-10 et
-leurs libellés) n'est incluse dans ce dépôt** : ces référentiels sont
-chargés à l'exécution par `tools/charger_nomenclatures.py` depuis des
-fichiers source que chaque utilisateur doit se procurer séparément auprès
-de l'ATIH, puis restent dans `data/`/`input/` (jamais versionnés — voir
-`.gitignore`).
+Ce dossier contient les **schémas JSON décrivant le format** des
+référentiels publiés par l'ATIH (CIM-10, CCAM, CSARR, CSAR, GME) — noms de
+colonnes, types, clés naturelles — ainsi qu'un **seed** (`seed.db`,
+extraction des seules tables `nomenclature_*`, jamais de données patients)
+contenant leur contenu réel : ces référentiels sont des données
+**publiques**, non la propriété de l'ATIH, embarquables sans restriction
+dans les binaires distribués (`SMRXplore`). Ce seed permet à tout
+exécutable construit sans accès à la machine de développement (build CI
+GitHub Actions notamment) de rester fonctionnel dès le téléchargement,
+sans que l'utilisateur final n'ait à se procurer ni charger lui-même les
+fichiers source ATIH bruts (réservé à la maintenance du référentiel via
+`tools/charger_nomenclatures.py`).
