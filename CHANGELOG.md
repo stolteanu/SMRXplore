@@ -489,6 +489,24 @@ les 3 plateformes en parallèle, déclenché manuellement ou sur un tag
 vie "déploiement sur demande" de `SMRXplore.exe`. Testé de bout en bout :
 les 3 builds (Windows, Linux, macOS) réussissent sur `master`.
 
+### 3.7.1 — Corrige les binaires publiés (nomenclatures manquantes) + release GitHub
+`79aa489`, `c06b2df` (2026-09-03) — **dernier commit à ce jour**
+Deux correctifs découverts en testant une vraie release `v3.7.0` :
+- Le workflow ne publiait les binaires qu'en artefacts de run (temporaires,
+  90 jours), jamais attachés à la Release GitHub elle-même — nouveau job
+  `release` (`softprops/action-gh-release`) qui les y publie directement
+  sur tag `vX.Y.Z`.
+- Plus grave : les binaires construits en CI étaient ~12 Mo plus légers que
+  le build local et **non fonctionnels** — sans `data/processed/pmsi.db`
+  local (exclu du dépôt), aucune nomenclature ATIH n'était embarquée,
+  empêchant toute génération de tableau de bord. Les nomenclatures ATIH
+  (CIM-10, CCAM, CSARR, CSAR, GME) sont des données publiques, pas la
+  propriété de l'ATIH — leur contenu peut être redistribué sans
+  restriction. Ajout de `config/nomenclatures/seed.db` (extraction des
+  tables `nomenclature_*` uniquement, jamais de données patients), utilisé
+  en repli par `tools/_build_common.py` pour que tout build (local ou CI)
+  produise un exécutable réellement utilisable dès le téléchargement.
+
 ---
 
 ## Où en est le produit maintenant (référence pour l'architecture finale)
