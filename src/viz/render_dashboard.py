@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Génère app/tableau_de_bord.html à partir des agrégats de tableau_de_bord.build().
 
 Reprend la structure du tableau de bord PMSI de référence (fourni par
