@@ -94,24 +94,19 @@ défaut une compatibilité large.
 
 ### Premier lancement sur Linux/macOS
 
-Un binaire téléchargé depuis une Release GitHub (navigateur) n'a ni le bit
-exécutable, ni de signature Apple — deux blocages successifs, normaux pour
-un build non commercial :
+C'est une app en ligne de commande (elle démarre un serveur local et ouvre
+le navigateur elle-même) — **la lancer depuis le Terminal**, pas par
+double-clic dans Finder/l'explorateur de fichiers : Finder associe souvent
+un exécutable sans extension à un éditeur de texte (double-clic = ouverture
+avec TextEdit au lieu d'une exécution), en plus du bit exécutable manquant
+et de la signature Apple absente sur un téléchargement de navigateur.
 
 ```bash
+cd ~/Downloads   # ou le dossier où le binaire a été téléchargé
 chmod +x SMRXplore-linux        # ou SMRXplore-macos-arm64 / SMRXplore-macos-intel
+xattr -d com.apple.quarantine SMRXplore-macos-arm64   # macOS uniquement — ou -intel
+./SMRXplore-macos-arm64         # ou -intel / SMRXplore-linux
 ```
-
-Sur macOS uniquement, ensuite : **clic droit → Ouvrir** (pas un double-clic)
-pour que Gatekeeper propose "Ouvrir quand même", ou en ligne de commande :
-
-```bash
-xattr -d com.apple.quarantine SMRXplore-macos-arm64   # ou -intel
-```
-
-Sans ces étapes, macOS peut ouvrir le fichier avec un éditeur de texte au
-lieu de l'exécuter (permissions manquantes) plutôt que d'afficher une
-erreur explicite.
 
 ## Développement (contribuer au code source)
 
