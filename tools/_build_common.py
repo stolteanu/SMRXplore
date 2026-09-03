@@ -10,6 +10,7 @@ données patients réelles (les seuls à embarquer dans un exécutable).
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -73,13 +74,17 @@ def add_data_args(nomenclatures_seed: Path | None) -> list[str]:
     `config/nomenclatures` — indispensable pour tout exécutable onefile
     consommé par `src/server/app_server.py`, qui résout ces fichiers via
     `src/util/paths.py::resource_root()` (=`sys._MEIPASS` une fois figé,
-    donc introuvables si non embarqués via cette fonction)."""
+    donc introuvables si non embarqués via cette fonction).
+
+    Le séparateur SRC/DEST de --add-data est ';' sous Windows et ':' partout
+    ailleurs (doc PyInstaller) — os.pathsep le donne déjà correctement."""
+    sep = os.pathsep
     args = []
     for name in SOURCE_APP_FILES:
-        args += ["--add-data", f"{ROOT / 'app' / name};app"]
-    args += ["--add-data", f"{ROOT / 'app' / 'lib'};app/lib"]
-    args += ["--add-data", f"{ROOT / 'config' / 'formats'};config/formats"]
-    args += ["--add-data", f"{ROOT / 'config' / 'nomenclatures'};config/nomenclatures"]
+        args += ["--add-data", f"{ROOT / 'app' / name}{sep}app"]
+    args += ["--add-data", f"{ROOT / 'app' / 'lib'}{sep}app/lib"]
+    args += ["--add-data", f"{ROOT / 'config' / 'formats'}{sep}config/formats"]
+    args += ["--add-data", f"{ROOT / 'config' / 'nomenclatures'}{sep}config/nomenclatures"]
     if nomenclatures_seed is not None:
-        args += ["--add-data", f"{nomenclatures_seed};data"]
+        args += ["--add-data", f"{nomenclatures_seed}{sep}data"]
     return args
