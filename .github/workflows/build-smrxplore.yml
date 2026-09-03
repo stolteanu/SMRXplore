@@ -49,6 +49,8 @@ jobs:
 
       - name: Construire SMRXplore
         run: python tools/deployer_smrxplore.py
+        env:
+          PYI_DEBUG: "1"  # TEMPORAIRE — diagnostic invalid-module, à retirer une fois la cause confirmée
 
       - uses: actions/upload-artifact@v4
         with:
