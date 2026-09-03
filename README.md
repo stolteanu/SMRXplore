@@ -1,10 +1,10 @@
 # SMRXplore
 
 **SMRXplore** est le produit portable de ce dépôt : un unique exécutable
-Windows autonome (aucune installation, aucun Python requis) qui transforme
-les fichiers de transmission PMSI-SMR (RHS groupé, VID-HOSP,
-VisualValoSéjours) en tableaux de bord fiables et en exploration de données
-libre, sans dépendance cloud ni serveur externe.
+autonome (Windows, Linux ou macOS — aucune installation, aucun Python
+requis) qui transforme les fichiers de transmission PMSI-SMR (RHS groupé,
+VID-HOSP, VisualValoSéjours) en tableaux de bord fiables et en exploration
+de données libre, sans dépendance cloud ni serveur externe.
 
 Ce dépôt contient le **code source** — pipeline de traitement, interface,
 outils de build. `SMRXplore.exe` est produit à partir de ce code via
@@ -46,24 +46,34 @@ jamais versionné (données patients réelles, bases générées, sauvegardes).
 
 ## Obtenir SMRXplore
 
-`SMRXplore.exe` embarque tout le nécessaire (interface, bibliothèques,
-schémas de référentiels) en un seul fichier — voir
-`tools/deployer_smrxplore.py` pour le détail (PyInstaller `--add-data`,
-aucune dépendance externe conservée à côté de l'exe).
+`SMRXplore` (`SMRXplore.exe` sous Windows, `SMRXplore` sous Linux/macOS)
+embarque tout le nécessaire (interface, bibliothèques, schémas de
+référentiels) en un seul fichier — voir `tools/deployer_smrxplore.py` pour
+le détail (PyInstaller `--add-data`, aucune dépendance externe conservée à
+côté de l'exécutable). Le projet est **multiplateforme** : même code
+source, un binaire natif par plateforme (pas de compilation croisée
+possible avec PyInstaller — chaque binaire doit être construit sur son OS
+cible).
 
 - **Via une version publiée** (Releases GitHub, quand disponible) :
-  télécharger `SMRXplore.exe` correspondant à la version souhaitée.
-- **En le construisant vous-même**, depuis ce dépôt :
+  télécharger le binaire correspondant à votre plateforme et à la version
+  souhaitée.
+- **Via GitHub Actions** ([`.github/workflows/build-smrxplore.yml`](.github/workflows/build-smrxplore.yml)) :
+  déclenchement manuel (onglet *Actions* → *Run workflow*) ou sur un tag
+  `vX.Y.Z`, construit les 3 binaires (Windows, Linux, macOS) en parallèle
+  et les attache au run en artefacts téléchargeables.
+- **En le construisant vous-même**, depuis ce dépôt (sur la plateforme
+  cible — Windows pour `SMRXplore.exe`, Linux/macOS pour `SMRXplore`) :
   ```bash
   python -m pip install -r requirements-dev.txt
   python tools/deployer_smrxplore.py
   ```
-  Produit `SMRXPLORE/SMRXplore.exe`, reconstruit à partir de l'état courant
-  du code source (`app/`, `src/`, `config/`) — chaque publication est
-  rebuilée à la demande depuis la dernière version de travail validée,
+  Produit `SMRXPLORE/SMRXplore(.exe)`, reconstruit à partir de l'état
+  courant du code source (`app/`, `src/`, `config/`) — chaque publication
+  est rebuilée à la demande depuis la dernière version de travail validée,
   jamais un binaire archivé séparément du code qui l'a produit.
 
-Au premier lancement, `SMRXplore.exe` crée à côté de lui son propre bac à
+Au premier lancement, `SMRXplore` crée à côté de lui son propre bac à
 sable (`input/`, `data/`, `output/`, `backups/`) — rien n'est écrit
 ailleurs sur la machine.
 
@@ -79,11 +89,11 @@ python launch.py             # lance le serveur local depuis les sources (sans p
 ```
 
 Aucune dépendance externe requise pour le pipeline (bibliothèque standard
-Python uniquement — voir `requirements.txt`). `requirements-dev.txt` n'est
-nécessaire que pour construire un exécutable (`SMRXplore.exe` via
-`tools/deployer_smrxplore.py`, ou `launch.exe` — variante interne pour
-tester sur cette machine sans passer par `python launch.py`, jamais publiée
-— via `tools/build_launch.py`).
+Python uniquement — voir `requirements.txt`, portable Windows/Linux/macOS).
+`requirements-dev.txt` n'est nécessaire que pour construire un exécutable
+(`SMRXplore(.exe)` via `tools/deployer_smrxplore.py`, ou `launch(.exe)` —
+variante interne pour tester sur cette machine sans passer par
+`python launch.py`, jamais publiée — via `tools/build_launch.py`).
 
 ## Prérequis
 

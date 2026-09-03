@@ -477,6 +477,18 @@ Préparation à la publication du dépôt (privé) sur GitHub :
   — l'historique complet d'origine reste conservé localement (jamais poussé)
   pour dépannage interne, voir la mémoire projet dédiée.
 
+### 3.7.0 — SMRXplore multiplateforme (Windows/Linux/macOS)
+`37a576c` (2026-09-03) — **dernier commit à ce jour**
+Le séparateur `--add-data` de PyInstaller était codé en dur (`;`, syntaxe
+Windows uniquement) dans `tools/_build_common.py` — remplacé par
+`os.pathsep`, seul changement de code nécessaire (le reste du pipeline
+n'utilisait déjà que la bibliothèque standard, sans appel Windows-only).
+Nouveau `.github/workflows/build-smrxplore.yml` : construit `SMRXplore` sur
+les 3 plateformes en parallèle, déclenché manuellement ou sur un tag
+`vX.Y.Z` — jamais automatique à chaque commit, cohérent avec le cycle de
+vie "déploiement sur demande" de `SMRXplore.exe`. Testé de bout en bout :
+les 3 builds (Windows, Linux, macOS) réussissent sur `master`.
+
 ---
 
 ## Où en est le produit maintenant (référence pour l'architecture finale)
