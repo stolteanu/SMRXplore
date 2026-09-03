@@ -88,12 +88,16 @@ python pmsi.py dashboard     # régénère le tableau de bord d'un établissemen
 python launch.py             # lance le serveur local depuis les sources (sans passer par un exe)
 ```
 
-Aucune dépendance externe requise pour le pipeline (bibliothèque standard
-Python uniquement — voir `requirements.txt`, portable Windows/Linux/macOS).
-`requirements-dev.txt` n'est nécessaire que pour construire un exécutable
-(`SMRXplore(.exe)` via `tools/deployer_smrxplore.py`, ou `launch(.exe)` —
-variante interne pour tester sur cette machine sans passer par
-`python launch.py`, jamais publiée — via `tools/build_launch.py`).
+Une seule dépendance externe pour le pipeline, `openpyxl` (lecture de
+fichiers .xlsx — voir `requirements.txt`, portable Windows/Linux/macOS) ;
+`requirements-dev.txt` n'ajoute que `pyinstaller`, nécessaire uniquement
+pour construire un exécutable (`SMRXplore(.exe)` via
+`tools/deployer_smrxplore.py`, ou `launch(.exe)` — variante interne pour
+tester sur cette machine sans passer par `python launch.py`, jamais
+publiée — via `tools/build_launch.py`). Les deux fichiers doivent être
+installés avant tout build (`pip install -r requirements.txt -r requirements-dev.txt`) —
+`openpyxl` manquant produit un exécutable qui plante au premier chargement
+de fichier xlsx (grille tarifaire GMT, maintenance des nomenclatures).
 
 ## Prérequis
 

@@ -1,10 +1,12 @@
 # Outil de BUILD uniquement (empaqueter launch.py en .exe autonome pour
 # déploiement sur une machine sans Python) — jamais requis pour faire
-# tourner le projet depuis les sources (run.py, launch.py restent
-# bibliothèque standard uniquement, voir requirements.txt).
+# tourner le projet depuis les sources (voir requirements.txt pour les
+# dépendances runtime réelles, ex. openpyxl).
 #
-# python -m pip install -r requirements-dev.txt
+# python -m pip install -r requirements.txt -r requirements-dev.txt
 # python tools/build_launch.py
 # (PAS `pyinstaller launch.py` seul — il manque --add-data pour les
-# fichiers app/, voir tools/build_launch.py et tools/_build_common.py)
+# fichiers app/, voir tools/build_launch.py et tools/_build_common.py ;
+# et sans requirements.txt installé aussi, l'exe produit n'embarque pas
+# openpyxl et plante au premier chargement de fichier xlsx)
 pyinstaller
