@@ -577,6 +577,14 @@ macos-13 (Intel), produisant `SMRXplore-macos-intel` en plus de
 `tools/_build_common.py::check_python_version()`) pour matcher exactement
 la CI, après le bug de compilation invisible du correctif précédent.
 
+### 3.7.7 — Corrige le runner macOS Intel retiré (macos-13 -> macos-15-intel)
+`ac0d785` (2026-09-03) — **dernier commit à ce jour**
+Le job macOS Intel ajouté en 3.7.6 restait bloqué indéfiniment en file
+d'attente : `macos-13` a été définitivement retiré par GitHub début
+décembre 2025 (pas une panne ponctuelle). Remplacé par `macos-15-intel`,
+le label de remplacement (dernière image Intel prévue par GitHub, jusqu'à
+août 2027).
+
 ---
 
 ## Où en est le produit maintenant (référence pour l'architecture finale)
