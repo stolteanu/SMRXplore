@@ -29,7 +29,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools._build_common import ROOT, add_data_args, build_nomenclatures_seed, check_warn_file, hidden_import_args  # noqa: E402
+from tools._build_common import (  # noqa: E402
+    ROOT,
+    add_data_args,
+    build_nomenclatures_seed,
+    check_python_version,
+    check_warn_file,
+    hidden_import_args,
+)
 
 BUILD_DIR = ROOT / "build"
 
@@ -60,6 +67,7 @@ def build_exe(nomenclatures_seed):
 
 
 def main() -> None:
+    check_python_version()
     nomenclatures_seed = build_nomenclatures_seed(BUILD_DIR)
     exe_path = build_exe(nomenclatures_seed)
     check_warn_file(BUILD_DIR, "launch")

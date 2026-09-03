@@ -31,6 +31,10 @@ backups/
 __pycache__/
 *.pyc
 
+# Environnement virtuel local (Python 3.11, verrouillé pour matcher la CI
+# — voir README, section Développement) — spécifique à la machine, jamais versionné.
+.venv/
+
 # Build PyInstaller (launch.exe autonome, voir README de build) — binaire
 # régénérable via `python -m PyInstaller --onefile --name launch --distpath . --workpath build --specpath build launch.py`,
 # spécifique à la machine/architecture qui l'a produit : pas dans git.

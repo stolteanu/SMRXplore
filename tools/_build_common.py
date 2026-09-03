@@ -12,9 +12,29 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# Version Python utilisée par .github/workflows/build-smrxplore.yml — un
+# build local sous une autre version peut compiler du code syntaxiquement
+# invalide pour cette version-là sans le moindre symptôme local (cf. mémoire
+# projet du 2026-09-03 : f-string PEP 701 compilant en 3.12, SyntaxError
+# silencieusement catchée par PyInstaller en 3.11, module exclu sans erreur
+# visible). `python tools/build_launch.py`/`deployer_smrxplore.py` sont
+# censés tourner via `.venv` (voir README), verrouillé sur cette version.
+CI_PYTHON_VERSION = (3, 11)
+
+
+def check_python_version() -> None:
+    if sys.version_info[:2] != CI_PYTHON_VERSION:
+        print(
+            f"ATTENTION : build lancé avec Python {sys.version_info.major}.{sys.version_info.minor}, "
+            f"la CI utilise {CI_PYTHON_VERSION[0]}.{CI_PYTHON_VERSION[1]} — "
+            "un binaire qui compile ici peut échouer silencieusement en CI (voir README, section Développement). "
+            "Utiliser .venv/Scripts/python.exe plutôt que le python par défaut."
+        )
 
 SOURCE_APP_FILES = [
     "index.html",

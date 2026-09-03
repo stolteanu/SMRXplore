@@ -79,6 +79,22 @@ ailleurs sur la machine.
 
 ## Développement (contribuer au code source)
 
+**Python 3.11**, verrouillé pour matcher exactement `.github/workflows/build-smrxplore.yml`
+(voir `tools/_build_common.py::CI_PYTHON_VERSION`) — une autre version peut
+compiler du code syntaxiquement invalide pour 3.11 sans le moindre symptôme
+local (vécu le 2026-09-03 : une f-string valide seulement depuis 3.12,
+PEP 701, a fait échouer silencieusement un build CI pendant plusieurs
+itérations avant d'être identifiée). Environnement virtuel dédié :
+
+```bash
+py -3.11 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt
+.venv\Scripts\python tools\build_launch.py   # ou tout autre script ci-dessous, via .venv\Scripts\python
+```
+
+`tools/build_launch.py`/`tools/deployer_smrxplore.py` avertissent (sans
+bloquer) si lancés avec une autre version de Python.
+
 Point d'entrée unique côté source (voir `python pmsi.py` sans argument pour
 l'aide complète) :
 
