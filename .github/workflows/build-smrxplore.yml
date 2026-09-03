@@ -4,11 +4,19 @@ name: Build SMRXplore (multiplateforme)
 # Déclenchement MANUEL uniquement (ou sur un tag vX.Y.Z) — jamais à chaque
 # push, conformément à la règle "SMRXplore = branche de déploiement,
 # reconstruite sur demande uniquement" (voir mémoire du projet).
+#
+# Sur un tag vX.Y.Z : publie en plus les 3 binaires sur la Release GitHub
+# correspondante (créée si absente) — jusqu'ici la Release ne contenait que
+# SMRXplore.exe (uploadé à la main), les binaires Linux/macOS n'y étaient
+# jamais attachés.
 on:
   workflow_dispatch: {}
   push:
     tags:
       - "v*"
+
+permissions:
+  contents: write  # requis par softprops/action-gh-release pour publier sur la Release
 
 jobs:
   build:
@@ -18,12 +26,15 @@ jobs:
         include:
           - os: windows-latest
             artifact_name: SMRXplore.exe
+            release_name: SMRXplore-windows.exe
             artifact_label: windows
           - os: ubuntu-latest
             artifact_name: SMRXplore
+            release_name: SMRXplore-linux
             artifact_label: linux
           - os: macos-latest
             artifact_name: SMRXplore
+            release_name: SMRXplore-macos
             artifact_label: macos
     runs-on: ${{ matrix.os }}
     steps:
@@ -43,3 +54,34 @@ jobs:
         with:
           name: SMRXplore-${{ matrix.artifact_label }}
           path: SMRXPLORE/${{ matrix.artifact_name }}
+
+      # Copie sous un nom distinct par plateforme (l'artefact ci-dessus
+      # garde le nom d'origine SMRXplore/SMRXplore.exe, pratique pour un
+      # usage local ; la Release a besoin de 3 noms de fichiers différents
+      # pour ne pas s'écraser entre eux une fois attachés côte à côte).
+      - name: Préparer l'asset de release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: cp "SMRXPLORE/${{ matrix.artifact_name }}" "${{ matrix.release_name }}"
+
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: release-asset-${{ matrix.artifact_label }}
+          path: ${{ matrix.release_name }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-asset-*
+          path: assets
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          fail_on_unmatched_files: true
