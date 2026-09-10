@@ -538,6 +538,18 @@ function renderAggSelect(row) {
   function fillAgg() {
     aggSel.innerHTML = "";
     const measure = measureOf(row);
+    // Une variable calculée (formule) porte déjà sa propre agrégation (Sum/Avg/... écrits
+    // dans la formule elle-même) — le sélecteur externe n'a pas de sens ici, on le verrouille
+    // sur une seule option plutôt que de proposer un second niveau d'agrégation trompeur.
+    if (measure && measure.isFormula) {
+      row.aggId = "formula";
+      const o = document.createElement("option");
+      o.value = "formula"; o.textContent = "Résultat de la formule";
+      aggSel.appendChild(o);
+      aggSel.disabled = true;
+      return;
+    }
+    aggSel.disabled = false;
     // Une mesure "distincte" (ex. nb de séjours) n'a pas de valeur numérique par ligne :
     // count et les % (basés sur un compte d'éléments distincts) restent valides, pas sum/avg/médiane/min/max.
     const DISTINCT_OK = ["count", "pct_total", "pct_row", "pct_col"];
@@ -594,8 +606,33 @@ function renderExprListGeneric(containerId, arr, minCount) {
       });
       measSel.appendChild(group);
     });
+    const createOpt = document.createElement("option");
+    createOpt.value = "__create_formula__";
+    createOpt.textContent = "➕ Créer une variable calculée…";
+    measSel.appendChild(createOpt);
+    if (SessionVars.list().length) {
+      const manageOpt = document.createElement("option");
+      manageOpt.value = "__manage_formula__";
+      manageOpt.textContent = "🛠 Gérer les variables calculées…";
+      measSel.appendChild(manageOpt);
+    }
 
     measSel.addEventListener("change", () => {
+      if (measSel.value === "__create_formula__" || measSel.value === "__manage_formula__") {
+        const wantsManager = measSel.value === "__manage_formula__";
+        const revertSrcKey = row.srcKey, revertMeasureId = row.measureId;
+        measSel.value = row.measureId ? `${row.srcKey}::${row.measureId}` : "";
+        row.srcKey = revertSrcKey; row.measureId = revertMeasureId;
+        const onChange = (entry) => {
+          if (entry) { row.srcKey = entry.srcKey; row.measureId = entry.id; row.label = ""; }
+          else if (row.measureId && !SessionVars.get(row.measureId)) { row.measureId = null; } // supprimée
+          renderExprListGeneric(containerId, arr, minCount);
+          updateRecap();
+        };
+        if (wantsManager) VariableEditor.openManager({ onChange });
+        else VariableEditor.open({ defaultSrcKey: row.srcKey || "rhs", onSave: onChange });
+        return;
+      }
       row.label = "";
       if (!measSel.value) { row.measureId = null; renderExprListGeneric(containerId, arr, minCount); updateRecap(); return; }
       const [srcKey, measureId] = measSel.value.split("::");
@@ -751,25 +788,40 @@ function buildQuery(sourceKey, finessList, periods) {
   const src = SOURCES[sourceKey];
   const clauses = [];
   const finessPlaceholders = finessList.map(() => "?").join(",");
-  const params = [...finessList];
+  const periodParams = [];
   if (src.periodKind === "semaine") {
     for (const p of periods) {
       clauses.push("(substr(r.numero_semaine,3,4)=? AND CAST(substr(r.numero_semaine,1,2) AS INTEGER) BETWEEN ? AND ?)");
-      params.push(p.year, p.minWeek || 1, p.maxWeek);
+      periodParams.push(p.year, p.minWeek || 1, p.maxWeek);
     }
   } else if (src.periodKind === "dates") {
     for (const p of periods) {
       clauses.push("(date(v.date_entree) <= date(?) AND (v.date_sortie IS NULL OR date(v.date_sortie) >= date(?)))");
-      params.push(fmtDate(p.end), fmtDate(p.start));
+      periodParams.push(fmtDate(p.end), fmtDate(p.start));
     }
   } else if (src.periodKind === "campagne") {
     for (const p of periods) {
       clauses.push("va.campagne = ?");
-      params.push(Number(p.year));
+      periodParams.push(Number(p.year));
     }
   }
   const periodSql = clauses.length ? clauses.join(" OR ") : "1=1";
-  const sql = src.sql.replace("%FINESS%", finessPlaceholders).replace("%PERIOD%", periodSql);
+  // Un même template peut référencer %FINESS%/%PERIOD% plusieurs fois (ex. sources "diag"/"acte",
+  // des UNION ALL de plusieurs sous-requêtes qui répètent chacune ces deux clauses) — remplacement
+  // en un seul passage gauche->droite pour reconstituer les paramètres positionnels ("?") dans le
+  // même ordre que leur apparition dans le texte final, quel que soit le nombre d'occurrences.
+  let sql = "";
+  let params = [];
+  let lastIndex = 0;
+  const placeholderRe = /%FINESS%|%PERIOD%/g;
+  let m;
+  while ((m = placeholderRe.exec(src.sql))) {
+    sql += src.sql.slice(lastIndex, m.index);
+    if (m[0] === "%FINESS%") { sql += finessPlaceholders; params.push(...finessList); }
+    else { sql += periodSql; params.push(...periodParams); }
+    lastIndex = placeholderRe.lastIndex;
+  }
+  sql += src.sql.slice(lastIndex);
   return { sql, params };
 }
 
@@ -944,6 +996,7 @@ const CELL_SEP = "";
 function cellKeyStr(rk, ck) { return rk + CELL_SEP + ck; }
 
 function agFn(values, isDistinct, aggName) {
+  if (aggName === "formula") return values.length ? values[0] : null; // déjà agrégée par la formule elle-même
   if (isDistinct) return new Set(values).size;
   if (!values.length) return null;
   switch (aggName) {
@@ -1031,7 +1084,43 @@ function annotateValoCoverage(foreignIdx, baseSrcKey, baseRows) {
 // VID-HOSP, ou RHS -> Valo depuis une source de détail comme CSARR qui ne porte pas les jours de
 // présence de sa ligne RHS parente), on retombe sur le dédoublonnage par référence — une seule
 // occurrence par ligne tierce, comme avant.
+// Ramène `cellRows` (au grain d'itération courant, `baseSrcKey`) au grain propre de la
+// formule (`measure.srcKey`, ex. "valo") si l'un diffère de l'autre — cas où
+// iterSrcKeyFor() a redirigé l'itération (ex. Valo -> RHS pour le poids-jour des mesures
+// Valo "classiques", cf. dayWeighted plus bas). Dédoublonnée par référence : plusieurs
+// lignes du grain d'itération peuvent pointer vers la même ligne du grain propre de la
+// formule (ex. 2 lignes RHS d'un même séjour -> 1 seule ligne Valo).
+function resolveFormulaRows(measure, cellRows, foreignIdx, baseSrcKey) {
+  const formulaSrcKey = measure.srcKey || baseSrcKey;
+  if (formulaSrcKey === baseSrcKey) return cellRows;
+  const seenRow = new Set();
+  const out = [];
+  for (const r0 of cellRows) {
+    const r = sourceRowFor({ srcKey: formulaSrcKey }, r0, foreignIdx, baseSrcKey);
+    if (r && !seenRow.has(r)) { seenRow.add(r); out.push(r); }
+  }
+  return out;
+}
+
+// Exécute une variable calculée sur un ensemble de lignes brutes déjà ramenées à son grain
+// propre (ou pas encore — resolveFormulaRows s'en charge) et renvoie le résultat scalaire,
+// ou null si la formule échoue à l'exécution (jamais une exception qui casserait le rendu).
+function runFormulaMeasure(measure, cellRows, foreignIdx, baseSrcKey) {
+  const formulaSrcKey = measure.srcKey || baseSrcKey;
+  const rows = resolveFormulaRows(measure, cellRows, foreignIdx, baseSrcKey);
+  const res = Formula.run(measure.formula, { baseSrcKey: formulaSrcKey, cellRows: rows, foreignIdx });
+  return res.ok ? res.value : null;
+}
+
 function extractValues(cellRows, measure, expr, foreignIdx, baseSrcKey) {
+  // Variable calculée : la formule gère elle-même son agrégation et ses éventuelles
+  // références croisées (Formula.resolveFieldRef/sourceRowFor) — court-circuit total du
+  // reste de cette fonction, un seul résultat par case plutôt qu'une valeur par ligne.
+  // N'est correct QUE pour une case isolée : computeExprPivot() ne doit jamais concaténer
+  // plusieurs appels à extractValues() pour une mesure-formule avant de les agréger (ça
+  // reviendrait à agréger des ratios déjà calculés plutôt que les lignes sources — cf.
+  // runFormulaMeasure(), utilisée directement pour les totaux/sous-totaux à la place).
+  if (measure.isFormula) return [runFormulaMeasure(measure, cellRows, foreignIdx, baseSrcKey)];
   const crossSource = !!(expr && expr.srcKey !== baseSrcKey);
   const dayWeighted = crossSource && expr.srcKey === "valo" && baseSrcKey === "rhs" && !measure.distinctKey;
   const resolve = crossSource ? (r0 => sourceRowFor(expr, r0, foreignIdx, baseSrcKey)) : (r0 => r0);
@@ -1094,7 +1183,45 @@ function computeExprPivot(cells, rowKeys, colKeys, expr, measure, aggId, foreign
   // agrégées.
   function crossValues(rks, cks) { let v = []; for (const rk of rks) for (const ck of cks) v = v.concat(cellValues(rk, ck)); return v; }
 
-  if (!isPct) {
+  if (!isPct && measure.isFormula) {
+    // Une mesure-formule porte déjà sa propre agrégation (Sum/Avg/... écrits dans la
+    // formule) — concaténer des résultats déjà calculés par cellValues()/agFn() comme le
+    // fait la branche générique ci-dessous reviendrait à agréger des ratios entre eux (faux :
+    // trouvé en test réel, un "Total" affichait la valeur de la première case au lieu du
+    // vrai total). On concatène ici les LIGNES BRUTES du groupe, puis on exécute la formule
+    // UNE FOIS sur l'ensemble — cf. runFormulaMeasure()/resolveFormulaRows().
+    const rawCell = (rk, ck) => cells.get(cellKeyStr(rk, ck)) || [];
+    const rawGroup = (rks, ck) => { let v = []; for (const rk of rks) v = v.concat(rawCell(rk, ck)); return v; };
+    const rawGroupCol = (cks, rk) => { let v = []; for (const ck of cks) v = v.concat(rawCell(rk, ck)); return v; };
+    const rawCross = (rks, cks) => { let v = []; for (const rk of rks) for (const ck of cks) v = v.concat(rawCell(rk, ck)); return v; };
+    const agg = (rows) => runFormulaMeasure(measure, rows, foreignIdx, baseSrcKey);
+
+    for (const rk of rowKeys) {
+      grid[rk] = {};
+      for (const ck of colKeys) grid[rk][ck] = agg(rawCell(rk, ck));
+    }
+    for (const rk of rowKeys) rowTotal[rk] = agg(rawGroupCol(colKeys, rk));
+    for (const ck of colKeys) colTotal[ck] = agg(rawGroup(rowKeys, ck));
+    grandTotal = agg(rawCross(rowKeys, colKeys));
+    if (subtotalGroups) {
+      for (const g of subtotalGroups) {
+        const grid_g = {};
+        for (const ck of colKeys) grid_g[ck] = agg(rawGroup(g.rowKeys, ck));
+        const colGroupGrid = {};
+        if (colSubtotalGroups) {
+          for (const cg of colSubtotalGroups) colGroupGrid[cg.key] = agg(rawCross(g.rowKeys, cg.colKeys));
+        }
+        subtotals[g.key] = { grid: grid_g, rowTotal: agg(rawCross(g.rowKeys, colKeys)), colGroupGrid };
+      }
+    }
+    if (colSubtotalGroups) {
+      for (const cg of colSubtotalGroups) {
+        const grid_g = {};
+        for (const rk of rowKeys) grid_g[rk] = agg(rawGroupCol(cg.colKeys, rk));
+        colSubtotals[cg.key] = { grid: grid_g, colTotal: agg(rawCross(rowKeys, cg.colKeys)) };
+      }
+    }
+  } else if (!isPct) {
     for (const rk of rowKeys) {
       grid[rk] = {};
       for (const ck of colKeys) grid[rk][ck] = agFn(cellValues(rk, ck), isDistinct, aggId);
@@ -1935,6 +2062,7 @@ function generer() {
     const activeGF = activeGlobalFilters();
     const foreignSrcKeys = new Set(
       [...rowDimRows, ...colDimRows, ...exprRows].map(r => r.srcKey)
+        .concat(exprRows.flatMap(extraForeignSrcKeys))
         .concat(activeGF.map(f => f.srcKey))
         .filter(k => k !== activeSource)
     );
@@ -1991,6 +2119,18 @@ function catalogEntry(srcKey, kind, id) {
 
 function measureOf(expr) {
   return catalogEntry(expr.srcKey, "measure", expr.measureId);
+}
+
+// Sources supplémentaires qu'une ligne d'expression nécessite en foreignIdx, au-delà de son
+// propre srcKey — cas d'une variable calculée (isFormula) qui référence une autre source À
+// L'INTÉRIEUR de sa formule (ex. [valo].[...] depuis une formule de base "rhs") : invisible
+// autrement pour le code qui décide quelles sources indexer, puisqu'il ne lit que r.srcKey.
+function extraForeignSrcKeys(row) {
+  return extraForeignSrcKeysOf(row.srcKey, "measure", row.measureId);
+}
+function extraForeignSrcKeysOf(srcKey, kind, id) {
+  const m = (kind === "measure") ? catalogEntry(srcKey, "measure", id) : null;
+  return (m && m.isFormula && m.crossSources) ? m.crossSources : [];
 }
 
 // Construit les <optgroup> "Src — Variables" / "Src — Mesures" pour un select de
@@ -2074,6 +2214,16 @@ function opsFor(kind) {
     : [["eq", "="], ["neq", "≠"], ["contains", "contient"]];
 }
 
+// Jokers façon glob dans une valeur de filtre texte : "*" (0+ caractères) et "?" (1 caractère).
+// N'est utilisé que si la valeur en contient réellement, pour ne rien changer au comportement
+// existant (comparaison littérale) sur les valeurs sans joker.
+function hasWildcard(v) {
+  return v.includes("*") || v.includes("?");
+}
+function wildcardToRegexSrc(pattern) {
+  return pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+}
+
 function matchesFilter(f, row) {
   if (!row) return false;
   const entry = catalogEntry(f.srcKey, f.kind, f.id);
@@ -2083,9 +2233,10 @@ function matchesFilter(f, row) {
     const s = normVal(raw).toLowerCase();
     const v = (f.val || "").trim().toLowerCase();
     if (!v) return true; // filtre présent mais sans valeur : pas de restriction (utile pour "juste rattaché à ce fichier")
-    if (f.op === "eq") return s === v;
-    if (f.op === "neq") return s !== v;
-    if (f.op === "contains") return s.includes(v);
+    const wc = hasWildcard(v);
+    if (f.op === "eq") return wc ? new RegExp("^" + wildcardToRegexSrc(v) + "$").test(s) : s === v;
+    if (f.op === "neq") return wc ? !new RegExp("^" + wildcardToRegexSrc(v) + "$").test(s) : s !== v;
+    if (f.op === "contains") return wc ? new RegExp(wildcardToRegexSrc(v)).test(s) : s.includes(v);
     return true;
   }
   let n = entry.derive ? entry.derive(row) : row[entry.col];
@@ -2116,7 +2267,10 @@ function activeGlobalFilters() {
   return globalFilterRows.filter(f => {
     const entry = catalogEntry(f.srcKey, f.kind, f.id);
     if (!entry) return false;
-    if (f.kind === "dim") return !!(f.values && f.values.length);
+    if (f.kind === "dim") {
+      if (entry.col) return !!(f.values && f.values.length);
+      return !!(f.val && f.val.trim()); // variable calculée (ex. GN) : filtre texte
+    }
     return true;
   });
 }
@@ -2125,11 +2279,13 @@ function matchesGlobalFilter(gf, row) {
   if (!row) return false;
   const entry = catalogEntry(gf.srcKey, gf.kind, gf.id);
   if (!entry) return true;
-  if (gf.kind === "dim") {
+  if (gf.kind === "dim" && entry.col) {
     if (!gf.values || !gf.values.length) return true;
     const raw = entry.derive ? entry.derive(row) : row[entry.col];
     return gf.values.includes(normVal(raw));
   }
+  // Mesure, ou dimension calculée sans colonne SQL (ex. GN/CM/GR/GL) : même filtre texte
+  // (=, ≠, contient / between, in...) que les filtres locaux de la liste filtrée.
   return matchesFilter(gf, row);
 }
 
@@ -2149,7 +2305,11 @@ function globalFilterLabel(f) {
   const src = SOURCES[f.srcKey];
   if (!entry) return "?";
   const name = `${entry.label} [${src.short}]`;
-  if (f.kind === "dim") return `${name} ∈ {${f.values.join(", ")}}`;
+  if (f.kind === "dim") {
+    if (entry.col) return `${name} ∈ {${f.values.join(", ")}}`;
+    const opLbl = (opsFor("dim").find(([v]) => v === f.op) || [null, "?"])[1];
+    return `${name} ${opLbl} ${f.val || "…"}`;
+  }
   const opLbl = (opsFor("measure").find(([v]) => v === f.op) || [null, "?"])[1];
   if (f.op === "between") return `${name} ${opLbl} [${f.val || "…"} – ${f.val2 || "…"}]`;
   return `${name} ${opLbl} ${f.val || "…"}`;
@@ -2201,16 +2361,14 @@ function renderGlobalFilterList() {
       const [srcKey, kind, id] = sel.value.split("::");
       f.srcKey = srcKey; f.kind = kind; f.id = id;
       if (kind === "measure") { f.op = "between"; f.val = ""; f.val2 = ""; }
-      else { f.values = []; }
+      else { f.values = []; f.op = "eq"; f.val = ""; }
       renderGlobalFilterList();
     });
     div.appendChild(sel);
 
     const entry = catalogEntry(f.srcKey, f.kind, f.id);
 
-    // Tant qu'aucune variable n'est choisie (id null), pas de contrôle de valeurs à afficher —
-    // la note "variable calculée" ne doit apparaître que pour une variable réellement choisie et
-    // réellement sans colonne filtrable, pas pour un sélecteur encore vide.
+    // Tant qu'aucune variable n'est choisie (id null), pas de contrôle de valeurs à afficher.
     if (!f.id) {
       // rien de plus tant que la variable n'est pas choisie
     } else if (f.kind === "dim") {
@@ -2221,11 +2379,27 @@ function renderGlobalFilterList() {
         fillGlobalDimValues(msel, f.srcKey, entry, f);
         msel.addEventListener("change", () => { f.values = [...msel.selectedOptions].map(o => o.value); });
         div.appendChild(msel);
-      } else {
-        const note = document.createElement("span");
-        note.className = "filter-note";
-        note.textContent = "(variable calculée — filtre par valeurs indisponible)";
-        div.appendChild(note);
+      } else if (entry) {
+        // Variable calculée (ex. GN/CM/GR/GL) : pas de colonne SQL pour lister les valeurs
+        // distinctes, mais entry.derive permet de la comparer en JS — même filtre texte
+        // (=, ≠, contient) que les filtres locaux de la liste filtrée (matchesFilter).
+        const opSel = document.createElement("select");
+        opSel.className = "op-sel";
+        opsFor("dim").forEach(([v, t]) => {
+          const o = document.createElement("option");
+          o.value = v; o.textContent = t;
+          if (f.op === v) o.selected = true;
+          opSel.appendChild(o);
+        });
+        opSel.addEventListener("change", () => { f.op = opSel.value; renderGlobalFilterList(); });
+        div.appendChild(opSel);
+
+        const val1 = document.createElement("input");
+        val1.className = "filter-val";
+        val1.placeholder = "valeur (texte, * ? possibles)";
+        val1.value = f.val || "";
+        val1.addEventListener("input", () => { f.val = val1.value; });
+        div.appendChild(val1);
       }
     } else {
       const opSel = document.createElement("select");
@@ -2310,7 +2484,7 @@ function renderFilterList() {
 
       const val1 = document.createElement("input");
       val1.className = "filter-val";
-      val1.placeholder = f.kind === "measure" ? (f.op === "between" ? "min" : "valeur") : "valeur (texte)";
+      val1.placeholder = f.kind === "measure" ? (f.op === "between" ? "min" : "valeur") : "valeur (texte, * ? possibles)";
       val1.value = f.val || "";
       val1.addEventListener("input", () => { f.val = val1.value; });
       div.appendChild(val1);
@@ -2459,7 +2633,10 @@ function genererListe() {
     const activeGF = activeGlobalFilters();
     const neededForeign = new Set();
     filterRows.forEach(f => { if (f.srcKey !== activeSourceListe) neededForeign.add(f.srcKey); });
-    listeColRows.forEach(c => { if (c.srcKey !== activeSourceListe) neededForeign.add(c.srcKey); });
+    listeColRows.forEach(c => {
+      if (c.srcKey !== activeSourceListe) neededForeign.add(c.srcKey);
+      extraForeignSrcKeysOf(c.srcKey, c.kind, c.id).forEach(k => neededForeign.add(k));
+    });
     activeGF.forEach(f => { if (f.srcKey !== activeSourceListe) neededForeign.add(f.srcKey); });
     const foreignIdx = {};
     neededForeign.forEach(k => { foreignIdx[k] = buildForeignIndex(k, finessList, periods); });
@@ -4182,6 +4359,7 @@ function prepareGraphData(setSt) {
   const activeGF = activeGlobalFilters();
   const foreignSrcKeys = new Set(
     [...graphXDimRows, ...graphSeriesDimRows, ...graphFacetDimRows, ...graphExprRows].map(r => r.srcKey)
+      .concat(graphExprRows.flatMap(extraForeignSrcKeys))
       .concat(activeGF.map(f => f.srcKey))
       .filter(k => k !== activeSourceGraph)
   );

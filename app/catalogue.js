@@ -350,6 +350,98 @@ const SOURCES = {
     ],
   },
 
+  // "Diagnostic" et "Acte" (ci-dessous) sont des sources synthétiques (UNION ALL des 3/3 sources
+  // ci-dessus qui portent chacune un type de code différent) — pas de table dédiée. Elles existent
+  // pour permettre un filtre/regroupement unique par CODE quel que soit son type (ex. chercher un
+  // code CIM-10 sans savoir s'il est en MMP, AE ou DAS), avec une seconde variable pour restreindre
+  // à un ou plusieurs types (demande utilisateur 2026-09-10). "code_diag"/"code_acte" utilisent
+  // "derive" (pas "col") volontairement : ça bascule leur filtre sur le texte (=, ≠, contient, avec
+  // jokers * ?) plutôt que sur la liste à cocher des valeurs distinctes, plus adaptée à un code
+  // unitaire qu'à une variable à faible cardinalité comme "type_diag"/"type_acte" (qui restent "col"
+  // pour garder leur liste à cocher MMP/AE/DAS ou CSARR/CSAR/CCAM).
+  diag: {
+    label: "Diagnostics (MMP/AE/DAS)",
+    short: "Diag",
+    table: "(union rhs_groupe.mmp/ae + rhs_groupe_das)",
+    sql: `SELECT r.finess_epmsi, r.numero_admin_sejour, r.numero_semaine, r.type_hospitalisation,
+                 'MMP' AS type_diag, r.manifestation_morbide_principale AS code_diag, dp.libelle_complet AS lib_diag
+          FROM rhs_groupe r
+          LEFT JOIN nomenclature_diagnostics dp ON dp.code = r.manifestation_morbide_principale
+          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)
+                AND r.manifestation_morbide_principale IS NOT NULL AND r.manifestation_morbide_principale != ''
+          UNION ALL
+          SELECT r.finess_epmsi, r.numero_admin_sejour, r.numero_semaine, r.type_hospitalisation,
+                 'AE' AS type_diag, r.affection_etiologique AS code_diag, ae.libelle_complet AS lib_diag
+          FROM rhs_groupe r
+          LEFT JOIN nomenclature_diagnostics ae ON ae.code = r.affection_etiologique
+          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)
+                AND r.affection_etiologique IS NOT NULL AND r.affection_etiologique != ''
+          UNION ALL
+          SELECT r.finess_epmsi, r.numero_admin_sejour, r.numero_semaine, r.type_hospitalisation,
+                 'DAS' AS type_diag, d.code_das AS code_diag, dp2.libelle_complet AS lib_diag
+          FROM rhs_groupe_das d
+          JOIN rhs_groupe r ON r.id = d.parent_id
+          LEFT JOIN nomenclature_diagnostics dp2 ON dp2.code = d.code_das
+          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
+    periodKind: "semaine",
+    dims: [
+      { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
+      { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
+      { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null, sortKey: r => r.numero_semaine ? Number(r.numero_semaine.slice(2, 6) + r.numero_semaine.slice(0, 2)) : null },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation", libDerive: r => LABEL_TYPE_HOSP_RHS(r.type_hospitalisation) },
+      { id: "type_diag", label: "Type de diagnostic", col: "type_diag" },
+      { id: "code_diag", label: "Diagnostic (code, tous types)", derive: r => r.code_diag, libCol: "lib_diag" },
+      { id: "diag_chapitre", label: "Chapitre CIM-10 (diagnostic)", derive: r => { const n = diagAncestorOfKind(r.code_diag, "chapter"); return n ? n.code : null; },
+        libDerive: r => { const n = diagAncestorOfKind(r.code_diag, "chapter"); return n ? n.libelle : null; } },
+      { id: "diag_bloc", label: "Bloc/sous-chapitre CIM-10 (diagnostic)", derive: r => { const n = diagAncestorOfKind(r.code_diag, "block"); return n ? n.code : null; },
+        libDerive: r => { const n = diagAncestorOfKind(r.code_diag, "block"); return n ? n.libelle : null; } },
+    ],
+    measures: [
+      { id: "nb_diag", label: "Nombre de diagnostics (détail, tous types)", derive: r => 1 },
+    ],
+  },
+
+  acte: {
+    label: "Actes (CSARR/CSAR/CCAM)",
+    short: "Acte",
+    table: "(union rhs_groupe_csarr/csar/ccam)",
+    sql: `SELECT r.finess_epmsi, r.numero_admin_sejour, r.numero_semaine, r.type_hospitalisation,
+                 'CSARR' AS type_acte, c.code_principal AS code_acte, nom.libelle AS lib_acte, c.date_realisation AS date_realisation
+          FROM rhs_groupe_csarr c
+          JOIN rhs_groupe r ON r.id = c.parent_id
+          LEFT JOIN nomenclature_csarr nom ON nom.code = c.code_principal
+          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)
+          UNION ALL
+          SELECT r.finess_epmsi, r.numero_admin_sejour, r.numero_semaine, r.type_hospitalisation,
+                 'CSAR' AS type_acte, c.code_principal AS code_acte, nom.libelle AS lib_acte, c.date_realisation AS date_realisation
+          FROM rhs_groupe_csar c
+          JOIN rhs_groupe r ON r.id = c.parent_id
+          LEFT JOIN nomenclature_csar nom ON nom.code = c.code_principal
+          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)
+          UNION ALL
+          SELECT r.finess_epmsi, r.numero_admin_sejour, r.numero_semaine, r.type_hospitalisation,
+                 'CCAM' AS type_acte, k.code_ccam AS code_acte, nom.libelle AS lib_acte, k.date_realisation AS date_realisation
+          FROM rhs_groupe_ccam k
+          JOIN rhs_groupe r ON r.id = k.parent_id
+          LEFT JOIN nomenclature_ccam nom ON nom.code = k.code_ccam
+          WHERE r.finess_epmsi IN (%FINESS%) AND (%PERIOD%)`,
+    periodKind: "semaine",
+    dims: [
+      { id: "finess", label: "Établissement (FINESS)", col: "finess_epmsi" },
+      { id: "nda", label: "N° Dossier administratif (NDA)", col: "numero_admin_sejour" },
+      { id: "annee_periode", label: "Année (période sélectionnée)", derive: r => r._periode_annee },
+      { id: "semaine", label: "Semaine RHS (identifie la ligne)", derive: r => r.numero_semaine ? `S${r.numero_semaine.slice(0, 2)}-${r.numero_semaine.slice(2, 6)}` : null, sortKey: r => r.numero_semaine ? Number(r.numero_semaine.slice(2, 6) + r.numero_semaine.slice(0, 2)) : null },
+      { id: "type_hosp", label: "Type hospitalisation (HC/HP)", col: "type_hospitalisation", libDerive: r => LABEL_TYPE_HOSP_RHS(r.type_hospitalisation) },
+      { id: "type_acte", label: "Type d'acte", col: "type_acte" },
+      { id: "code_acte", label: "Acte (code, tous types)", derive: r => r.code_acte, libCol: "lib_acte" },
+      ...dateDims("date_realisation", "Date de réalisation", "date_realisation"),
+    ],
+    measures: [
+      { id: "nb_acte", label: "Nombre d'actes (détail, tous types)", derive: r => 1 },
+    ],
+  },
+
   ccam: {
     label: "Actes CCAM",
     short: "CCAM",
@@ -382,7 +474,7 @@ const SOURCES = {
 };
 
 // Ordre d'affichage des sources dans les sélecteurs de variables (lignes/colonnes).
-const SOURCE_ORDER = ["rhs", "vidhosp", "valo", "das", "csarr", "csar", "ccam"];
+const SOURCE_ORDER = ["rhs", "vidhosp", "valo", "diag", "acte", "das", "csarr", "csar", "ccam"];
 
 // Fonctions d'agrégation disponibles pour les expressions (mesure + fonction).
 const AGG_DEFS = [
