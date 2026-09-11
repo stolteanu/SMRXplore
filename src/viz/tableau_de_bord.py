@@ -562,7 +562,7 @@ def section_activite_csarr(
 _LIEU_FLAG_COL = {"HW": "mod_hw", "LJ": "mod_lj", "XH": "mod_xh", "L3": "mod_l3"}
 
 
-def _load_ponderation_actes(conn: sqlite3.Connection) -> dict[str, dict]:
+def _load_ponderation_actes(conn: sqlite3.Connection, nomenclature: str = "CSARR") -> dict[str, dict]:
     """Table `nomenclature_ponderation_actes` chargée SANS dédoublonnage par
     natural_key (contrairement à toutes les autres nomenclatures du projet) :
     54 codes CSARR y ont plusieurs lignes, une par période de validité
@@ -570,10 +570,15 @@ def _load_ponderation_actes(conn: sqlite3.Connection) -> dict[str, dict]:
     (choix utilisateur 2026-07-30, cohérent avec le reste du projet) : on
     garde la ligne au `debut` le plus récent pour chaque code — le barème le
     plus à jour est appliqué à toutes les années comparées, y compris les
-    plus anciennes."""
+    plus anciennes. `nomenclature="CCAM"` (2026-09-11, ajouté pour le score de
+    réadaptation GLOBALE/SPÉCIALISÉE) réutilise la même fonction — les 56
+    actes CCAM de réadaptation n'ont ni doublon de code ni modulateur de lieu
+    éligible dans le fichier ATIH (mod_hw/lj/xh/l3 toujours vides), donc les
+    mêmes colonnes valent simplement False pour eux."""
     rows = conn.execute(
         "SELECT code, ponderation_patient, mod_hw, mod_lj, mod_xh, mod_l3, debut "
-        "FROM nomenclature_ponderation_actes WHERE nomenclature = 'CSARR'"
+        "FROM nomenclature_ponderation_actes WHERE nomenclature = ?",
+        [nomenclature],
     ).fetchall()
     best: dict[str, dict] = {}
     for r in rows:
@@ -598,6 +603,19 @@ def _load_ponderation_actes(conn: sqlite3.Connection) -> dict[str, dict]:
     return best
 
 
+def _load_actes_specialises(conn: sqlite3.Connection) -> dict[str, set[str]]:
+    """GN -> ensemble des codes d'actes (CSARR + CCAM) marqueurs de
+    réadaptation SPÉCIALISÉE pour ce GN (nomenclature_actes_specialises,
+    voir src/nomenclatures/actes_specialises.py). Un GN absent de ce dict
+    n'a aucune notion de réadaptation spécialisée (GN non subdivisé sur ce
+    critère, ex. 0103, 0118, 0134 — 'PAS DE LISTE' dans le fichier ATIH)."""
+    rows = conn.execute("SELECT gn, code_acte FROM nomenclature_actes_specialises").fetchall()
+    out: dict[str, set[str]] = {}
+    for r in rows:
+        out.setdefault(r["gn"], set()).add(r["code_acte"])
+    return out
+
+
 def _load_modulateurs(conn: sqlite3.Connection) -> dict[str, dict]:
     rows = conn.execute(
         "SELECT code, majoration_individuel, majoration_collectif FROM nomenclature_ponderation_modulateurs"
@@ -612,37 +630,74 @@ def _load_modulateurs(conn: sqlite3.Connection) -> dict[str, dict]:
     return {r["code"]: {"individuel": _pct(r["majoration_individuel"]), "collectif": _pct(r["majoration_collectif"])} for r in rows}
 
 
-def section_ponderation_csarr(
+CCAM_PSEUDO_INTERVENANT = "CCAM"
+CCAM_PSEUDO_LABEL = "Actes CCAM (non rattachés à un intervenant)"
+
+
+def _join_clause_on_rhs_groupe(clause: str) -> str:
+    """Reporte les noms de colonnes bruts d'un `clause`/`params` de
+    `_period_filter` (pensé pour une requête directe sur `rhs_groupe`) vers
+    un alias `r.` — nécessaire dès qu'on joint une table enfant (CSARR, CCAM).
+    Couvre les seuls champs que `_period_filter` peut réellement émettre :
+    finess_epmsi/numero_semaine (toujours), version_format_rhs_groupe (cas
+    680000973/2026), et les deux champs d'axis_filter possibles."""
+    for champ in (
+        "finess_epmsi", "numero_semaine", "version_format_rhs_groupe",
+        "type_hospitalisation", "numero_unite_medicale",
+    ):
+        clause = clause.replace(champ, f"r.{champ}")
+    return clause
+
+
+def section_readaptation_intervenant(
     conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
 ) -> dict:
-    """Score pondéré par intervenant = somme, sur chaque réalisation CSARR, de
-    `ponderation_patient` (nomenclature_ponderation_actes) éventuellement
-    majoré par le modulateur de LIEU (HW/LJ/XH/L3, nomenclature_ponderation_
-    modulateurs) — UNIQUEMENT si cet acte y est éligible (colonnes mod_hw/
-    mod_lj/mod_xh/mod_l3 de la table de pondération). Majoration individuelle
-    si nombre_reel_patients <= 1, collective sinon. Le modulateur PATIENT (EZ,
-    fractionnement) et les modulateurs de TECHNICITÉ (QM/QS/QF/QI/QC/QQ) n'ont
-    aucune majoration dans le fichier ATIH (0 % partout) — ignorés ici, pas
-    par oubli. Couverture vérifiée le 2026-07-30 : les 206 codes CSARR
-    distincts utilisés dans ce jeu de données sont tous présents dans la
-    table de pondération (aucun acte non résolu)."""
-    ponderations = _load_ponderation_actes(conn)
+    """Score de réadaptation par intervenant (2026-09-11, remplace l'ancien
+    "score pondéré" — demande utilisateur, suite à la vérification de la
+    formule officielle du Manuel des GME, ATIH, vol.1, section 3.3.2) :
+    - GLOBALE = somme des pondérations de TOUS les actes CSARR + CCAM
+      réalisés (majoration de modulateur de lieu incluse pour le CSARR).
+    - SPÉCIALISÉE = même somme, restreinte aux seuls actes marqueurs de la
+      réadaptation spécialisée DU GN DU SÉJOUR (nomenclature_actes_specialises,
+      cf. _load_actes_specialises) — 0 si le GN n'a pas cette notion.
+
+    Ces deux scores sont, par définition ATIH, des indicateurs par SÉJOUR (HC)
+    ou par SEMAINE (HTP) — pas par intervenant. Ce tableau les décompose quand
+    même par intervenant (demande utilisateur : voir qui apporte le plus
+    d'actes spécialisés), en sommant sur la période les pondérations de ses
+    seules réalisations — une somme CUMULÉE sur la période ("par séjour"
+    au sens du manuel, jamais divisée par des jours de présence), pas
+    l'intensité par séjour/jour du score officiel.
+
+    Limite assumée, inévitable : les actes CCAM n'ont AUCUN code intervenant
+    dans le RHS (contrairement au CSARR) — leur contribution ne peut donc pas
+    être attribuée à un professionnel précis. Elle apparaît à part, sous le
+    pseudo-intervenant CCAM_PSEUDO_INTERVENANT, plutôt que d'être omise (ce
+    qui sous-estimerait silencieusement le score officiel) ou faussement
+    répartie sur les intervenants CSARR."""
+    ponderations_csarr = _load_ponderation_actes(conn, "CSARR")
+    ponderations_ccam = _load_ponderation_actes(conn, "CCAM")
     modulateurs = _load_modulateurs(conn)
+    actes_specialises = _load_actes_specialises(conn)
+
     out = {}
     for period in periods:
         clause, params = _period_filter(period, finess, axis_filter)
-        rows = conn.execute(
+        gn_by_sejour = _sejour_code_gme_by_period(conn, period, finess, 4, axis_filter)
+        join_clause = _join_clause_on_rhs_groupe(clause)
+
+        scores: dict[str, dict[str, float]] = {}
+
+        csarr_rows = conn.execute(
             "SELECT c.code_intervenant, c.code_principal, c.code_modulateur_lieu, "
-            "c.nombre_realisations, c.nombre_reel_patients "
+            "c.nombre_realisations, c.nombre_reel_patients, r.numero_admin_sejour "
             "FROM rhs_groupe_csarr c "
             "JOIN rhs_groupe r ON r.id = c.parent_id "
-            f"WHERE {clause.replace('numero_semaine', 'r.numero_semaine').replace('finess_epmsi', 'r.finess_epmsi')} "
-            "AND c.code_intervenant IS NOT NULL",
+            f"WHERE {join_clause} AND c.code_intervenant IS NOT NULL",
             params,
         ).fetchall()
-        scores: dict[str, float] = {}
-        for r in rows:
-            acte = ponderations.get(r["code_principal"])
+        for r in csarr_rows:
+            acte = ponderations_csarr.get(r["code_principal"])
             if acte is None:
                 continue
             pct = 0.0
@@ -654,8 +709,36 @@ def section_ponderation_csarr(
                     individuel = (r["nombre_reel_patients"] or 1) <= 1
                     raw = modul["individuel"] if individuel else modul["collectif"]
                     pct = raw if raw is not None else 0.0
-            weighted = acte["ponderation"] * (1 + pct / 100) * (r["nombre_realisations"] or 1)
-            scores[r["code_intervenant"]] = scores.get(r["code_intervenant"], 0.0) + weighted
+            n = r["nombre_realisations"] or 1
+            weighted = acte["ponderation"] * (1 + pct / 100) * n
+            code = r["code_intervenant"]
+            s = scores.setdefault(code, {"n": 0.0, "globale": 0.0, "specialisee": 0.0})
+            s["n"] += n
+            s["globale"] += weighted
+            gn = gn_by_sejour.get(_norm_numadmin(r["numero_admin_sejour"]))
+            if gn and r["code_principal"] in actes_specialises.get(gn, ()):
+                s["specialisee"] += weighted
+
+        ccam_rows = conn.execute(
+            "SELECT cc.code_ccam, cc.nombre_realisations, r.numero_admin_sejour "
+            "FROM rhs_groupe_ccam cc "
+            "JOIN rhs_groupe r ON r.id = cc.parent_id "
+            f"WHERE {join_clause}",
+            params,
+        ).fetchall()
+        for r in ccam_rows:
+            acte = ponderations_ccam.get(r["code_ccam"])
+            if acte is None:
+                continue
+            n = r["nombre_realisations"] or 1
+            weighted = acte["ponderation"] * n
+            s = scores.setdefault(CCAM_PSEUDO_INTERVENANT, {"n": 0.0, "globale": 0.0, "specialisee": 0.0})
+            s["n"] += n
+            s["globale"] += weighted
+            gn = gn_by_sejour.get(_norm_numadmin(r["numero_admin_sejour"]))
+            if gn and r["code_ccam"] in actes_specialises.get(gn, ()):
+                s["specialisee"] += weighted
+
         out[period["year"]] = scores
     return out
 
@@ -1089,7 +1172,7 @@ def section_structure_gme(
     """Section 9 — trois blocs statistiques TRANSVERSES (toutes CM/GN
     confondues, pas de top N) sur la structure du groupage GME, demandés par
     l'utilisateur en complément des palmarès CM/GN (sections 7-8) : type de
-    rééducation (GR), niveau de dépendance (GL), sévérité — chacun avec un
+    rééducation (GR), groupe de lourdeur (GL), sévérité — chacun avec un
     sous-total. Même principe d'attribution séjour→code que section_palmares_gme
     (dernière semaine RHS connue de la période) et même filtre de
     comparabilité valorisation que la section 6.
@@ -1183,7 +1266,7 @@ def section_structure_gme(
 
     return {
         "gr": {"titre": "Type de rééducation (GR)", "rows": build_rows("gr")},
-        "gl": {"titre": "Niveau de dépendance (GL)", "rows": build_rows("gl")},
+        "gl": {"titre": "Groupe de lourdeur (GL)", "rows": build_rows("gl")},
         "sev": {"titre": "Sévérité", "rows": build_rows("sev")},
     }
 
@@ -1380,7 +1463,7 @@ def build(
         "journees_semaine": section_journees_semaine(conn, periods, finess, axis_filter),
         "indicateurs": section_indicateurs(conn, periods, finess, axis_filter),
         "activite_csarr": section_activite_csarr(conn, periods, finess, axis_filter),
-        "ponderation_csarr": section_ponderation_csarr(conn, periods, finess, axis_filter),
+        "readaptation_intervenant": section_readaptation_intervenant(conn, periods, finess, axis_filter),
         "valorisation": section_valorisation(conn, periods, finess, sejours, axis_filter),
         "palmares_cm": section_palmares_gme(conn, periods, finess, "CM", axis_filter=axis_filter),
         "palmares_gn": section_palmares_gme(conn, periods, finess, "GN", axis_filter=axis_filter),

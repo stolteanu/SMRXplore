@@ -94,5 +94,11 @@
     "input_dir": "input/ponderation",
     "file_glob": "*.xlsx",
     "loader": "ponderation_modulateurs"
+  },
+  "actes_specialises": {
+    "schema": "actes_specialises.schema.json",
+    "input_dir": "input/nomenclatures/actes_specialises",
+    "file_glob": "*.xlsx",
+    "loader": "actes_specialises"
   }
 }

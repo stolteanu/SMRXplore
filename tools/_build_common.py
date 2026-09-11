@@ -164,6 +164,8 @@ def add_data_args(nomenclatures_seed: Path | None) -> list[str]:
     for name in SOURCE_APP_FILES:
         args += ["--add-data", f"{ROOT / 'app' / name}{sep}app"]
     args += ["--add-data", f"{ROOT / 'app' / 'lib'}{sep}app/lib"]
+    args += ["--add-data", f"{ROOT / 'app' / 'formula'}{sep}app/formula"]
+    args += ["--add-data", f"{ROOT / 'app' / 'explorer'}{sep}app/explorer"]
     args += ["--add-data", f"{ROOT / 'config' / 'formats'}{sep}config/formats"]
     args += ["--add-data", f"{ROOT / 'config' / 'nomenclatures'}{sep}config/nomenclatures"]
     if nomenclatures_seed is not None:

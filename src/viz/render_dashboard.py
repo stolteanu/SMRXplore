@@ -59,6 +59,90 @@ def fmt_int(x):
     return f"{x:,}".replace(",", " ")
 
 
+# ---------- Signalisation couleur (option avant génération, 2026-09-12) ----------
+# Reprend EXACTEMENT la formule de l'Explorateur (app/app.js, computeTrendPrevIdx/
+# trendDelta/trendHeatClassAttr) : delta en % de variation par rapport à la
+# valeur "précédente" (colonne/année antérieure), sauf pour une mesure déjà
+# exprimée en % où le delta est un écart en points (une variation relative
+# d'un pourcentage par rapport à lui-même donnerait des valeurs absurdes pour
+# de petits pourcentages). Plafonné à TREND_CAP_PCT : au-delà, l'opacité du
+# fond dégradé sature. Couleurs FIXES ici (pas de sélecteur live comme dans
+# l'Explorateur — un TDB généré est un fichier HTML statique, sans JS de
+# préférence persistée ; la personnalisation de page, elle, est couverte par
+# `apparence`/_apparence_style, séparément).
+TREND_CAP_PCT = 15.0
+TREND_COLOR_POS = "#1f7a4d"
+TREND_COLOR_NEG = "#b1502f"
+
+
+def _trend_delta(cur, prev, is_pct: bool = False) -> float | None:
+    if not isinstance(cur, (int, float)) or not isinstance(prev, (int, float)):
+        return None
+    if is_pct:
+        return cur - prev
+    if prev == 0:
+        return None
+    return (cur - prev) / abs(prev) * 100
+
+
+FONT_CHOICES = {
+    "systeme": '-apple-system, "Segoe UI", sans-serif',
+    "arial": "Arial, Helvetica, sans-serif",
+    "verdana": "Verdana, Geneva, sans-serif",
+    "georgia": "Georgia, \"Times New Roman\", serif",
+}
+
+
+def _apparence_style(apparence: dict | None) -> str:
+    """Option avant génération (2026-09-12, demande utilisateur) : personnalise
+    la couleur de fond de page, la police et la couleur des cadres de section
+    d'un TDB, sans toucher au thème par défaut des autres documents (annexe,
+    journal, autres TDB). Clés optionnelles de `apparence` : "fond" (couleur
+    hex), "police" (une clé de FONT_CHOICES), "cadre" (couleur hex). Rendu en
+    <style> à l'intérieur même du corps du TDB (pas dans STYLE_BLOCK, partagé
+    avec l'annexe/le journal). `!important` sur chaque propriété : nécessaire
+    car les règles de thème clair/sombre de STYLE_BLOCK (ex.
+    `:root[data-theme="dark"] .viz-root`) ont une spécificité CSS plus forte
+    qu'un simple `.viz-root` et gagneraient sinon quel que soit le thème
+    choisi par l'utilisateur — même technique que le bloc @media print de
+    STYLE_BLOCK, qui a le même problème."""
+    if not apparence:
+        return ""
+    rules = []
+    if apparence.get("fond"):
+        fond = apparence["fond"]
+        rules.append(
+            f".viz-root {{ --page:{fond} !important; "
+            f"--surface:color-mix(in srgb, {fond} 5%, #fff) !important; }}"
+        )
+    police = FONT_CHOICES.get(apparence.get("police", ""))
+    if police:
+        rules.append(f".viz-root {{ font-family: {police} !important; }}")
+    if apparence.get("cadre"):
+        cadre = apparence["cadre"]
+        rules.append(f".viz-root .table-wrap {{ border-color:{cadre} !important; }}")
+        rules.append(
+            f".viz-root section > h2 {{ background:color-mix(in srgb, {cadre} 16%, var(--surface)) !important; }}"
+        )
+    if not rules:
+        return ""
+    return f"<style>{''.join(rules)}</style>"
+
+
+def _trend_td(formatted: str, delta: float | None) -> str:
+    """Cellule <td> avec dégradé de fond (couleur hausse/baisse) + flèche,
+    identique visuellement à l'Explorateur — actif seulement si `delta` est
+    fourni (donc uniquement quand la signalisation couleur est activée ET
+    qu'une valeur de comparaison existe)."""
+    if delta is None or abs(delta) < 0.5:
+        return f"<td>{formatted}</td>"
+    alpha = min(abs(delta), TREND_CAP_PCT) / TREND_CAP_PCT * 0.55 + 0.08
+    color = TREND_COLOR_POS if delta > 0 else TREND_COLOR_NEG
+    arrow = "▲" if delta > 0 else "▼"
+    style = f"background:color-mix(in srgb, {color} {alpha * 100:.1f}%, var(--surface));"
+    return f'<td style="{style}"><span class="trend-arrow" style="color:{color}">{arrow}</span> {formatted}</td>'
+
+
 class NoteCollector:
     """Les callouts explicatifs ne restent plus accrochés sous chaque tableau
     (demande utilisateur 2026-07-30) : chaque appel à add() enregistre une
@@ -192,16 +276,26 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
     )
     m["activite_score"] = notes.add(
         "warn",
-        "Score pondéré = pondérations ATIH par acte, majorées selon le modulateur de lieu — PAS le score "
-        "RR/GR officiel. Score / journée et Score / séjour = moyenne à l'échelle de l'établissement, pas "
-        "la charge individuelle d'un professionnel.",
-        "Le score utilise <code>ponderation_patient</code> (nomenclature ATIH <code>ACTES_ponderations</code>) "
-        "majoré par le modulateur de LIEU (HW/LJ/XH/L3), individuel ou collectif selon "
-        "<code>nombre_reel_patients</code>, quand applicable. N'intègre pas le filtrage par liste d'actes "
-        "spécialisés par GN ni les autres règles de groupage du score RR/GR officiel. Pour les codes dont "
-        "la pondération a changé dans le temps, la valeur la PLUS RÉCENTE est utilisée pour toutes les "
-        "années (choix délibéré, cohérent avec le reste du projet) — un score recalculé avec le barème "
-        "actuel peut donc différer d'un score RR historique réel.",
+        "Score de réadaptation GLOBALE = pondérations ATIH de TOUS les actes CSARR+CCAM réalisés (modulateur "
+        "de lieu inclus pour le CSARR). SPÉCIALISÉE = même somme, restreinte aux seuls actes marqueurs du GN "
+        "du séjour. Décomposés par intervenant sur demande, alors que ce sont officiellement des indicateurs "
+        "par séjour/semaine, pas par intervenant.",
+        "Le score utilise <code>ponderation_patient</code> (nomenclature ATIH <code>ACTES_ponderations</code>, "
+        "CSARR et CCAM) majoré, pour le CSARR uniquement, par le modulateur de LIEU (HW/LJ/XH/L3), individuel "
+        "ou collectif selon <code>nombre_reel_patients</code> — voir "
+        "<code>section_readaptation_intervenant</code> (src/viz/tableau_de_bord.py). Le filtre \"spécialisée\" "
+        "s'appuie sur <code>nomenclature_actes_specialises</code> (fichier ATIH <code>ACTES_listes_SPE.xlsx</code>, "
+        "annexe 4 du volume 3 du manuel de groupage GME) : un acte compte dans le score spécialisé du séjour "
+        "seulement s'il figure dans la liste de marqueurs du GN de CE séjour (GN pris à sa dernière semaine "
+        "connue de la période, comme pour les palmarès). Les GN sans notion de réadaptation spécialisée "
+        "(\"PAS DE LISTE\" dans le fichier ATIH, ex. 0103, 0118, 0134) ont donc toujours un score spécialisé "
+        "nul. Limite assumée : les actes CCAM n'ont AUCUN code intervenant dans le RHS — leur contribution "
+        "est affichée à part, sous \"Actes CCAM (non rattachés à un intervenant)\", jamais répartie sur les "
+        "intervenants CSARR. Ce sont des sommes CUMULÉES sur la période (\"par séjour\" au sens du manuel des "
+        "GME, ATIH vol.1 §3.3.2), jamais divisées par des jours de présence — donc pas l'intensité par "
+        "séjour/jour du score officiel. Pour les codes dont la pondération a changé dans le temps, la valeur "
+        "la PLUS RÉCENTE est utilisée pour toutes les années (choix délibéré, cohérent avec le reste du "
+        "projet).",
     )
     m["valorisation"] = notes.add(
         "warn",
@@ -299,7 +393,7 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
     )
     m["structure_gme"] = notes.add(
         "warn",
-        "Type de rééducation (GR), niveau de dépendance (GL) et sévérité, TOUTES CM/GN confondues (pas un "
+        "Type de rééducation (GR), groupe de lourdeur (GL) et sévérité, TOUTES CM/GN confondues (pas un "
         "top N). Sévérité : 0 = HTP, 1 = HC sans sévérité, 2 = HC avec sévérité.",
         "Même méthode d'attribution séjour→code et même filtre de comparabilité valorisation que les "
         "palmarès CM/GN. La ligne \"Erreur de groupage\" regroupe les séjours dont le type GR n'est pas "
@@ -310,14 +404,37 @@ def _populate_notes(notes: "NoteCollector") -> dict[str, str]:
     return m
 
 
-def render(data: dict, axis_label: str | None = None) -> str:
+def render(
+    data: dict,
+    axis_label: str | None = None,
+    signalisation_couleur: bool = False,
+    apparence: dict | None = None,
+) -> str:
     """`axis_label` (optionnel, ex. "UF 3001" ou "type d'hospitalisation
     Hospitalisation complète (HC)", 2026-08-04) : ajouté au sous-titre et au
     titre de la page quand ce TDB est un TDB secondaire (un par valeur d'axe,
-    voir generate_axis_reports()) plutôt que le TDB principal non filtré."""
+    voir generate_axis_reports()) plutôt que le TDB principal non filtré.
+
+    `signalisation_couleur` (option avant génération, 2026-09-12) : colore
+    chaque cellule comparable à une valeur de la période précédente, avec le
+    même dégradé hausse/baisse que l'Explorateur — voir _trend_td.
+
+    `apparence` (option avant génération, 2026-09-12, clés optionnelles
+    "fond"/"police"/"cadre") : personnalise la couleur de fond de page, la
+    police et la couleur des cadres de section — voir _apparence_style."""
     years = data["years"]
     periods_by_year = {p["year"]: p for p in data["periods"]}
-    notes = NoteCollector()
+
+    def prev_year(y: str) -> str | None:
+        idx = years.index(y)
+        return years[idx - 1] if idx > 0 else None
+
+    def td(value, formatted: str, prev_value=None, is_pct: bool = False) -> str:
+        """Cellule de tableau, avec dégradé hausse/baisse si la signalisation
+        couleur est active ET qu'une valeur de comparaison est fournie."""
+        if not signalisation_couleur or prev_value is None:
+            return f"<td>{formatted}</td>"
+        return _trend_td(formatted, _trend_delta(value, prev_value, is_pct))
 
     # ---------- section 1 : patients ----------
     patients_rows = ""
@@ -325,21 +442,34 @@ def render(data: dict, axis_label: str | None = None) -> str:
         p = data["patients"].get(y)
         if not p:
             continue
+        pp = data["patients"].get(prev_year(y))
         patients_rows += (
             f"<tr><td>{periods_by_year[y]['label']}</td>"
-            f"<td>{fmt_int(p['f'])}</td><td>{fmt_int(p['m'])}</td><td><b>{fmt_int(p['total'])}</b></td>"
-            f"<td>{fmt(p['pct_f'], 1, ' %')}</td><td>{fmt(p['pct_m'], 1, ' %')}</td><td><b>100,0 %</b></td>"
-            f"<td>{fmt(p['age_f'])}</td><td>{fmt(p['age_m'])}</td><td><b>{fmt(p['age_total'])}</b></td></tr>"
+            + td(p["f"], fmt_int(p["f"]), pp and pp["f"])
+            + td(p["m"], fmt_int(p["m"]), pp and pp["m"])
+            + f"<td><b>{fmt_int(p['total'])}</b></td>"
+            + td(p["pct_f"], fmt(p["pct_f"], 1, " %"), pp and pp["pct_f"], is_pct=True)
+            + td(p["pct_m"], fmt(p["pct_m"], 1, " %"), pp and pp["pct_m"], is_pct=True)
+            + "<td><b>100,0 %</b></td>"
+            + td(p["age_f"], fmt(p["age_f"]), pp and pp["age_f"])
+            + td(p["age_m"], fmt(p["age_m"]), pp and pp["age_m"])
+            + f"<td><b>{fmt(p['age_total'])}</b></td></tr>"
         )
 
     # ---------- section 2 : séjours ----------
     sejours_rows = ""
     for y in years:
         s = data["sejours"][y]
+        sp = data["sejours"].get(prev_year(y))
         sejours_rows += (
-            f"<tr><td>{periods_by_year[y]['label']}</td><td>{fmt_int(s['nb_ssr'])}</td><td>{fmt_int(s['nb_rhs'])}</td>"
-            f"<td>{fmt_int(s['nb_journees'])}</td><td>{fmt(s['dmh'], 2)}</td>"
-            f"<td>{fmt(s['nb_lits_moy'], 1)}</td><td>{fmt(s['exh'], 2, ' %')}</td></tr>"
+            f"<tr><td>{periods_by_year[y]['label']}</td>"
+            + td(s["nb_ssr"], fmt_int(s["nb_ssr"]), sp and sp["nb_ssr"])
+            + td(s["nb_rhs"], fmt_int(s["nb_rhs"]), sp and sp["nb_rhs"])
+            + td(s["nb_journees"], fmt_int(s["nb_journees"]), sp and sp["nb_journees"])
+            + td(s["dmh"], fmt(s["dmh"], 2), sp and sp["dmh"])
+            + td(s["nb_lits_moy"], fmt(s["nb_lits_moy"], 1), sp and sp["nb_lits_moy"])
+            + td(s["exh"], fmt(s["exh"], 2, " %"), sp and sp["exh"], is_pct=True)
+            + "</tr>"
         )
 
     # ---------- section 3 : journées par semaine (SVG) ----------
@@ -545,11 +675,17 @@ def render(data: dict, axis_label: str | None = None) -> str:
     indic_rows = ""
     for y in years:
         i = data["indicateurs"][y]
+        ip = data["indicateurs"].get(prev_year(y))
         indic_rows += (
-            f"<tr><td>{periods_by_year[y]['label']}</td><td>{fmt(i['avq_phys_moy'])}</td><td>{fmt(i['avq_cogn_moy'])}</td>"
-            f"<td>{fmt_int(i['nb_csarr'])}</td><td>{fmt_int(i['nb_diag_approx'])}</td>"
-            f"<td>{fmt(i['nb_das_moy_rhs'])}</td><td>{fmt(i['nb_moy_interv_rhs'])}</td>"
-            f"<td>{fmt(i['nb_moy_csarr_j'], 2)}</td></tr>"
+            f"<tr><td>{periods_by_year[y]['label']}</td>"
+            + td(i["avq_phys_moy"], fmt(i["avq_phys_moy"]), ip and ip["avq_phys_moy"])
+            + td(i["avq_cogn_moy"], fmt(i["avq_cogn_moy"]), ip and ip["avq_cogn_moy"])
+            + td(i["nb_csarr"], fmt_int(i["nb_csarr"]), ip and ip["nb_csarr"])
+            + td(i["nb_diag_approx"], fmt_int(i["nb_diag_approx"]), ip and ip["nb_diag_approx"])
+            + td(i["nb_das_moy_rhs"], fmt(i["nb_das_moy_rhs"]), ip and ip["nb_das_moy_rhs"])
+            + td(i["nb_moy_interv_rhs"], fmt(i["nb_moy_interv_rhs"]), ip and ip["nb_moy_interv_rhs"])
+            + td(i["nb_moy_csarr_j"], fmt(i["nb_moy_csarr_j"], 2), ip and ip["nb_moy_csarr_j"])
+            + "</tr>"
         )
 
     # ---------- section 5 : activité CSARR — comparaison par intervenant ----------
@@ -557,66 +693,80 @@ def render(data: dict, axis_label: str | None = None) -> str:
     # séparé par année (rangs/visibilité différents d'une année à l'autre,
     # difficile à comparer), UNE table par intervenant avec ses 3 années
     # côte à côte. "Nb réalisations" reste un COMPTE BRUT (validé exact contre
-    # ATIH, ne pas toucher). Les moyennes /jour et /séjour, elles, sont basées
-    # sur le SCORE PONDÉRÉ (ponderation_patient × modulateur de lieu éligible,
-    # cf. section_ponderation_csarr) et non plus sur le compte brut — choix
-    # explicite de l'utilisateur (2026-07-30) après clarification : ces
-    # moyennes doivent refléter la pondération ATIH, pas juste un décompte
-    # d'actes. Ce sont des moyennes à l'échelle de l'ÉTABLISSEMENT (score de
-    # cet intervenant / nb journées ou séjours TOTAUX de la période) — pas la
-    # charge individuelle d'un professionnel, faute de savoir quels jours il
-    # a personnellement travaillé.
+    # ATIH, ne pas toucher).
+    # 2026-09-11 (demande utilisateur, suite vérification de la formule
+    # officielle du Manuel des GME) : l'ancien "score pondéré" unique est
+    # remplacé par les deux scores officiels — GLOBALE (tous actes CSARR+CCAM)
+    # et SPÉCIALISÉE (seuls les actes marqueurs du GN du séjour) — voir
+    # section_readaptation_intervenant. Les CCAM n'ayant pas de code
+    # intervenant dans le RHS, leur contribution apparaît à part, sous le
+    # pseudo-intervenant CCAM_PSEUDO_INTERVENANT (cf. tableau_de_bord.py).
+    from src.viz.tableau_de_bord import CCAM_PSEUDO_INTERVENANT, CCAM_PSEUDO_LABEL
+
     intervenant_labels: dict[str, str] = {}
     n_by_code_year: dict[str, dict[str, int]] = {}
     for y in years:
         for r in data["activite_csarr"][y]:
             intervenant_labels[r["code"]] = r["label"]
             n_by_code_year.setdefault(r["code"], {})[y] = r["n"]
-    score_by_code_year = data["ponderation_csarr"]
+    score_by_code_year = data["readaptation_intervenant"]
+    if any(CCAM_PSEUDO_INTERVENANT in score_by_code_year.get(y, {}) for y in years):
+        intervenant_labels[CCAM_PSEUDO_INTERVENANT] = CCAM_PSEUDO_LABEL
+        for y in years:
+            n_ccam = score_by_code_year.get(y, {}).get(CCAM_PSEUDO_INTERVENANT, {}).get("n")
+            if n_ccam:
+                n_by_code_year.setdefault(CCAM_PSEUDO_INTERVENANT, {})[y] = round(n_ccam)
 
     codes_sorted = sorted(
         intervenant_labels,
-        key=lambda c: sum(n_by_code_year[c].values()),
+        key=lambda c: sum(n_by_code_year.get(c, {}).values()),
         reverse=True,
     )
 
-    def csarr_cell(code: str, y: str) -> tuple[str, str, str, str]:
+    def csarr_cell(code: str, y: str) -> tuple[float | None, float | None, float | None]:
         n = n_by_code_year.get(code, {}).get(y)
         if n is None:
-            return "—", "—", "—", "—"
-        score = score_by_code_year.get(y, {}).get(code, 0.0)
-        sej = data["sejours"][y]
-        moy_jour = score / sej["nb_journees"] if sej["nb_journees"] else None
-        moy_sejour = score / sej["nb_ssr"] if sej["nb_ssr"] else None
-        return fmt_int(n), fmt_int(round(score)), fmt(moy_jour, 2), fmt(moy_sejour, 2)
+            return None, None, None
+        s = score_by_code_year.get(y, {}).get(code, {})
+        return n, round(s.get("globale", 0.0)), round(s.get("specialisee", 0.0))
+
+    def _metric_cells(raw_per_year: list, fmt_fn=fmt_int) -> list[str]:
+        # Comparaison d'une métrique à l'ANNÉE PRÉCÉDENTE DE LA MÊME LIGNE
+        # (pas la ligne précédente comme pour les tableaux "1 ligne = 1
+        # année") — même formule de dégradé (_trend_td), appliquée ici entre
+        # colonnes d'un même groupe de métrique plutôt qu'entre lignes.
+        cells = []
+        for idx, v in enumerate(raw_per_year):
+            if v is None:
+                cells.append("<td>—</td>")
+                continue
+            prev = raw_per_year[idx - 1] if idx > 0 else None
+            cells.append(td(v, fmt_fn(v), prev))
+        return cells
 
     csarr_comparison_rows = ""
     for code in codes_sorted:
         # Regroupé PAR MÉTRIQUE (toutes les années sous "Nb réalisations",
-        # puis toutes sous "Score pondéré", etc.) pour matcher l'en-tête à
+        # puis toutes sous "Score globale", etc.) pour matcher l'en-tête à
         # colonnes groupées — comparer les années entre elles doit se lire
         # sans sauter d'une métrique à l'autre.
         per_year = [csarr_cell(code, y) for y in years]
-        n_cells = [c[0] for c in per_year]
-        score_cells = [c[1] for c in per_year]
-        j_cells = [c[2] for c in per_year]
-        s_cells = [c[3] for c in per_year]
-        cells = "".join(f"<td>{v}</td>" for v in n_cells + score_cells + j_cells + s_cells)
+        n_cells = _metric_cells([c[0] for c in per_year])
+        globale_cells = _metric_cells([c[1] for c in per_year])
+        specialisee_cells = _metric_cells([c[2] for c in per_year])
+        cells = "".join(n_cells + globale_cells + specialisee_cells)
         csarr_comparison_rows += f"<tr><td>{code} - {intervenant_labels[code]}</td>{cells}</tr>"
 
     # Ligne de total (tous intervenants confondus), en pied de table.
-    csarr_total_cells = []
-    for y in years:
-        n_tot = sum(n_by_code_year[c].get(y, 0) for c in codes_sorted)
-        score_tot = sum(score_by_code_year.get(y, {}).values())
-        sej = data["sejours"][y]
-        moy_jour_tot = score_tot / sej["nb_journees"] if sej["nb_journees"] else None
-        moy_sejour_tot = score_tot / sej["nb_ssr"] if sej["nb_ssr"] else None
-        csarr_total_cells.append((fmt_int(n_tot), fmt_int(round(score_tot)), fmt(moy_jour_tot, 2), fmt(moy_sejour_tot, 2)))
+    n_tot_per_year = [sum(n_by_code_year.get(c, {}).get(y, 0) for c in codes_sorted) for y in years]
+    globale_tot_per_year = [
+        round(sum(s.get("globale", 0.0) for s in score_by_code_year.get(y, {}).values())) for y in years
+    ]
+    specialisee_tot_per_year = [
+        round(sum(s.get("specialisee", 0.0) for s in score_by_code_year.get(y, {}).values())) for y in years
+    ]
     csarr_total_row = "".join(
-        f"<td>{v}</td>"
-        for group in range(4)
-        for v in (csarr_total_cells[i][group] for i in range(len(years)))
+        _metric_cells(n_tot_per_year) + _metric_cells(globale_tot_per_year) + _metric_cells(specialisee_tot_per_year)
     )
     csarr_total_row = f"<tr><td>Total</td>{csarr_total_row}</tr>"
 
@@ -624,6 +774,7 @@ def render(data: dict, axis_label: str | None = None) -> str:
     valorisation_rows = ""
     for y in years:
         v = data["valorisation"][y]
+        vp = data["valorisation"].get(prev_year(y))
         estim = v["estimation_en_cours"]
         estim_cell = fmt(v["montant_br_pt_avec_estimation"], 2, " €")
         if estim and estim["nb_sejours"]:
@@ -640,28 +791,32 @@ def render(data: dict, axis_label: str | None = None) -> str:
             tot_cell = f"<span title=\"Montant officiel réparti au prorata des journées de présence par UF (toutes campagnes confondues) — aucune colonne UF dans valorisation_sejour, mais la somme sur toutes les UF reproduit exactement le total établissement\">≈ {tot_cell}</span>"
         valorisation_rows += (
             f"<tr><td>{periods_by_year[y]['label']}</td>"
-            f"<td>{tot_cell}</td>"
-            f"<td>{estim_cell}</td>"
-            f"<td>{fmt(ecart, 2, ' €')}</td>"
-            f"<td>{fmt(v['pmct'], 2, ' €')}</td>"
-            f"<td>{fmt(v['pmst'], 2, ' €')}</td>"
-            f"<td>{fmt(v['pmjt'], 2, ' €')}</td></tr>"
+            + td(v["montant_br_tot"], tot_cell, vp and vp["montant_br_tot"])
+            + td(v["montant_br_pt_avec_estimation"], estim_cell, vp and vp["montant_br_pt_avec_estimation"])
+            + f"<td>{fmt(ecart, 2, ' €')}</td>"
+            + td(v["pmct"], fmt(v["pmct"], 2, " €"), vp and vp["pmct"])
+            + td(v["pmst"], fmt(v["pmst"], 2, " €"), vp and vp["pmst"])
+            + td(v["pmjt"], fmt(v["pmjt"], 2, " €"), vp and vp["pmjt"])
+            + "</tr>"
         )
 
     # Suppléments "en sus" (2026-08-21, demande utilisateur) : transport,
     # molécules onéreuses, cancérologie — jamais mélangés au montant BR
-    # séjour ci-dessus (voir note12), affichés dans leur propre sous-tableau.
+    # séjour ci-dessus (voir le Guide TDB), affichés dans leur propre sous-tableau.
     supplements_rows = ""
     for y in years:
         s = data["valorisation"][y]["supplements"]
         if s is None:
             continue
+        sp_wrap = data["valorisation"].get(prev_year(y))
+        sp = sp_wrap["supplements"] if sp_wrap else None
         supplements_rows += (
             f"<tr><td>{periods_by_year[y]['label']}</td>"
-            f"<td>{fmt(s['transport'], 2, ' €')}</td>"
-            f"<td>{fmt(s['molecules_onereuses'], 2, ' €')}</td>"
-            f"<td>{fmt(s['supp_cancero'], 2, ' €')}</td>"
-            f"<td>{fmt(s['total'], 2, ' €')}</td></tr>"
+            + td(s["transport"], fmt(s["transport"], 2, " €"), sp and sp["transport"])
+            + td(s["molecules_onereuses"], fmt(s["molecules_onereuses"], 2, " €"), sp and sp["molecules_onereuses"])
+            + td(s["supp_cancero"], fmt(s["supp_cancero"], 2, " €"), sp and sp["supp_cancero"])
+            + td(s["total"], fmt(s["total"], 2, " €"), sp and sp["total"])
+            + "</tr>"
         )
 
     # Séjours non valorisés par cause (2026-08-21, demande utilisateur) :
@@ -679,34 +834,38 @@ def render(data: dict, axis_label: str | None = None) -> str:
                 non_valorises_causes.append((row["cause"], row["libelle"]))
     non_valorises_rows = ""
     for cle, libelle in non_valorises_causes:
-        cells = ""
+        raw = []
         for y in years:
             nv = data["valorisation"][y]["non_valorises"]
             n = 0
             if nv is not None:
                 n = next((r["effectif"] for r in nv["rows"] if r["cause"] == cle), 0)
-            cells += f"<td>{fmt_int(n)}</td>"
-        non_valorises_rows += f"<tr><td>{libelle}</td>{cells}</tr>"
+            raw.append(n)
+        non_valorises_rows += f"<tr><td>{libelle}</td>{''.join(_metric_cells(raw))}</tr>"
     non_valorises_total_row = ""
     if non_valorises_causes:
-        cells = ""
+        raw_tot = []
         for y in years:
             nv = data["valorisation"][y]["non_valorises"]
-            cells += f"<td>{fmt_int(nv['total'] if nv else 0)}</td>"
-        non_valorises_total_row = f"<tr><td><b>Total</b></td>{cells}</tr>"
+            raw_tot.append(nv["total"] if nv else 0)
+        non_valorises_total_row = f"<tr><td><b>Total</b></td>{''.join(_metric_cells(raw_tot))}</tr>"
 
 
     # ---------- sections 7-8 : palmarès CM / GN ----------
     # Section 9 "Palmarès GME" retirée (demande utilisateur 2026-08-03) :
     # jugée peu apporter par rapport à CM/GN et risque de surcharger le TDB.
-    def _cell2(value: str, pct: float) -> str:
+    def _cell2(value: str, pct: float, cur: float | None = None, prev: float | None = None) -> str:
         # Valeur + % sur 2 lignes (demande utilisateur 2026-08-03) plutôt que
         # "valeur (pct %)" sur une seule ligne : permet une police plus
         # grande dans les sections 7-9 (classe CSS .palmares, cf.
-        # STYLE_BLOCK) tout en tenant dans la largeur de colonne.
-        return f'<td>{value}<br><span class="pct">({fmt(pct, 1, " %")})</span></td>'
+        # STYLE_BLOCK) tout en tenant dans la largeur de colonne. `cur`/`prev`
+        # (2026-09-12, signalisation couleur) : delta vs l'année précédente
+        # DE LA MÊME LIGNE (même code), pas la ligne précédente du tableau.
+        inner = f'{value}<br><span class="pct">({fmt(pct, 1, " %")})</span>'
+        delta = _trend_delta(cur, prev) if (signalisation_couleur and prev is not None) else None
+        return _trend_td(inner, delta)
 
-    def _palmares_section(numero: int, titre: str, palmares: dict, note_ref: str) -> str:
+    def _palmares_section(numero: int, titre: str, palmares: dict) -> str:
         rows_html = ""
         for row in palmares["rows"]:
             cells = ""
@@ -715,12 +874,15 @@ def render(data: dict, axis_label: str | None = None) -> str:
                 if not d:
                     cells += "<td>—</td><td>—</td>"
                     continue
-                cells += _cell2(fmt_int(d["effectif"]), d["pct_effectif"])
-                cells += _cell2(fmt(d["valorisation"], 2, " €"), d["pct_valorisation"])
+                dp = row["data"].get(prev_year(y))
+                cells += _cell2(fmt_int(d["effectif"]), d["pct_effectif"], d["effectif"], dp and dp["effectif"])
+                cells += _cell2(
+                    fmt(d["valorisation"], 2, " €"), d["pct_valorisation"], d["valorisation"], dp and dp["valorisation"]
+                )
             rows_html += f"<tr><td>{row['code']} — {row['libelle']}</td>{cells}</tr>"
         year_headers = "".join(f"<th>{periods_by_year[y]['label']}</th>" for y in years)
         return (
-            f'<section>\n    <h2>{numero} · {titre}{note_ref}</h2>\n'
+            f'<section>\n    <h2>{numero} · {titre}</h2>\n'
             '    <div class="table-wrap wide palmares">\n      <table>\n        <thead>\n'
             f'          <tr><th rowspan="2">Code — Libellé</th>'
             + "".join(f'<th colspan="2">{periods_by_year[y]["label"]}</th>' for y in years)
@@ -730,22 +892,25 @@ def render(data: dict, axis_label: str | None = None) -> str:
         )
 
     # ---------- section 9 : structure GME (GR / GL / Sévérité, concaténées) ----------
-    def _structure_section(numero: int, structure: dict, note_ref: str) -> str:
+    def _structure_section(numero: int, structure: dict) -> str:
         def block_rows(bloc: dict) -> str:
             html = f'<tr class="group-row"><td colspan="{1 + 2 * len(years)}"><b>{bloc["titre"]}</b></td></tr>'
             for row in bloc["rows"]:
                 cells = ""
                 for y in years:
                     d = row["data"][y]
-                    cells += _cell2(fmt_int(d["effectif"]), d["pct_effectif"])
-                    cells += _cell2(fmt(d["valorisation"], 2, " €"), d["pct_valorisation"])
+                    dp = row["data"].get(prev_year(y))
+                    cells += _cell2(fmt_int(d["effectif"]), d["pct_effectif"], d["effectif"], dp and dp["effectif"])
+                    cells += _cell2(
+                        fmt(d["valorisation"], 2, " €"), d["pct_valorisation"], d["valorisation"], dp and dp["valorisation"]
+                    )
                 label = f"<b>{row['libelle']}</b>" if row["code"] is None else f"{row['code']} — {row['libelle']}"
                 html += f"<tr><td>{label}</td>{cells}</tr>"
             return html
 
         rows_html = block_rows(structure["gr"]) + block_rows(structure["gl"]) + block_rows(structure["sev"])
         return (
-            f'<section>\n    <h2>{numero} · Structure de groupage (GR / GL / Sévérité){note_ref}</h2>\n'
+            f'<section>\n    <h2>{numero} · Structure de groupage (GR / GL / Sévérité)</h2>\n'
             '    <div class="table-wrap wide palmares">\n      <table>\n        <thead>\n'
             f'          <tr><th rowspan="2">Catégorie</th>'
             + "".join(f'<th colspan="2">{periods_by_year[y]["label"]}</th>' for y in years)
@@ -754,22 +919,11 @@ def render(data: dict, axis_label: str | None = None) -> str:
             f"        </thead>\n        <tbody>{rows_html}</tbody>\n      </table>\n    </div>\n  </section>"
         )
 
-    # ---------- notes (renvoyées en fin de TDB, numérotées dans l'ordre des sections) ----------
-    nm = _populate_notes(notes)
-    note1, note2 = nm["patients"], nm["sejours"]
-    note3, note4 = nm["indic_ok"], nm["indic_warn"]
-    note5, note6, note7 = nm["activite_ok"], nm["activite_choix"], nm["activite_score"]
-    note8 = nm["valorisation"]
-    note11 = nm["valorisation_non_fact"]
-    note_estim = nm["estimation_en_cours"]
-    note12 = nm["supplements"]
-    note13 = nm["non_valorises"]
-
     supplements_section = ""
     if supplements_rows:
         supplements_section = (
             "<div class=\"table-wrap\">"
-            f"<table><caption>Suppléments \"en sus\"{note12} (hors du montant BR séjour ci-dessus)</caption>"
+            "<table><caption>Suppléments \"en sus\" (hors du montant BR séjour ci-dessus)</caption>"
             "<thead><tr><th>Période</th><th>Transport</th><th>Molécules onéreuses</th>"
             "<th>Suppl. cancérologie</th><th>Total suppléments</th></tr></thead>"
             f"<tbody>{supplements_rows}</tbody></table></div>"
@@ -780,26 +934,35 @@ def render(data: dict, axis_label: str | None = None) -> str:
         year_headers_nv = "".join(f"<th>{periods_by_year[y]['label']}</th>" for y in years)
         non_valorises_section = (
             "<div class=\"table-wrap\">"
-            f"<table><caption>Séjours non valorisés{note13}</caption>"
+            "<table><caption>Séjours non valorisés</caption>"
             f"<thead><tr><th>Cause</th>{year_headers_nv}</tr></thead>"
             f"<tbody>{non_valorises_rows}</tbody>"
             f"<tfoot>{non_valorises_total_row}</tfoot></table></div>"
         )
-    note9 = nm["palmares"]
-    note10 = nm["structure_gme"]
-    notes_section = notes.render(data["finess"])
 
     palmares_html = "\n\n  ".join([
-        _palmares_section(7, "Palmarès CM", data["palmares_cm"], note9),
-        _palmares_section(8, "Palmarès GN", data["palmares_gn"], note9),
-        _structure_section(9, data["structure_gme"], note10),
+        _palmares_section(7, "Palmarès CM", data["palmares_cm"]),
+        _palmares_section(8, "Palmarès GN", data["palmares_gn"]),
+        _structure_section(9, data["structure_gme"]),
     ])
 
     subtitle = _period_subtitle(data["finess"], data["periods"])
     if axis_label:
         subtitle += f" · {axis_label}"
 
+    trend_legend = ""
+    if signalisation_couleur:
+        trend_legend = (
+            '<div class="trend-legend">'
+            f'<span class="key"><span class="trend-arrow" style="color:{TREND_COLOR_POS}">▲</span>hausse vs période précédente</span>'
+            f'<span class="key"><span class="trend-arrow" style="color:{TREND_COLOR_NEG}">▼</span>baisse vs période précédente</span>'
+            '<span class="key">intensité du fond = ampleur de la variation (plafonnée à 15 %)</span>'
+            "</div>"
+        )
+
     body = HTML_TEMPLATE.format(
+        apparence_style=_apparence_style(apparence),
+        trend_legend=trend_legend,
         period_subtitle=subtitle,
         patients_rows=patients_rows,
         sejours_rows=sejours_rows,
@@ -821,16 +984,13 @@ def render(data: dict, axis_label: str | None = None) -> str:
         indic_rows=indic_rows,
         csarr_comparison_rows=csarr_comparison_rows,
         csarr_total_row=csarr_total_row,
-        csarr_year_headers="".join(f"<th>{y}</th>" for y in years) * 4,
+        csarr_year_headers="".join(f"<th>{y}</th>" for y in years) * 3,
         csarr_group_colspan=len(years),
         valorisation_rows=valorisation_rows,
         supplements_section=supplements_section,
         non_valorises_section=non_valorises_section,
         palmares_html=palmares_html,
-        note1=note1, note2=note2, note3=note3, note4=note4,
-        note5=note5, note6=note6, note7=note7, note8=note8, note9=note9, note10=note10, note11=note11,
-        note_estim=note_estim, note12=note12, note13=note13,
-        notes_section=notes_section,
+        guide_html=GUIDE_TDB_HTML,
     )
     title = "PMSI-SMR — Tableau de bord"
     if axis_label:
@@ -1018,6 +1178,13 @@ STYLE_BLOCK = """
   .legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); margin: 0 0 6px; }
   .legend .key { display: inline-flex; align-items: center; gap: 6px; }
 
+  /* Signalisation couleur (option avant génération, 2026-09-12) : dégradé de
+     fond posé en style inline par cellule (_trend_td) — cette classe ne fixe
+     que la taille/l'alignement de la flèche, jamais sa couleur (déjà en
+     inline, propre à chaque cellule). */
+  .trend-arrow { font-size: 0.85em; margin-right: 2px; }
+  .trend-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-2); margin: 0 0 14px; }
+  .trend-legend .key { display: inline-flex; align-items: center; gap: 5px; }
 
   .callout { display: flex; gap: 10px; align-items: flex-start; border-radius: 10px; padding: 12px 14px; font-size: 12.5px; margin-top: 10px; }
   .callout.warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border)); }
@@ -1029,35 +1196,254 @@ STYLE_BLOCK = """
   footer.note { margin-top: 26px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--grid); padding-top: 12px; }
   footer.note ul { margin: 6px 0 0; padding-left: 18px; }
 
-  /* Renvois de note (superscripts à côté des titres de section) et la
-     liste de notes numérotées en fin de TDB qu'ils pointent vers. */
-  .note-ref { font-size: 10px; margin-left: 3px; vertical-align: super; }
-  .note-ref a {
-    display: inline-block; min-width: 14px; padding: 0 3px; text-align: center;
-    background: var(--rhs); color: #fff; border-radius: 6px; font-weight: 700;
-    text-decoration: none; line-height: 15px;
+  /* Bouton "Guide TDB" + boîte de dialogue (remplace, 2026-09-11, l'ancienne
+     liste de notes numérotées en fin de TDB — demande utilisateur : le
+     détail pédagogique est désormais regroupé dans UN seul guide, ouvert à
+     la demande, plutôt que dispersé en callouts + renvois numérotés. Reste
+     entièrement embarqué dans le fichier HTML du TDB (aucune requête
+     externe) : <dialog> natif, pas de librairie JS. */
+  .top-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .guide-btn {
+    flex: none; background: var(--rhs); color: #fff; border: none; border-radius: 8px;
+    padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
   }
-  section.notes > h2 { background: color-mix(in srgb, var(--muted) 14%, var(--surface)); }
+  .guide-btn:hover { filter: brightness(1.08); }
+  .guide-dialog {
+    width: min(760px, 92vw); max-height: 85vh; padding: 0; border: 1px solid var(--border);
+    border-radius: 12px; color: var(--ink);
+    background: color-mix(in srgb, var(--rhs) 5%, var(--surface));
+  }
+  .guide-dialog::backdrop { background: rgba(0,0,0,0.45); }
+  .guide-head {
+    position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 14px 18px; background: color-mix(in srgb, var(--rhs) 14%, var(--surface));
+    border-bottom: 1px solid var(--border);
+  }
+  .guide-head h2 { margin: 0; font-size: 15px; font-weight: 700; }
+  .guide-close {
+    flex: none; width: 26px; height: 26px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--surface); color: var(--ink); font-size: 13px; line-height: 1;
+  }
+  .guide-body {
+    padding: 6px 20px 20px; overflow-y: auto; max-height: calc(85vh - 56px);
+    font-family: Arial, Verdana, "Segoe UI", sans-serif; font-size: 13px; line-height: 1.5;
+  }
+  .guide-body h3 {
+    font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+    color: var(--ink); background: color-mix(in srgb, var(--rhs) 10%, var(--surface));
+    padding: 6px 10px; border-radius: 6px; margin: 20px 0 8px;
+  }
+  .guide-body h3:first-child { margin-top: 8px; }
+  .guide-body p.guide-intro { color: var(--ink-2); margin: 0 0 8px; }
+  .guide-body dl { margin: 0 0 4px; }
+  .guide-body dt { font-weight: 700; margin-top: 6px; }
+  .guide-body dd { margin: 1px 0 0 0; color: var(--ink-2); }
   .notes-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   .notes-list li { scroll-margin-top: 16px; }
   .notes-list li:target { outline: 2px solid var(--rhs); outline-offset: 2px; border-radius: 10px; }
   .note-back { margin-left: 6px; color: var(--muted); text-decoration: none; font-weight: 700; }
-  /* Notes = contenu facultatif à l'impression (demande utilisateur
-     2026-07-30) : démarre sur une nouvelle page pour rester détachable —
-     qui imprime peut s'arrêter avant sans rien couper au milieu. */
   @media print {
-    section.notes { break-before: page; page-break-before: always; }
+    .guide-btn, .guide-dialog { display: none !important; }
   }
 """
 
+
+# Contenu statique du Guide TDB (2026-09-11, demande utilisateur) : remplace
+# l'ancienne liste de notes numérotées en bas de page. Un seul guide,
+# identique pour tous les établissements, rédigé pour un public NON
+# spécialiste du PMSI (aussi bien médical que gestion) — chaque tableau et
+# chaque colonne y est expliqué en langage courant. Le détail technique
+# (méthodologie exacte, sources, dates de validation, limites) reste dans le
+# document Journal séparé (render_journal), destiné au debug — le Guide, lui,
+# doit rester lisible et compact (embarqué dans CHAQUE fichier TDB généré).
+GUIDE_TDB_HTML = """
+<p class="guide-intro">Ce tableau de bord regroupe, pour un ou plusieurs établissements et sur une ou
+plusieurs périodes comparables (mêmes semaines de l'année), les principaux chiffres d'activité et de
+valorisation financière d'un service de Soins Médicaux et de Réadaptation (SMR, anciennement SSR). Il compare
+toujours des périodes calées sur les mêmes semaines calendaires (semaine 01 à N), pas des années civiles
+complètes, pour que la comparaison entre années soit honnête même en cours d'année. Deux indicateurs officiels,
+deux notions officielles de classification n'apparaissent pas ici : le classement en type de réadaptation
+(HC : pédiatrique/spécialisée/globale/autre ; HTP : pédiatrique/modérée/intense/très intense/indifférenciée)
+et la majoration de valorisation qui en découle pour l'établissement. Ces deux notions reposent sur un calcul
+officiel précis (Manuel des groupes médico-économiques GME, ATIH, volume 1, section 3.3.2 "Calcul des
+scores") : la somme des pondérations de chaque acte de réadaptation codé (CSARR + CCAM), modulateurs de lieu
+compris, sert de base à deux indicateurs, un par séjour (HC) ou par semaine (HTP), l'autre ce même total
+divisé par le nombre de jours de présence en semaine (lundi-vendredi). Cet outil n'applique pas les seuils
+de classification officiels (variables selon le type de prise en charge), mais reconstruit et affiche cette
+même somme de pondérations — voir la section 5 ci-dessous, qui la décompose par intervenant.</p>
+
+<h3>1 · Patients</h3>
+<p class="guide-intro">Combien de patients différents ont été pris en charge sur la période, et leur
+répartition par sexe et par âge. Un même patient n'est compté qu'une seule fois par période, même si son
+séjour s'étend sur plusieurs semaines.</p>
+<dl>
+  <dt>F / M / Total</dt><dd>Nombre de patientes, de patients, et le total des deux — un patient est identifié
+  par son identifiant patient (IPP), pas par son numéro de sécurité sociale (qui peut être celui de l'assuré,
+  donc parfois partagé entre plusieurs personnes d'un même foyer).</dd>
+  <dt>% F / % M / % Total</dt><dd>Part de chaque sexe dans le total de la période (le % Total vaut toujours
+  100 %, rappelé pour la lisibilité).</dd>
+  <dt>Âge moy. F / M / Total</dt><dd>Âge moyen des patientes, des patients, et de l'ensemble, à la date de
+  début de leur séjour.</dd>
+</dl>
+
+<h3>2 · Séjours</h3>
+<p class="guide-intro">Volume d'activité de la période, exprimé en séjours, en semaines transmises et en
+journées réellement occupées.</p>
+<dl>
+  <dt>Nb SSR</dt><dd>Nombre de séjours SMR distincts sur la période (un patient peut avoir plusieurs séjours
+  dans l'année).</dd>
+  <dt>Nb RHS</dt><dd>Nombre de résumés hebdomadaires standardisés transmis — en pratique, une ligne par
+  semaine de séjour et par patient : un séjour de 6 semaines produit 6 RHS.</dd>
+  <dt>Nb journées</dt><dd>Nombre total de journées où un patient était réellement présent dans l'établissement
+  (voir aussi la section 3, qui détaille ce chiffre semaine par semaine).</dd>
+  <dt>DMH</dt><dd>Durée Moyenne d'Hospitalisation : nombre moyen de journées de présence par séjour sur la
+  période.</dd>
+  <dt>NbLits moy</dt><dd>Nombre moyen de lits occupés sur la période, obtenu en divisant le nombre de
+  journées de présence par le nombre de jours calendaires de la période.</dd>
+  <dt>EXH</dt><dd>Taux d'occupation (Exploitation Hospitalière) : NbLits moy rapporté à la capacité en lits de
+  l'établissement, en pourcentage.</dd>
+</dl>
+
+<h3>3 · Journées de présence par semaine</h3>
+<p class="guide-intro">Le graphique compare, semaine ISO par semaine ISO (semaine 01, 02, 03…), le nombre de
+journées de présence de chaque année sélectionnée — une courbe par année, avec sa propre couleur et son
+propre style de trait pour rester lisible même imprimé en noir et blanc. L'axe vertical de gauche est
+volontairement <b>zoomé sur la plage des valeurs observées</b> (il ne part pas de zéro) pour mieux voir les
+variations d'une semaine à l'autre — les graduations affichent les vraies valeurs pour éviter toute
+impression trompeuse sur l'ampleur des écarts. L'axe de droite convertit la même échelle en <b>nombre de
+lits</b> (journées de présence divisées par 7). Trois lignes de repère horizontales indiquent la moyenne
+(trait plein) ainsi que le minimum et le maximum de la période (pointillés).</p>
+
+<h3>4 · Indicateurs</h3>
+<p class="guide-intro">Indicateurs médicaux et d'activité complémentaires, en moyenne ou en cumul sur la
+période.</p>
+<dl>
+  <dt>AVQ phys. moy. / AVQ cogn. moy.</dt><dd>Moyenne des scores de dépendance physique et cognitive des
+  patients (Activités de la Vie Quotidienne) — plus le score est élevé, plus le patient est dépendant.</dd>
+  <dt>Nb CSARR</dt><dd>Nombre d'actes de rééducation-réadaptation (nomenclature CSARR) réalisés sur la
+  période, en évitant de compter plusieurs fois un doublon de transmission (un même acte transmis 3 fois ou
+  plus le même jour n'est compté que 2 fois, ce qui correspond à une réalisation matin ET après-midi).</dd>
+  <dt>Nb diag.</dt><dd>Nombre de diagnostics associés distincts (couples séjour/code diagnostic), une fois
+  les doublons de transmission retirés.</dd>
+  <dt>Nb moy. DAS/RHS</dt><dd>Nombre moyen de diagnostics associés par semaine transmise (RHS).</dd>
+  <dt>Nb moy. interv./RHS (approx.)</dt><dd>Nombre moyen d'actes de rééducation (CSARR + actes non
+  rééducatifs CSAR) par semaine transmise — indicateur approximatif, à confirmer.</dd>
+  <dt>Nb moy. CSARR/j</dt><dd>Nombre moyen d'actes CSARR par journée de présence.</dd>
+</dl>
+
+<h3>5 · Activité CSARR par intervenant</h3>
+<p class="guide-intro">Détaille l'activité de rééducation-réadaptation par métier (kinésithérapeute,
+ergothérapeute, etc. — identifiés par leur code intervenant CSARR officiel), avec les 3 périodes comparées
+côte à côte pour chaque métier.</p>
+<dl>
+  <dt>Nb réalisations</dt><dd>Comptage brut du nombre d'actes réalisés par ce métier, sans aucun retraitement
+  — c'est la colonne dont la méthode de calcul a été vérifiée à l'identique du rapport officiel ATIH
+  correspondant.</dd>
+  <dt>Score de réadaptation globale</dt><dd>Chaque acte de rééducation-réadaptation réalisé par ce métier
+  (actes CSARR, majorés selon leur lieu de réalisation le cas échéant) est valorisé par une pondération
+  officielle ATIH, puis ces valorisations sont additionnées — cumulées sur toute la période. C'est la
+  définition officielle du score "global", à ceci près qu'il est ici décomposé par métier plutôt que laissé
+  au niveau du séjour.</dd>
+  <dt>Score de réadaptation spécialisée</dt><dd>Même pondération que le score global, mais comptée en plus
+  dans ce score UNIQUEMENT si l'acte est un "marqueur" reconnu de la pathologie du séjour. La liste officielle
+  ATIH indique, pour chaque type de pathologie (GN — ex. "AVC avec hémiplégie"), quels actes comptent comme
+  marqueurs de sa rééducation ; un même acte peut être marqueur pour un GN et pas pour un autre, donc la
+  vérification se fait séjour par séjour, sur le GN de ce séjour précis (le même que celui utilisé pour les
+  palmarès CM/GN). Certains types de pathologie n'ont aucune liste de marqueurs définie par l'ATIH : leurs
+  séjours ont alors un score spécialisé toujours nul, même avec beaucoup d'actes de rééducation. Le score
+  spécialisé est donc toujours inférieur ou égal au score global : les actes non marqueurs (évaluations
+  courantes, actes plus généraux) comptent dans le global mais jamais dans le spécialisé.</dd>
+  <dt>Actes CCAM (non rattachés à un intervenant)</dt><dd>Les scores officiels comptent aussi certains actes
+  médicaux (nomenclature CCAM) en plus des actes CSARR. Mais contrairement au CSARR, un acte CCAM n'est
+  jamais rattaché à un métier précis dans les données transmises — sa contribution au score (globale et
+  spécialisée) apparaît donc sur cette ligne à part, plutôt que d'être arbitrairement attribuée à un
+  professionnel ou ignorée.</dd>
+</dl>
+<p class="guide-intro">Ce tableau inclut délibérément les séjours en erreur de groupage bloquante dans tous
+ses totaux (logique d'activité réellement réalisée, pas de facturation) — un écart avec les statistiques ATIH
+officielles (qui excluent ces séjours) est donc normal dès qu'un séjour est en erreur, et sert volontairement
+de signal d'alerte plutôt que d'être masqué.</p>
+
+<h3>6 · Valorisation</h3>
+<p class="guide-intro">Traduit l'activité de la période en montants financiers (base de remboursement ATIH,
+avant tout autre ajustement).</p>
+<dl>
+  <dt>Montant BR SÉJOUR (fact.)</dt><dd>Montant de base de remboursement déjà facturé et reconnu par l'ATIH
+  sur cette période, hors transport, molécules onéreuses et supplément cancérologie (voir "Suppléments en
+  sus" ci-dessous) et hors séjours en anomalie de facturation (chaînage, en attente de droits, non
+  facturables à l'Assurance Maladie).</dd>
+  <dt>Montant BR estimé PRT</dt><dd>Un essai de reconstitution du même montant, réparti au prorata des
+  journées réellement présentes de chaque séjour, complété par une estimation du montant des séjours encore
+  en cours (non facturés car pas encore clôturés). C'est un indicateur À TITRE INDICATIF, pas un chiffre
+  officiel ATIH — un grand écart en cours d'année est normal (année pas terminée), pas une anomalie.</dd>
+  <dt>Écart</dt><dd>Différence entre les deux montants ci-dessus.</dd>
+  <dt>PMCT</dt><dd>Prix Moyen du Cas Traité : montant moyen par séjour (basé sur le montant réellement prouvé,
+  sans l'estimation des séjours en cours).</dd>
+  <dt>PMST</dt><dd>Prix Moyen de la Semaine Traitée : montant moyen par semaine transmise (RHS).</dd>
+  <dt>PMJT</dt><dd>Prix Moyen de la Journée Traitée : montant moyen par journée de présence — le tarif moyen
+  observé par jour d'hospitalisation.</dd>
+</dl>
+<p class="guide-intro"><b>Suppléments "en sus"</b> : transport, molécules onéreuses (médicaments coûteux) et
+supplément cancérologie sont des versements ponctuels, facturés en plus du séjour et sans rapport avec sa
+durée — ils sont donc toujours affichés à part, jamais mélangés au montant BR séjour ni lissés au prix par
+journée (PMJT).</p>
+<p class="guide-intro"><b>Séjours non valorisés</b> : liste, par cause, les séjours actifs sur la période qui
+n'ont encore aucun montant BR connu alors qu'ils "devraient" déjà en avoir un — les causes principales sont
+une anomalie de chaînage, une attente de droits à l'Assurance Maladie, une non-facturabilité à l'Assurance
+Maladie, une erreur de groupage, ou simplement un séjour encore en cours (moins de 90 jours, pas encore
+clôturé).</p>
+
+<h3>7-8 · Palmarès CM / GN</h3>
+<p class="guide-intro">Classement des 5 types de prise en charge (CM = Catégorie Majeure, GN = Groupe
+Nosologique) les plus fréquents, en nombre de séjours et en montant financier. Le même classement (mêmes 5
+codes) est utilisé pour toutes les périodes comparées, pour rendre la comparaison directe.</p>
+<dl>
+  <dt>Code — Libellé</dt><dd>Code officiel du type de prise en charge et son intitulé.</dd>
+  <dt>Effectif</dt><dd>Nombre de séjours rattachés à ce code sur la période (un séjour est rattaché au code de
+  sa toute dernière semaine connue).</dd>
+  <dt>Valorisation</dt><dd>Montant BR séjour (hors suppléments) rattaché à ce code sur la période.</dd>
+  <dt>% (sous chaque valeur)</dt><dd>Part de ce code dans le total, tous codes confondus, de sa colonne.</dd>
+</dl>
+
+<h3>9 · Structure de groupage (GR / GL / Sévérité)</h3>
+<p class="guide-intro">Répartition de TOUS les séjours (pas seulement un top 5) selon trois axes de
+classification médicale, toutes catégories de prise en charge confondues.</p>
+<dl>
+  <dt>GR</dt><dd>Type de rééducation dont relève le séjour.</dd>
+  <dt>GL</dt><dd>Groupe de lourdeur (charge en soins du patient).</dd>
+  <dt>Sévérité</dt><dd>0 = hospitalisation à temps partiel (HTP), 1 = hospitalisation complète sans sévérité
+  associée, 2 = hospitalisation complète avec sévérité associée.</dd>
+  <dt>Erreur de groupage</dt><dd>Regroupe à part les séjours dont le code de groupage n'a pas été reconnu,
+  plutôt que de les classer à tort dans une vraie catégorie.</dd>
+</dl>
+"""
+
 HTML_TEMPLATE = """<div class="viz-root">
+  {apparence_style}
   <header class="top">
-    <h1>Tableaux de bord SMR</h1>
-    <p class="subtitle">{period_subtitle}</p>
+    <div class="top-row">
+      <div>
+        <h1>Tableaux de bord SMR</h1>
+        <p class="subtitle">{period_subtitle}</p>
+      </div>
+      <button type="button" class="guide-btn" onclick="document.getElementById('guide-tdb').showModal()">Guide TDB</button>
+    </div>
   </header>
 
+  <dialog id="guide-tdb" class="guide-dialog">
+    <div class="guide-head">
+      <h2>Guide du tableau de bord</h2>
+      <button type="button" class="guide-close" onclick="document.getElementById('guide-tdb').close()" aria-label="Fermer">✕</button>
+    </div>
+    <div class="guide-body">
+      {guide_html}
+    </div>
+  </dialog>
+
+  {trend_legend}
+
   <section>
-    <h2>1 · Patients{note1}</h2>
+    <h2>1 · Patients</h2>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Période</th><th>F</th><th>M</th><th>Total</th><th>% F</th><th>% M</th><th>% Total</th><th>Âge moy. F</th><th>Âge moy. M</th><th>Âge moy. Total</th></tr></thead>
@@ -1067,7 +1453,7 @@ HTML_TEMPLATE = """<div class="viz-root">
   </section>
 
   <section>
-    <h2>2 · Séjours{note2}</h2>
+    <h2>2 · Séjours</h2>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Période</th><th>Nb SSR</th><th>Nb RHS</th><th>Nb journées</th><th>DMH</th><th>NbLits moy</th><th>EXH</th></tr></thead>
@@ -1099,7 +1485,7 @@ HTML_TEMPLATE = """<div class="viz-root">
   </section>
 
   <section>
-    <h2>4 · Indicateurs{note3}{note4}</h2>
+    <h2>4 · Indicateurs</h2>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Période</th><th>AVQ phys. moy.</th><th>AVQ cogn. moy.</th><th>Nb CSARR</th><th>Nb diag.</th><th>Nb moy. DAS/RHS</th><th>Nb moy. interv./RHS (approx.)</th><th>Nb moy. CSARR/j</th></tr></thead>
@@ -1109,11 +1495,11 @@ HTML_TEMPLATE = """<div class="viz-root">
   </section>
 
   <section>
-    <h2>5 · Activité CSARR par intervenant{note5}{note6}{note7}</h2>
+    <h2>5 · Activité CSARR par intervenant</h2>
     <div class="table-wrap wide">
       <table>
         <thead>
-          <tr><th rowspan="2">Intervenant</th><th colspan="{csarr_group_colspan}">Nb réalisations</th><th colspan="{csarr_group_colspan}">Score pondéré</th><th colspan="{csarr_group_colspan}">Score / journée présence</th><th colspan="{csarr_group_colspan}">Score / séjour</th></tr>
+          <tr><th rowspan="2">Intervenant</th><th colspan="{csarr_group_colspan}">Nb réalisations</th><th colspan="{csarr_group_colspan}">Score de réadaptation globale</th><th colspan="{csarr_group_colspan}">Score de réadaptation spécialisée</th></tr>
           <tr>{csarr_year_headers}</tr>
         </thead>
         <tbody>{csarr_comparison_rows}</tbody>
@@ -1123,11 +1509,11 @@ HTML_TEMPLATE = """<div class="viz-root">
   </section>
 
   <section>
-    <h2>6 · Valorisation{note8}</h2>
+    <h2>6 · Valorisation</h2>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Période</th><th>Montant BR SÉJOUR (fact.){note11}</th>
-        <th>Montant BR estimé PRT{note_estim}</th><th>Écart</th>
+        <thead><tr><th>Période</th><th>Montant BR SÉJOUR (fact.)</th>
+        <th>Montant BR estimé PRT</th><th>Écart</th>
         <th>PMCT</th><th>PMST</th><th>PMJT</th></tr></thead>
         <tbody>{valorisation_rows}</tbody>
       </table>
@@ -1137,8 +1523,6 @@ HTML_TEMPLATE = """<div class="viz-root">
   </section>
 
   {palmares_html}
-
-  {notes_section}
 
   <footer class="note">Sources : RHS groupé, VID-HOSP, VisualValoSéjours.</footer>
 </div>
@@ -1174,7 +1558,7 @@ ANNEXE_TEMPLATE = """<div class="viz-root">
         <tbody>{erreurs_activite_rows}</tbody>
       </table>
     </div>
-    <div class="callout warn"><span class="ico">i</span><div>Décompte des actes/diagnostics portés par des séjours en erreur de groupage bloquante (<code>indicateur_erreur</code> rempli). Pourquoi le TDB les garde quand même dans ses totaux d'activité : voir la note "Choix délibéré" (section 5) du tableau de bord principal.</div></div>
+    <div class="callout warn"><span class="ico">i</span><div>Décompte des actes/diagnostics portés par des séjours en erreur de groupage bloquante (<code>indicateur_erreur</code> rempli). Pourquoi le TDB les garde quand même dans ses totaux d'activité : voir le Guide TDB (bouton "Guide TDB" du tableau de bord principal), section 5 « Choix délibéré ».</div></div>
   </section>
 </div>
 """
@@ -1235,6 +1619,8 @@ def generate_axis_reports(
     mois_fin: int | None = None,
     groupes: dict[str, list[str]] | None = None,
     selection: list[str] | None = None,
+    signalisation_couleur: bool = False,
+    apparence: dict | None = None,
 ) -> list[dict]:
     """TDB secondaire (2026-08-04, décision utilisateur) : PAS une section
     résumé en plus du TDB principal, mais un TDB COMPLET (sections 1-9,
@@ -1327,7 +1713,12 @@ def generate_axis_reports(
         data = build(finess, years, axis_filter=(champ, valeur_filtre), mois_fin=mois_fin, conn=conn)
         if not data["years"]:
             continue
-        html = render(data, axis_label=f"{AXIS_TITLE[axis]} {label}")
+        html = render(
+            data,
+            axis_label=f"{AXIS_TITLE[axis]} {label}",
+            signalisation_couleur=signalisation_couleur,
+            apparence=apparence,
+        )
         slug = re.sub(r"[^A-Za-z0-9_-]+", "_", slug_base)
         path = GENERATED_DIR / f"tableau_de_bord_{finess}_{suffix}_{axis}-{slug}.html"
         path.write_text(html, encoding="utf-8")

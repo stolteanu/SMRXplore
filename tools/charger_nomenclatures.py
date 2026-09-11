@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.nomenclatures import (  # noqa: E402
+    actes_specialises,
     ccam,
     cim10,
     cim10_claml,
@@ -57,6 +58,7 @@ LOADERS = {
     "gme_erreurs_actes_concernes": gme_erreurs.load_actes_concernes_from_txt,
     "ponderation_actes": ponderation.load_actes_from_xlsx,
     "ponderation_modulateurs": ponderation.load_modulateurs_from_xlsx,
+    "actes_specialises": actes_specialises.load_from_xlsx,
 }
 
 YEAR_RE = re.compile(r"(20\d{2})")

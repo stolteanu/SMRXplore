@@ -65,6 +65,17 @@
     padding: 12px 22px; font-size: 14px; font-weight: 600; cursor: pointer;
   }
   button#go:disabled { opacity: 0.5; cursor: not-allowed; }
+  .apparence-row { display: flex; gap: 20px; align-items: flex-end; flex-wrap: wrap; margin-top: 12px; }
+  .apparence-row label { font-size: 12.5px; color: var(--ink-2); display: flex; flex-direction: column; gap: 4px; }
+  .apparence-row input[type="color"] { width: 44px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
+  .apparence-row select {
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+    font-size: 13px; background: var(--page); color: var(--ink);
+  }
+  .apparence-row button {
+    border: 1px solid var(--border); background: var(--page); color: var(--ink);
+    border-radius: 8px; padding: 7px 12px; font-size: 12.5px; cursor: pointer; height: 30px;
+  }
   .msg {
     font-size: 13px; padding: 10px 14px; border-radius: 8px; margin-top: 14px;
   }
@@ -168,6 +179,31 @@
       <option value="12">Décembre</option>
     </select>
     <p class="hint">La période reste toujours cumulative depuis janvier (semaine 01), convention ATIH — ce choix ne fixe que la fin.</p>
+  </div>
+
+  <div class="card">
+    <h2>Signalisation couleur</h2>
+    <label class="chip"><input type="checkbox" id="signalisation-couleur"> Colorer les cellules selon la tendance (hausse/baisse vs période précédente)</label>
+    <p class="hint">Même dégradé vert/orange (avec flèche ▲/▼) que dans l'Explorateur — l'intensité de la couleur suit l'ampleur de la variation.</p>
+  </div>
+
+  <div class="card">
+    <h2>Apparence du TDB (optionnel)</h2>
+    <label class="chip"><input type="checkbox" id="app-active"> Personnaliser l'apparence de ce TDB</label>
+    <div id="app-fields" class="apparence-row" style="display:none;">
+      <label>Couleur de fond<br><input type="color" id="app-fond" value="#f9f9f7"></label>
+      <label>Police<br>
+        <select id="app-police">
+          <option value="systeme">Système</option>
+          <option value="arial">Arial</option>
+          <option value="verdana">Verdana</option>
+          <option value="georgia">Georgia</option>
+        </select>
+      </label>
+      <label>Couleur des cadres de section<br><input type="color" id="app-cadre" value="#2a78d6"></label>
+      <button type="button" id="app-reset">Réinitialiser</button>
+    </div>
+    <p class="hint">Décochez pour garder le thème habituel du TDB.</p>
   </div>
 
   <button id="go" disabled>Générer le(s) TDB</button>
@@ -464,6 +500,28 @@
 
   document.querySelectorAll('input[name="axis"]').forEach(r => r.addEventListener("change", refreshGroupesUfCard));
 
+  // ---- Apparence du TDB (2026-09-12, demande utilisateur) : champs masqués
+  // tant que la personnalisation n'est pas activée, pour ne rien envoyer au
+  // serveur (donc garder le thème par défaut) si l'utilisateur ne touche à
+  // rien. Valeurs par défaut des sélecteurs = thème habituel du TDB.
+  const APP_DEFAULTS = { fond: "#f9f9f7", police: "systeme", cadre: "#2a78d6" };
+  const appActive = document.getElementById("app-active");
+  const appFields = document.getElementById("app-fields");
+  const appFond = document.getElementById("app-fond");
+  const appPolice = document.getElementById("app-police");
+  const appCadre = document.getElementById("app-cadre");
+  appFond.value = APP_DEFAULTS.fond;
+  appPolice.value = APP_DEFAULTS.police;
+  appCadre.value = APP_DEFAULTS.cadre;
+  appActive.addEventListener("change", () => {
+    appFields.style.display = appActive.checked ? "flex" : "none";
+  });
+  document.getElementById("app-reset").addEventListener("click", () => {
+    appFond.value = APP_DEFAULTS.fond;
+    appPolice.value = APP_DEFAULTS.police;
+    appCadre.value = APP_DEFAULTS.cadre;
+  });
+
   goBtn.addEventListener("click", () => {
     const years = selectedValues(yearsBox, "year");
     const finess = selectedValues(finessBox, "finess");
@@ -487,6 +545,11 @@
       });
     }
 
+    const signalisation_couleur = document.getElementById("signalisation-couleur").checked;
+    const apparence = appActive.checked
+      ? { fond: appFond.value, police: appPolice.value, cadre: appCadre.value }
+      : {};
+
     msgBox.innerHTML = '<p class="spinner">Génération en cours…</p>';
     resultsBox.innerHTML = "";
     goBtn.disabled = true;
@@ -494,7 +557,7 @@
     fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ years, finess, axis, mois_fin, groupes_uf, selection_uf })
+      body: JSON.stringify({ years, finess, axis, mois_fin, groupes_uf, selection_uf, signalisation_couleur, apparence })
     })
       .then(r => r.json().then(body => ({ ok: r.ok, body })))
       .then(({ ok, body }) => {

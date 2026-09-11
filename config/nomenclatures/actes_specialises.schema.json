@@ -1,0 +1,15 @@
+{
+  "nomenclature": "actes_specialises",
+  "spec_source": "Fichier ATIH ACTES_listes_SPE.xlsx (annexe 4 du volume 3 du manuel de groupage GME) — feuilles 'total_liste' (acte -> liste de GN) et 'gn_liste' (GN -> liste), jointes au chargement pour produire directement des paires (GN, acte spécialisé).",
+  "table": "nomenclature_actes_specialises",
+  "natural_key": ["gn", "code_acte"],
+  "columns": [
+    {"name": "gn", "type": "TEXT", "note": "code GN (4 caractères, cf. _GME_CODE_LENGTH dans tableau_de_bord.py)"},
+    {"name": "code_acte", "type": "TEXT", "note": "code CSARR (ex. ALQ+001) ou CCAM (ex. AHQP002) marqueur de réadaptation spécialisée pour ce GN"},
+    {"name": "nomenclature", "type": "TEXT", "note": "CSARR ou CCAM"}
+  ],
+  "notes": [
+    "Sert à calculer le score de réadaptation SPÉCIALISÉE (Manuel des GME vol.1, ATIH, section 3.3.2) : seuls les actes de cette liste, pour le GN du séjour, comptent dans ce score — les autres actes CSARR/CCAM du séjour ne comptent que dans le score GLOBALE (tous actes confondus).",
+    "Les GN marqués 'PAS DE LISTE' dans la feuille gn_liste (ex. 0103, 0118, 0134...) n'ont aucune notion de réadaptation spécialisée — absents de cette table, donc leur score spécialisé est toujours 0/non applicable."
+  ]
+}

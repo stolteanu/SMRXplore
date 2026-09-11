@@ -58,12 +58,17 @@ _SOURCE_APP_FILES = {
     "plotly_viewer.html",
     "theme.js",
 }
-_SOURCE_APP_DIRS = {"lib"}
+_SOURCE_APP_DIRS = {"lib", "formula", "explorer"}
 
 MAX_ANNEES = 3
 
 _FINESS_RE = re.compile(r"^\d{9}$")
 _ANNEE_RE = re.compile(r"^\d{4}$")
+# Couleurs "apparence" insérées TELLES QUELLES dans un <style> du TDB généré
+# (voir render_dashboard._apparence_style) — validation stricte au format hex
+# obligatoire ici, sinon une valeur arbitraire du payload JSON s'injecterait
+# directement dans le CSS/HTML du fichier produit.
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _load_meta() -> dict:
@@ -83,6 +88,8 @@ def _generate(
     mois_fin: int | None = None,
     groupes_uf: dict[str, dict[str, list[str]]] | None = None,
     selection_uf: dict[str, list[str]] | None = None,
+    signalisation_couleur: bool = False,
+    apparence: dict | None = None,
 ) -> list[dict]:
     from src.viz.render_dashboard import generate_axis_reports, render, render_annexe, render_journal
     from src.viz.tableau_de_bord import build
@@ -99,7 +106,9 @@ def _generate(
         base = f"{finess}_{suffix}"
 
         tdb_path = GENERATED_DIR / f"tableau_de_bord_{base}.html"
-        tdb_path.write_text(render(data), encoding="utf-8")
+        tdb_path.write_text(
+            render(data, signalisation_couleur=signalisation_couleur, apparence=apparence), encoding="utf-8"
+        )
 
         annexe_path = GENERATED_DIR / f"annexe_{base}.html"
         annexe_path.write_text(render_annexe(data), encoding="utf-8")
@@ -124,7 +133,9 @@ def _generate(
             # générées — voir generate_axis_reports.
             groupes = (groupes_uf or {}).get(finess) if axis == "uf" else None
             selection = (selection_uf or {}).get(finess) if axis == "uf" else None
-            report["secondaires"] = generate_axis_reports(finess, years or None, axis, mois_fin, groupes, selection)
+            report["secondaires"] = generate_axis_reports(
+                finess, years or None, axis, mois_fin, groupes, selection, signalisation_couleur, apparence
+            )
 
         reports.append(report)
     return reports
@@ -405,7 +416,28 @@ class Handler(BaseHTTPRequestHandler):
                 if f not in finess_list or not isinstance(ufs, list) or not all(isinstance(u, str) for u in ufs):
                     raise ValueError("selection_uf invalide.")
 
-            reports = _generate(finess_list, years, axis, mois_fin, groupes_uf, selection_uf)
+            signalisation_couleur = bool(payload.get("signalisation_couleur"))
+            apparence_raw = payload.get("apparence") or {}
+            if not isinstance(apparence_raw, dict):
+                raise ValueError("apparence invalide.")
+            apparence: dict[str, str] = {}
+            for key in ("fond", "cadre"):
+                v = apparence_raw.get(key)
+                if v:
+                    if not isinstance(v, str) or not _HEX_COLOR_RE.match(v):
+                        raise ValueError(f"Couleur \"{key}\" invalide (format #rrggbb attendu).")
+                    apparence[key] = v
+            police = apparence_raw.get("police")
+            if police:
+                from src.viz.render_dashboard import FONT_CHOICES
+
+                if police not in FONT_CHOICES:
+                    raise ValueError("Police invalide.")
+                apparence["police"] = police
+
+            reports = _generate(
+                finess_list, years, axis, mois_fin, groupes_uf, selection_uf, signalisation_couleur, apparence
+            )
             self._send_json({"reports": reports})
         except Exception as exc:
             self._send_json({"error": str(exc)}, status=400)
