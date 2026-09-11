@@ -191,7 +191,8 @@
     <h2>Apparence du TDB (optionnel)</h2>
     <label class="chip"><input type="checkbox" id="app-active"> Personnaliser l'apparence de ce TDB</label>
     <div id="app-fields" class="apparence-row" style="display:none;">
-      <label>Couleur de fond<br><input type="color" id="app-fond" value="#f9f9f7"></label>
+      <label>Couleur de fond (page)<br><input type="color" id="app-fond" value="#f9f9f7"></label>
+      <label>Couleur du contenu (tableaux)<br><input type="color" id="app-contenu" value="#fcfcfb"></label>
       <label>Police<br>
         <select id="app-police">
           <option value="systeme">Système</option>
@@ -203,7 +204,7 @@
       <label>Couleur des cadres de section<br><input type="color" id="app-cadre" value="#2a78d6"></label>
       <button type="button" id="app-reset">Réinitialiser</button>
     </div>
-    <p class="hint">Décochez pour garder le thème habituel du TDB.</p>
+    <p class="hint">Décochez pour garder le thème habituel du TDB. Les regroupements de section et les lignes de total sont automatiquement affichés un peu plus foncés que la couleur de contenu choisie.</p>
   </div>
 
   <button id="go" disabled>Générer le(s) TDB</button>
@@ -504,23 +505,24 @@
   // tant que la personnalisation n'est pas activée, pour ne rien envoyer au
   // serveur (donc garder le thème par défaut) si l'utilisateur ne touche à
   // rien. Valeurs par défaut des sélecteurs = thème habituel du TDB.
-  const APP_DEFAULTS = { fond: "#f9f9f7", police: "systeme", cadre: "#2a78d6" };
+  const APP_DEFAULTS = { fond: "#f9f9f7", contenu: "#fcfcfb", police: "systeme", cadre: "#2a78d6" };
   const appActive = document.getElementById("app-active");
   const appFields = document.getElementById("app-fields");
   const appFond = document.getElementById("app-fond");
+  const appContenu = document.getElementById("app-contenu");
   const appPolice = document.getElementById("app-police");
   const appCadre = document.getElementById("app-cadre");
-  appFond.value = APP_DEFAULTS.fond;
-  appPolice.value = APP_DEFAULTS.police;
-  appCadre.value = APP_DEFAULTS.cadre;
+  function resetAppFields() {
+    appFond.value = APP_DEFAULTS.fond;
+    appContenu.value = APP_DEFAULTS.contenu;
+    appPolice.value = APP_DEFAULTS.police;
+    appCadre.value = APP_DEFAULTS.cadre;
+  }
+  resetAppFields();
   appActive.addEventListener("change", () => {
     appFields.style.display = appActive.checked ? "flex" : "none";
   });
-  document.getElementById("app-reset").addEventListener("click", () => {
-    appFond.value = APP_DEFAULTS.fond;
-    appPolice.value = APP_DEFAULTS.police;
-    appCadre.value = APP_DEFAULTS.cadre;
-  });
+  document.getElementById("app-reset").addEventListener("click", resetAppFields);
 
   goBtn.addEventListener("click", () => {
     const years = selectedValues(yearsBox, "year");
@@ -547,7 +549,7 @@
 
     const signalisation_couleur = document.getElementById("signalisation-couleur").checked;
     const apparence = appActive.checked
-      ? { fond: appFond.value, police: appPolice.value, cadre: appCadre.value }
+      ? { fond: appFond.value, contenu: appContenu.value, police: appPolice.value, cadre: appCadre.value }
       : {};
 
     msgBox.innerHTML = '<p class="spinner">Génération en cours…</p>';

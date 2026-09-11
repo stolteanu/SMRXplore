@@ -421,7 +421,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(apparence_raw, dict):
                 raise ValueError("apparence invalide.")
             apparence: dict[str, str] = {}
-            for key in ("fond", "cadre"):
+            for key in ("fond", "contenu", "cadre"):
                 v = apparence_raw.get(key)
                 if v:
                     if not isinstance(v, str) or not _HEX_COLOR_RE.match(v):

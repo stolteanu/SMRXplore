@@ -95,13 +95,18 @@ FONT_CHOICES = {
 
 def _apparence_style(apparence: dict | None) -> str:
     """Option avant génération (2026-09-12, demande utilisateur) : personnalise
-    la couleur de fond de page, la police et la couleur des cadres de section
-    d'un TDB, sans toucher au thème par défaut des autres documents (annexe,
-    journal, autres TDB). Clés optionnelles de `apparence` : "fond" (couleur
-    hex), "police" (une clé de FONT_CHOICES), "cadre" (couleur hex). Rendu en
-    <style> à l'intérieur même du corps du TDB (pas dans STYLE_BLOCK, partagé
-    avec l'annexe/le journal). `!important` sur chaque propriété : nécessaire
-    car les règles de thème clair/sombre de STYLE_BLOCK (ex.
+    la couleur de fond de page, la couleur de contenu (tableaux), la police et
+    la couleur des cadres de section d'un TDB, sans toucher au thème par
+    défaut des autres documents (annexe, journal, autres TDB). Clés
+    optionnelles de `apparence` : "fond" (couleur hex, fond de PAGE),
+    "contenu" (couleur hex, fond des TABLEAUX/cartes — cf. correctif
+    2026-09-12 : par défaut = "fond" lui-même, PAS un mélange à 95 % blanc
+    comme la 1ʳᵉ version, qui rendait tout le contenu quasi blanc quelle que
+    soit la couleur de fond choisie), "police" (une clé de FONT_CHOICES),
+    "cadre" (couleur hex, cadres/en-têtes de section). Rendu en <style> à
+    l'intérieur même du corps du TDB (pas dans STYLE_BLOCK, partagé avec
+    l'annexe/le journal). `!important` sur chaque propriété : nécessaire car
+    les règles de thème clair/sombre de STYLE_BLOCK (ex.
     `:root[data-theme="dark"] .viz-root`) ont une spécificité CSS plus forte
     qu'un simple `.viz-root` et gagneraient sinon quel que soit le thème
     choisi par l'utilisateur — même technique que le bloc @media print de
@@ -109,11 +114,22 @@ def _apparence_style(apparence: dict | None) -> str:
     if not apparence:
         return ""
     rules = []
-    if apparence.get("fond"):
-        fond = apparence["fond"]
+    fond = apparence.get("fond")
+    contenu = apparence.get("contenu") or fond
+    if fond:
+        rules.append(f".viz-root {{ --page:{fond} !important; }}")
+    if contenu:
+        rules.append(f".viz-root {{ --surface:{contenu} !important; }}")
+        # Regroupements de section (ex. "Type de rééducation (GR)") et lignes
+        # de total : un peu plus FONCÉS que le contenu courant plutôt que de
+        # garder l'ancienne teinte fixe du thème par défaut (--grid), qui
+        # jurait avec une couleur personnalisée — demande utilisateur
+        # 2026-09-12.
+        group_bg = f"color-mix(in srgb, #000 14%, {contenu})"
         rules.append(
-            f".viz-root {{ --page:{fond} !important; "
-            f"--surface:color-mix(in srgb, {fond} 5%, #fff) !important; }}"
+            f".viz-root table tr.group-row td, "
+            f".viz-root table tfoot td, .viz-root table tfoot th, "
+            f".viz-root table tr.total-row td {{ background:{group_bg} !important; }}"
         )
     police = FONT_CHOICES.get(apparence.get("police", ""))
     if police:
@@ -904,8 +920,10 @@ def render(
                     cells += _cell2(
                         fmt(d["valorisation"], 2, " €"), d["pct_valorisation"], d["valorisation"], dp and dp["valorisation"]
                     )
-                label = f"<b>{row['libelle']}</b>" if row["code"] is None else f"{row['code']} — {row['libelle']}"
-                html += f"<tr><td>{label}</td>{cells}</tr>"
+                is_total = row["code"] is None
+                label = f"<b>{row['libelle']}</b>" if is_total else f"{row['code']} — {row['libelle']}"
+                row_class = ' class="total-row"' if is_total else ""
+                html += f"<tr{row_class}><td>{label}</td>{cells}</tr>"
             return html
 
         rows_html = block_rows(structure["gr"]) + block_rows(structure["gl"]) + block_rows(structure["sev"])
@@ -1168,11 +1186,18 @@ STYLE_BLOCK = """
   table th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--ink); font-weight: 700; text-align: center; }
   table thead tr:last-child th { border-bottom: 2.5px solid var(--ink); }
   table tbody tr:last-child td { border-bottom: none; }
-  table tfoot td, table tfoot th { font-weight: 700; border-top: 2.5px solid var(--ink); border-bottom: none; }
+  /* Lignes de total (tfoot ou .total-row, ex. "Sous-total" section 9) : fond
+     un peu plus FONCÉ que le contenu courant (pas juste --surface, sinon
+     elles se fondent dans le reste du tableau) — même traitement que les
+     regroupements de section ci-dessous, demande utilisateur 2026-09-12. */
+  table tfoot td, table tfoot th, table tr.total-row td {
+    font-weight: 700; border-top: 2.5px solid var(--ink); border-bottom: none;
+    background: color-mix(in srgb, #000 14%, var(--surface));
+  }
   .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 4px 6px; }
   .table-wrap + .table-wrap { margin-top: 14px; }
   table caption { caption-side: top; text-align: left; font-size: 12px; font-weight: 700; color: var(--ink); padding: 6px 4px 8px; }
-  table tr.group-row td { background: var(--grid); text-align: left; font-size: 12px; }
+  table tr.group-row td { background: color-mix(in srgb, #000 14%, var(--surface)); text-align: left; font-size: 12px; }
   table td .pct { display: block; font-size: 0.82em; color: var(--muted); margin-top: 1px; }
 
   .legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); margin: 0 0 6px; }
