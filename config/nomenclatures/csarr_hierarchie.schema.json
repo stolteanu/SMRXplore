@@ -1,0 +1,15 @@
+{
+  "nomenclature": "csarr_hierarchie",
+  "spec_source": "Fichier complémentaire CSARR (ATIH), feuille CSARR_2026_avec_infos — lignes TypeLigne='T' : chaque CodeHier (chapitre/sous-chapitre/paragraphe/sous-paragraphe) porte directement son libellé sur sa propre ligne de titre",
+  "table": "nomenclature_csarr_hierarchie",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "CodeHier, format numérique pointé (ex. '07', '07.01', '07.01.01', '07.01.01.02')"},
+    {"name": "kind", "type": "TEXT", "modalite": {"chapitre": "1 segment", "sous_chapitre": "2 segments", "paragraphe": "3 segments", "sous_paragraphe": "4 segments"}},
+    {"name": "parent_code", "type": "TEXT", "note": "NULL pour un chapitre ; sinon le code obtenu en retirant le dernier segment"},
+    {"name": "libelle", "type": "TEXT"}
+  ],
+  "notes": [
+    "Contient aussi le chapitre '00' (Introduction/présentation du catalogue), qui ne porte aucun acte — gardé tel quel, sans traitement spécial."
+  ]
+}

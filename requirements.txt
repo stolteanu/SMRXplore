@@ -1,0 +1,8 @@
+# Parseur et stockage : bibliothèque standard uniquement.
+# openpyxl : lecture de fichiers .xlsx (src/tarifs/gmt.py — grille tarifaire
+# GMT, chargée par run.py au bouton "Mettre à jour" de l'admin web ; aussi
+# utilisé par les outils de maintenance des nomenclatures, tools/charger_nomenclatures.py).
+# Runtime réel, pas juste un outil de dev — doit être installé avant tout
+# build PyInstaller (voir requirements-dev.txt et .github/workflows/build-smrxplore.yml),
+# sinon l'exécutable produit plante au premier chargement de fichier xlsx.
+openpyxl

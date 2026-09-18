@@ -1,0 +1,14 @@
+{
+  "nomenclature": "csar",
+  "spec_source": "Fichier associé CSAR (ATIH), feuille actes_CSAR (Code_CSAR, Libelle_CSAR, Exclusions — seules code+libellé sont gardés)",
+  "table": "nomenclature_csar",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "code CSAR 5 caractères : 2 chiffres (chapitre) + 1 lettre (E=évaluation, S=séance, M=mise à disposition d'appareillage, P=préparation/suivi de dossier) + 2 chiffres (compteur)"},
+    {"name": "libelle", "type": "TEXT"},
+    {"name": "parent_code", "type": "TEXT", "note": "chapitre = 2 premiers caractères du code (ex. '01'), référence nomenclature_csar_hierarchie.code"}
+  ],
+  "notes": [
+    "146 actes au total (v2026), issus d'une simplification/regroupement du CSARR (512 actes)."
+  ]
+}

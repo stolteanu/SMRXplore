@@ -1,0 +1,15 @@
+{
+  "nomenclature": "ccam_hierarchie",
+  "spec_source": "Fichier complémentaire CCAM descriptive à usage PMSI (ATIH), feuille CCAM_Final_2026 — colonnes 'N°/Titre 1e à 4e subdivision' (chapitre/sous-chapitre/paragraphe/sous-paragraphe), déjà fournies en clair sur chaque ligne d'acte",
+  "table": "nomenclature_ccam_hierarchie",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "code de subdivision, format numérique pointé (ex. '04', '04.01', '04.01.07', '04.01.07.02')"},
+    {"name": "kind", "type": "TEXT", "modalite": {"chapitre": "1e subdivision (2 chiffres, ex. 04)", "sous_chapitre": "2e subdivision (ex. 04.01)", "paragraphe": "3e subdivision (ex. 04.01.07)", "sous_paragraphe": "4e subdivision, optionnelle (ex. 04.01.07.02)"}},
+    {"name": "parent_code", "type": "TEXT", "note": "NULL pour un chapitre ; sinon le code du niveau immédiatement supérieur"},
+    {"name": "libelle", "type": "TEXT"}
+  ],
+  "notes": [
+    "Contrairement à CIM-10/ClaML, pas de fichier séparé à réconcilier : le fichier complémentaire CCAM porte déjà le chapitre/sous-chapitre/paragraphe/sous-paragraphe de chaque acte en clair sur la même ligne — le loader construit la hiérarchie en dédupliquant ces 4 colonnes plutôt qu'en dérivant des chapitres/blocs par préfixe."
+  ]
+}

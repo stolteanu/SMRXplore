@@ -1,0 +1,14 @@
+{
+  "nomenclature": "csarr_intervenants",
+  "spec_source": "Liste des intervenants CSARR (fournie par l'utilisateur, transcrite manuellement dans un CSV — absente de tout fichier structuré ATIH)",
+  "table": "nomenclature_csarr_intervenants",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "code intervenant à 2 chiffres (ex. '22' = MASSEUR KINÉSITHÉRAPEUTE)"},
+    {"name": "libelle", "type": "TEXT", "note": "profession de l'intervenant ayant réalisé l'acte"}
+  ],
+  "notes": [
+    "Contrairement à la liste CSAR (34 codes, incl. 80/81/88 pour 'Autre'), la liste CSARR ne compte que 32 codes et n'a pas de distinction 80/81 : seul le code 88 ('AUTRE INTERVENANT') existe.",
+    "Un numéro de page isolé ('39') présent dans le texte source collé par l'utilisateur a été identifié et exclu — ce n'est pas un code intervenant."
+  ]
+}

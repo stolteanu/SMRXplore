@@ -1,0 +1,98 @@
+{
+  "format": "RHS_groupe",
+  "spec_source": "input/formats/formats_ssr2021_0.xlsx (feuille 'RHS groupé', spécification 2021, versions M1B/M0B) — dérivé le 2026-08-24 pour décoder des lignes M1B trouvées sur un établissement réel (bug WEB100T : rétrograde des séjours HTP ouverts depuis 2020-2021 jusqu'au format de leur ouverture).",
+  "record_length_formula": "186 + 8*n1 + 35*n2 + 23*n4 (vérifié : les 6 longueurs réelles distinctes observées — 232/283/291/316/253 — se décomposent toutes en entiers n1/n2/n4 ≥ 0 valides selon cette formule ; pas de bloc CSAR, comme M1C)",
+  "version_field": {"start": 11, "end": 13, "values": ["M1B"]},
+  "note": "Schéma de PARSING uniquement. Quasi identique à rhs_groupe_m1c.schema.json, décalé de 1 position à partir de code_gme car ce dernier ne fait ici que 6 caractères (pas encore de dimension GL/niveau de lourdeur dans la classification 2021 — code_gme = CM(2)+GN(2)+GR/Subdivision(1)+Sévérité(1), une décomposition à 4 sous-champs dans le xlsx source, stockée ici en un seul champ atomique comme pour les autres variantes). Champ 'Finalité principale de prise en charge' (144-151) existait déjà en 2021 mais est un filler dans M1C/M1D — nommé explicitement ici, non repris dans la table canonique (ignoré silencieusement à l'insertion, comme tout champ absent du schéma canonique — cf. run.py merge_schemas_for_format). Blocs DAS/CSARR/CCAM identiques champ pour champ à M1C (noms de champs réutilisés à l'identique pour rester dans les mêmes colonnes SQLite).",
+  "fixed_block": [
+    {"name": "filler_1", "start": 1, "end": 10, "len": 10, "type": "A*", "required": "F"},
+    {"name": "version_format_rhs_groupe", "start": 11, "end": 13, "len": 3, "type": "A", "required": "O", "modalite": "valeur fixe, M1B"},
+    {"name": "finess_epmsi", "start": 14, "end": 22, "len": 9, "type": "A", "required": "O"},
+    {"name": "version_format_rhs", "start": 23, "end": 25, "len": 3, "type": "A", "required": "O", "modalite": "valeur fixe, M0B"},
+    {"name": "numero_sejour_smr", "start": 26, "end": 32, "len": 7, "type": "A*", "required": "O"},
+    {"name": "numero_admin_sejour", "start": 33, "end": 52, "len": 20, "type": "A*", "required": "O"},
+
+    {"name": "version_classification", "start": 53, "end": 54, "len": 2, "type": "A", "required": "O", "note": "détermine la nomenclature GME applicable"},
+    {"name": "code_gme", "start": 55, "end": 60, "len": 6, "type": "A", "required": "O", "note": "6 caractères en 2021 (pas de dimension GL), contre 7 depuis. Décomposé dans le xlsx source en CM(2)/GN(2)/Subdivision-GR(1)/Sévérité(1)."},
+    {"name": "code_retour_groupage", "start": 61, "end": 63, "len": 3, "type": "A", "required": "O"},
+    {"name": "indicateur_erreur", "start": 64, "end": 64, "len": 1, "type": "A", "required": "O"},
+
+    {"name": "date_debut_sejour", "start": 65, "end": 72, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+    {"name": "date_fin_sejour", "start": 73, "end": 80, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "C"},
+    {"name": "date_naissance", "start": 81, "end": 88, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+    {"name": "sexe", "start": 89, "end": 89, "len": 1, "type": "A", "required": "O", "modalite": {"1": "homme", "2": "femme", "3": "indéterminé"}},
+    {"name": "code_postal_residence", "start": 90, "end": 94, "len": 5, "type": "A", "required": "O"},
+    {"name": "type_hospitalisation", "start": 95, "end": 95, "len": 1, "type": "A", "required": "O", "modalite": {"1": "complète", "2": "partielle de jour", "3": "partielle de nuit", "4": "séances"}},
+    {"name": "date_entree_um", "start": 96, "end": 103, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+    {"name": "mode_entree_um", "start": 104, "end": 104, "len": 1, "type": "A", "required": "O"},
+    {"name": "provenance", "start": 105, "end": 105, "len": 1, "type": "A*", "required": "C"},
+    {"name": "date_sortie_um", "start": 106, "end": 113, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "C"},
+    {"name": "mode_sortie", "start": 114, "end": 114, "len": 1, "type": "A", "required": "C"},
+    {"name": "destination", "start": 115, "end": 115, "len": 1, "type": "A*", "required": "C"},
+    {"name": "numero_semaine", "start": 116, "end": 121, "len": 6, "type": "A", "format": "N° semaine ISO8601 (2) + Année (4)", "required": "O"},
+    {"name": "jours_hors_weekend", "start": 122, "end": 126, "len": 5, "type": "A", "required": "O"},
+    {"name": "jours_weekend", "start": 127, "end": 128, "len": 2, "type": "A", "required": "O"},
+    {"name": "numero_unite_medicale", "start": 129, "end": 132, "len": 4, "type": "A*", "required": "O"},
+    {"name": "type_autorisation_um", "start": 133, "end": 135, "len": 3, "type": "A", "required": "O"},
+    {"name": "date_intervention_chirurgicale", "start": 136, "end": 143, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "C"},
+    {"name": "filler_2", "start": 144, "end": 151, "len": 8, "type": "A*", "required": "F", "note": "Nommé 'Finalité principale de prise en charge' dans le xlsx 2021 mais gardé en filler_2 (comme M1C/M1D) pour éviter une colonne SQLite supplémentaire pour un champ non exploité ailleurs."},
+    {"name": "manifestation_morbide_principale", "start": 152, "end": 159, "len": 8, "type": "A*", "ref": "CIM10-PMSI-FR", "required": "O"},
+    {"name": "affection_etiologique", "start": 160, "end": 167, "len": 8, "type": "A*", "ref": "CIM10-PMSI-FR", "required": "C"},
+
+    {"name": "dependance_habillage_toilette", "start": 168, "end": 168, "len": 1, "type": "A*", "required": "C"},
+    {"name": "dependance_deplacement", "start": 169, "end": 169, "len": 1, "type": "A*", "required": "C"},
+    {"name": "dependance_alimentation", "start": 170, "end": 170, "len": 1, "type": "A*", "required": "C"},
+    {"name": "dependance_continence", "start": 171, "end": 171, "len": 1, "type": "A*", "required": "C"},
+    {"name": "dependance_comportement", "start": 172, "end": 172, "len": 1, "type": "A*", "required": "C"},
+    {"name": "dependance_relation", "start": 173, "end": 173, "len": 1, "type": "A*", "required": "C"},
+
+    {"name": "n1_nb_das", "start": 174, "end": 175, "len": 2, "type": "N", "required": "O", "range": "[00-99]"},
+    {"name": "n2_nb_csarr", "start": 176, "end": 178, "len": 3, "type": "N", "required": "O", "range": "[000-999]"},
+    {"name": "n4_nb_ccam", "start": 179, "end": 180, "len": 2, "type": "N", "required": "O", "range": "[00-99]", "note": "appelé 'n3' dans le xlsx 2021 (pas encore de CSAR) — nommé n4_nb_ccam ici pour rester dans la même colonne SQLite que M1C/M1D"},
+
+    {"name": "poursuite_projet_therapeutique", "start": 181, "end": 181, "len": 1, "type": "A*", "required": "C"},
+    {"name": "filler_3", "start": 182, "end": 182, "len": 1, "type": "A*", "required": "F"},
+    {"name": "lits_places_dedies", "start": 183, "end": 184, "len": 2, "type": "A*", "required": "F"},
+    {"name": "type_unite_specifique", "start": 185, "end": 186, "len": 2, "type": "A*", "required": "F"}
+  ],
+  "repeated_blocks": [
+    {
+      "name": "DAS", "counter_field": "n1_nb_das", "block_len": 8,
+      "fields": [{"name": "code_das", "start": 1, "end": 8, "len": 8, "type": "A*", "ref": "CIM10-PMSI-FR", "required": "O pour DAS n°1, C ensuite"}]
+    },
+    {
+      "name": "CSARR", "counter_field": "n2_nb_csarr", "block_len": 35,
+      "fields": [
+        {"name": "code_principal", "start": 1, "end": 7, "len": 7, "type": "A*", "ref": "CSARR", "required": "O"},
+        {"name": "code_suppl_appareillage", "start": 8, "end": 10, "len": 3, "type": "A*", "required": "C"},
+        {"name": "code_modulateur_lieu", "start": 11, "end": 12, "len": 2, "type": "A*", "required": "F"},
+        {"name": "code_modulateur_patient", "start": 13, "end": 14, "len": 2, "type": "A*", "required": "F"},
+        {"name": "code_modulateur_technicite", "start": 15, "end": 16, "len": 2, "type": "A*", "required": "F"},
+        {"name": "code_intervenant", "start": 17, "end": 18, "len": 2, "type": "A*", "required": "O"},
+        {"name": "module_niveau_technicite", "start": 19, "end": 19, "len": 1, "type": "A*", "required": "C"},
+        {"name": "nombre_realisations", "start": 20, "end": 21, "len": 2, "type": "N", "required": "O"},
+        {"name": "date_realisation", "start": 22, "end": 29, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+        {"name": "nombre_reel_patients", "start": 30, "end": 31, "len": 2, "type": "N", "required": "O"},
+        {"name": "nombre_intervenants", "start": 32, "end": 33, "len": 2, "type": "N", "required": "C"},
+        {"name": "extension_documentaire", "start": 34, "end": 35, "len": 2, "type": "A*", "required": "F"}
+      ]
+    },
+    {
+      "name": "CCAM", "counter_field": "n4_nb_ccam", "block_len": 23,
+      "fields": [
+        {"name": "date_realisation", "start": 1, "end": 8, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+        {"name": "code_ccam", "start": 9, "end": 15, "len": 7, "type": "A", "required": "O"},
+        {"name": "extension_pmsi", "start": 16, "end": 18, "len": 3, "type": "A**", "required": "C"},
+        {"name": "code_phase", "start": 19, "end": 19, "len": 1, "type": "A*", "required": "O"},
+        {"name": "code_activite", "start": 20, "end": 20, "len": 1, "type": "A*", "required": "O"},
+        {"name": "extension_documentaire", "start": 21, "end": 21, "len": 1, "type": "A*", "required": "C"},
+        {"name": "nombre_realisations", "start": 22, "end": 23, "len": 2, "type": "N", "required": "O"}
+      ]
+    }
+  ],
+  "validation_notes": [
+    "9/9 lignes M1B présentes dans un fichier réel (3 séjours) valident la formule 186+8n1+35n2+23n4 avec des n1/n2/n4 entiers ≥0 cohérents pour chacune des 6 longueurs distinctes observées (232/283/291/316/253).",
+    "code_gme observé sur ces lignes = '9096Z0' (placeholder d'erreur de groupage, cf. pmsi_smr_regroupement_hierarchique_gme_csarr_cim10) avec code_retour_groupage 051/054 et indicateur_erreur='X' — cohérent avec le bug WEB100T déjà documenté (pmsi_smr_ecart_ovalide_htp_transmission), pas des séjours groupés normalement.",
+    "finess_epmsi et numero_admin_sejour cohérents confirmés par comparaison avec le fichier M01-2026 (transmission antérieure au bug, mêmes séjours en format M1D propre)."
+  ]
+}

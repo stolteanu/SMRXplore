@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<script src="theme.js"></script>
+<meta charset="UTF-8">
+<meta name="color-scheme" content="light dark">
+<title>Graphique interactif — PMSI-SMR</title>
+<style>
+  /* Même motif à 3 états que explorateur.html (cf. son commentaire) — le graphique Plotly lui-même
+     (WebGL/Canvas, pas SVG) garde ses couleurs d'origine : seul le chrome de la page (en-tête,
+     panneaux) suit le thème clair/sombre/système. */
+  :root {
+    --bleu: #1a5276; --bordure: #d5dbdb; --gris: #7f8c8d; --texte: #212f3c;
+    --page: #f4f6f7; --surface: #ffffff; --danger: #c0392b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bordure: #3a4147; --texte: #e8ecef; --gris: #9aa5ab;
+      --page: #14181a; --surface: #1e2427; --danger: #e57368;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bordure: #3a4147; --texte: #e8ecef; --gris: #9aa5ab;
+    --page: #14181a; --surface: #1e2427; --danger: #e57368;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; padding: 0; background: var(--page); color: var(--texte); }
+  header { background: var(--bleu); color: #fff; padding: 12px 22px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 1.15em; }
+  header p { margin: 4px 0 0; font-size: 0.82em; opacity: 0.9; }
+  main { max-width: 1400px; margin: 18px auto; padding: 0 16px 50px; }
+  .meta-line { font-size: 0.85em; color: var(--gris); margin-bottom: 16px; }
+  .fig-panel { background: var(--surface); border: 1px solid var(--bordure); border-radius: 6px; padding: 14px; margin-bottom: 18px; }
+  .fig-panel h3 { margin: 0 0 8px; font-size: 0.95em; color: var(--bleu); text-align: center; }
+  .fig-plot { width: 100%; }
+  #status { font-size: 0.9em; color: var(--danger); padding: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 id="pageTitle">Graphique interactif</h1>
+    <p>Zoom (glisser-sélectionner), pan, survol pour le détail, clic sur la légende pour isoler une série, icône appareil photo pour exporter en PNG.</p>
+  </div>
+  <div id="themeModeToggle" style="color:#fff;"></div>
+</header>
+<main>
+  <div class="meta-line" id="metaLine"></div>
+  <div id="figs"></div>
+  <div id="status"></div>
+</main>
+<script src="lib/plotly.min.js"></script>
+<script>
+(function () {
+  var raw = sessionStorage.getItem("pmsiPlotlySpec");
+  if (!raw) {
+    document.getElementById("status").textContent = "Aucune donnée reçue — relancez depuis l'explorateur (bouton « Ouvrir en interactif »).";
+    return;
+  }
+  var spec;
+  try { spec = JSON.parse(raw); } catch (e) {
+    document.getElementById("status").textContent = "Données invalides : " + e.message;
+    return;
+  }
+  document.title = (spec.title || "Graphique interactif") + " — PMSI-SMR";
+  document.getElementById("pageTitle").textContent = spec.title || "Graphique interactif";
+  document.getElementById("metaLine").textContent = spec.meta || "";
+
+  var figsEl = document.getElementById("figs");
+  var figures = spec.figures || [];
+  if (!figures.length) {
+    document.getElementById("status").textContent = "Aucune vignette à afficher.";
+    return;
+  }
+  var config = { responsive: true, displaylogo: false, locale: "fr" };
+  figures.forEach(function (fig, i) {
+    var panel = document.createElement("div");
+    panel.className = "fig-panel";
+    if (fig.label) {
+      var h = document.createElement("h3");
+      h.textContent = fig.label;
+      panel.appendChild(h);
+    }
+    var plotDiv = document.createElement("div");
+    plotDiv.className = "fig-plot";
+    plotDiv.id = "plot" + i;
+    panel.appendChild(plotDiv);
+    figsEl.appendChild(panel);
+    Plotly.newPlot(plotDiv, fig.data, fig.layout || {}, config);
+  });
+})();
+</script>
+<script>PmsiTheme.mount(document.getElementById("themeModeToggle"));</script>
+</body>
+</html>

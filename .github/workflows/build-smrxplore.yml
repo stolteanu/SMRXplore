@@ -1,0 +1,111 @@
+name: Build SMRXplore (multiplateforme)
+
+# Construit SMRXplore.exe/SMRXplore pour Windows, Linux, macOS Apple Silicon
+# (arm64) et macOS Intel (x86_64, runner macos-15-intel — macos-13 retiré
+# par GitHub début décembre 2025 ; macos-15-intel est la dernière image
+# Intel prévue, jusqu'à août 2027) — 2 binaires macOS distincts, PyInstaller
+# ne fait pas de compilation croisée ni de binaire universel2 par défaut.
+# Déclenchement MANUEL uniquement (ou sur un tag vX.Y.Z) — jamais à chaque
+# push, conformément à la règle "SMRXplore = branche de déploiement,
+# reconstruite sur demande uniquement" (voir mémoire du projet).
+#
+# Sur un tag vX.Y.Z : publie en plus les 3 binaires sur la Release GitHub
+# correspondante (créée si absente) — jusqu'ici la Release ne contenait que
+# SMRXplore.exe (uploadé à la main), les binaires Linux/macOS n'y étaient
+# jamais attachés.
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # requis par softprops/action-gh-release pour publier sur la Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: SMRXplore.exe
+            release_name: SMRXplore-windows.exe
+            artifact_label: windows
+          - os: ubuntu-latest
+            artifact_name: SMRXplore
+            release_name: SMRXplore-linux.zip
+            artifact_label: linux
+          - os: macos-latest
+            artifact_name: SMRXplore
+            release_name: SMRXplore-macos-arm64.zip
+            artifact_label: macos-arm64
+          - os: macos-15-intel
+            artifact_name: SMRXplore
+            release_name: SMRXplore-macos-intel.zip
+            artifact_label: macos-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer les dépendances (runtime + build)
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Construire SMRXplore
+        run: python tools/deployer_smrxplore.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SMRXplore-${{ matrix.artifact_label }}
+          path: SMRXPLORE/${{ matrix.artifact_name }}
+          retention-days: 1  # un seul build à garder (espace de stockage limité) — la
+          # release GitHub, pas cet artefact de run, est la vraie distribution durable
+
+      # Copie/empaquette sous un nom distinct par plateforme (l'artefact
+      # ci-dessus garde le nom d'origine SMRXplore/SMRXplore.exe, pratique
+      # pour un usage local ; la Release a besoin de 4 noms de fichiers
+      # différents pour ne pas s'écraser entre eux une fois attachés côte à
+      # côte). Sur Linux/macOS : zip plutôt que fichier brut — un
+      # téléchargement de navigateur ne préserve jamais le bit exécutable
+      # Unix, mais l'utilitaire d'extraction natif (Archive/Finder) le
+      # restaure correctement depuis un zip où il a déjà été posé ici.
+      # Découvert le 2026-09-03 : un utilisateur final ne peut pas faire
+      # `chmod +x` lui-même, donc ce n'était pas une option.
+      - name: Préparer l'asset de release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          if [ "${{ matrix.artifact_label }}" = "windows" ]; then
+            cp "SMRXPLORE/${{ matrix.artifact_name }}" "${{ matrix.release_name }}"
+          else
+            chmod +x "SMRXPLORE/${{ matrix.artifact_name }}"
+            zip -j "${{ matrix.release_name }}" "SMRXPLORE/${{ matrix.artifact_name }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: release-asset-${{ matrix.artifact_label }}
+          path: ${{ matrix.release_name }}
+          retention-days: 1  # jetable : ne sert qu'à faire transiter le fichier vers le
+          # job "release" ci-dessous, dans le même run
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-asset-*
+          path: assets
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          fail_on_unmatched_files: true

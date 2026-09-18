@@ -1,0 +1,1701 @@
+"""Calcule les agrégats du 'tableau de bord PMSI' (façon export ATIH existant),
+sur la base des seules données RHS groupé + VID-HOSP en base SQLite.
+
+Sections volontairement absentes : Score RR, Valorisation (PMCT/PMST/PMJT/VALO),
+COEFF SPEC — elles nécessitent un barème CSARR et une grille tarifaire externes
+que le projet n'a pas (choix explicite de l'utilisateur : on les laisse de côté).
+
+Comparaison par PÉRIODES comparables (semaines 01..N), pas par année civile brute :
+un fichier de transmission contient toujours le séjour COMPLET (donc, pour un
+séjour à cheval, des semaines d'une année antérieure), mais les statistiques ne
+doivent porter que sur la période demandée (ex. "M01 à M04" = semaines ISO 1 à 18).
+Pour comparer plusieurs années sur cette même période relative (comme le tableau
+de bord ATIH de référence), on prend la même plage de semaines (1..max_week, où
+max_week vient de l'année la plus récente) pour chaque année qui couvre bien le
+début de cette période. Une année dont les données ne remontent pas au moins à la
+semaine 1 ou 2 n'est que le reliquat d'un séjour à cheval (queue d'une transmission
+précédente) et est exclue — ce n'est pas une vraie période comparable.
+- compute_reporting_periods() : liste des périodes comparables réellement
+  disponibles dans les données (une par année qualifiante).
+- Patients : calculé UNIQUEMENT à partir de VID-HOSP (pas de jointure RHS), en
+  comptant un patient (numero_ipp — pas numero_immatriculation_assure, qui est
+  le NIR de l'ASSURÉ et peut être celui d'un tiers, ex. conjoint) dès que son
+  séjour [date_entree, date_sortie] chevauche la période considérée (un séjour
+  à cheval sur deux périodes compte dans chacune, ce qui est normal pour une
+  comparaison année sur année).
+"""
+from __future__ import annotations
+
+import datetime
+import sqlite3
+
+from src.viz.valorisation import _norm_numadmin
+
+from src.util.paths import project_root
+
+DB_PATH = project_root() / "data/processed/pmsi.db"
+
+def _load_intervenant_labels(conn: sqlite3.Connection) -> dict[str, str]:
+    """Nomenclature complète (32 codes) issue de `nomenclature_csarr_intervenants`
+    — remplace un dictionnaire codé en dur qui ne couvrait que 8 professions et
+    laissait des codes bruts non résolus (ex. 10, 33, 69, 88) dans le tableau
+    de bord. Le CSV source est en MAJUSCULES (ex. "MASSEUR KINÉSITHÉRAPEUTE") ;
+    `.capitalize()` (1ʳᵉ lettre en majuscule, reste en minuscules) donne la
+    même forme que l'ancien dictionnaire codé en dur pour tous les codes qui s'y
+    trouvaient déjà (vérifié terme à terme le 2026-07-30)."""
+    rows = conn.execute("SELECT code, libelle FROM nomenclature_csarr_intervenants").fetchall()
+    return {r["code"]: r["libelle"].capitalize() for r in rows}
+
+
+def _count_present_days(rhs_row: sqlite3.Row) -> int:
+    days = (rhs_row["jours_hors_weekend"] or "") + (rhs_row["jours_weekend"] or "")
+    return days.count("1")
+
+
+def connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _last_week_of_month(year: int, month: int) -> int:
+    """Numéro de la dernière semaine ISO de `year` rattachée au mois calendaire `month`.
+
+    Convention ATIH (identique à celle de l'année ISO) : une semaine appartient au
+    mois qui contient son JEUDI. Vérifié empiriquement contre le tableau de bord de
+    référence : en 2025, M01 se termine semaine 05 (jeudi 30/01), M02 semaine 09
+    (jeudi 27/02), M03 semaine 13 (jeudi 27/03), M04 semaine 17 (jeudi 24/04) — la
+    semaine 18 (jeudi 01/05) appartient déjà à M05.
+    """
+    last = None
+    week = 1
+    while week <= 53:
+        try:
+            thursday = datetime.date.fromisocalendar(year, week, 4)
+        except ValueError:
+            break
+        if thursday.month > month:
+            break
+        if thursday.month == month:
+            last = week
+        week += 1
+    return last
+
+
+def compute_reporting_periods(
+    conn: sqlite3.Connection,
+    finess: str,
+    years: list[str] | None = None,
+    mois_fin: int | None = None,
+) -> list[dict]:
+    """Détermine les périodes de reporting COMPARABLES à partir des numero_semaine présents.
+
+    La période cible est l'année ISO la plus récente présente (semaine 1 -> dernière
+    semaine ISO présente), dont on déduit le MOIS calendaire de reporting via la règle
+    du jeudi (voir _last_week_of_month). Pour chaque AUTRE année présente, on calcule
+    la semaine de fin ÉQUIVALENTE pour ce même mois calendaire — les semaines ISO ne
+    s'alignent pas identiquement d'une année sur l'autre (ex. fin avril tombe en
+    semaine 17 en 2025 mais semaine 18 en 2026), donc on ne peut pas réutiliser le même
+    numéro de semaine pour toutes les années. On ne retient une période comparable que
+    si l'année couvre bien le début de la période (semaine 1 ou 2 présente) — sinon ce
+    ne sont que des semaines résiduelles d'un séjour à cheval (queue d'une transmission
+    précédente), pas une vraie période M01-M0N comparable, et l'année est exclue (voir
+    docstring du module).
+
+    `years` (optionnel, ex. ["2025", "2026"] — pour le choix utilisateur dans la page
+    "TDB choix", max 3 années) restreint le résultat à ces années-là uniquement ; le
+    "mois cible" (année la plus récente PARMI `years`) reste la même règle du jeudi
+    que sans restriction, juste appliquée à un sous-ensemble d'années plutôt qu'à
+    toutes les années présentes en base.
+
+    `mois_fin` (optionnel, 1-12, demande utilisateur 2026-08-05) : impose le mois de
+    fin de période au lieu de le déduire de la dernière semaine transmise — la période
+    reste TOUJOURS cumulative depuis semaine 01 (convention ATIH "M01 à M0N" inchangée,
+    décision utilisateur explicite : pas de vraie fenêtre Mx→My arbitraire, qui aurait
+    cassé l'hypothèse "cumul depuis janvier" sur laquelle reposent plusieurs sections
+    déjà validées, ex. valorisation "campagne comparable"). Si le mois choisi dépasse
+    les données réellement chargées pour une année, cette année affiche simplement
+    moins de semaines de données (pas d'erreur, pas de chiffre inventé).
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT numero_semaine FROM rhs_groupe WHERE numero_semaine IS NOT NULL AND finess_epmsi = ?",
+        [finess],
+    ).fetchall()
+    weeks_by_year: dict[str, list[int]] = {}
+    for r in rows:
+        ns = r["numero_semaine"]
+        week, year = int(ns[:2]), ns[2:6]
+        weeks_by_year.setdefault(year, []).append(week)
+
+    if years:
+        wanted = {str(y) for y in years}
+        weeks_by_year = {y: w for y, w in weeks_by_year.items() if y in wanted}
+
+    if not weeks_by_year:
+        return []
+
+    target_year = max(weeks_by_year)
+    if mois_fin is not None:
+        target_month = mois_fin
+    else:
+        target_max_week = max(weeks_by_year[target_year])
+        target_month = datetime.date.fromisocalendar(int(target_year), target_max_week, 4).month
+
+    periods = []
+    for year in sorted(weeks_by_year):
+        if min(weeks_by_year[year]) > 2:
+            continue  # ne couvre pas le début de la période : résidu, pas une vraie année comparable
+        max_week = _last_week_of_month(int(year), target_month)
+        if max_week is None:
+            continue
+        period_start = datetime.date.fromisocalendar(int(year), 1, 1)
+        period_end = datetime.date.fromisocalendar(int(year), max_week, 7)
+        periods.append({
+            "year": year,
+            "max_week": max_week,
+            "start": period_start,
+            "end": period_end,
+            # Mois ATIH de la période (règle du jeudi, cf. _last_week_of_month) —
+            # PAS le mois calendaire de `end` (dimanche de la semaine max_week),
+            # qui peut déborder sur le mois suivant (ex. semaine à cheval juillet/
+            # août) et affichait à tort "août" pour un envoi M07 (2026-09-16).
+            "month": target_month,
+            "label": f"{year} (semaines 01–{max_week:02d})",
+        })
+    return periods
+
+
+def years_disponibles(conn: sqlite3.Connection, finess: str) -> list[str]:
+    """Années ISO présentes dans le RHS groupé pour un FINESS (pour peupler le
+    formulaire de choix — indépendant de la logique de période comparable
+    ci-dessus, juste la liste brute des années qui ont au moins une ligne)."""
+    rows = conn.execute(
+        "SELECT DISTINCT substr(numero_semaine, 3, 4) AS annee FROM rhs_groupe "
+        "WHERE numero_semaine IS NOT NULL AND finess_epmsi = ? ORDER BY 1",
+        [finess],
+    ).fetchall()
+    return [r["annee"] for r in rows if r["annee"]]
+
+
+def _period_filter(
+    period: dict, finess: str, axis_filter: tuple[str, str] | None = None
+) -> tuple[str, list]:
+    """`axis_filter` (optionnel, ex. `("numero_unite_medicale", "3001")` ou
+    `("type_hospitalisation", "1")`, 2026-08-04) restreint aussi la ligne RHS
+    à cette valeur — utilisé pour générer un TDB secondaire complet PAR
+    valeur d'UF ou de type d'hospitalisation.
+
+    `type_hospitalisation` : HTP jour (2) et nuit (3) sont fusionnés en un
+    seul groupe "2" (TYPE_HOSPITALISATION_GROUPES dans valorisation.py,
+    2026-08-05, demande utilisateur — établissement non spécialisé en HTP de
+    nuit) — demander "2" matche donc les lignes RHS codées 2 OU 3.
+
+    Exclusion 680000973/M1C+M1B (2026-08-24) : bug de transmission WEB100T
+    confirmé (voir [[pmsi_smr_ecart_ovalide_htp_transmission]]) — ce seul
+    établissement génère encore des lignes au format M1C (obsolète depuis la
+    bascule S10/2025) pour des séjours HTP qui auraient dû être transmis en
+    M1D ; ATIH ne les reconnaît pas ("RHA de l'année N"). Vérifié manuellement
+    par l'utilisateur : en les excluant, le Nb RHS 2026 tombe exactement au
+    chiffre du Tableau F du rapport Ovalide 1.D.0.RTP. Scoping
+    volontairement restreint à cet établissement (pas une règle générique
+    par date de bascule) — M1C reste le format légitime pour 2023-2025 sur
+    tous les établissements, un filtre global aurait vidé ces années-là.
+    Même exclusion étendue à M1B (format 2021, encore plus ancien — voir
+    config/formats/rhs_groupe_m1b.schema.json, implémenté le 2026-08-24) :
+    9 lignes retrouvées pour 3 séjours HTP sur cet établissement, toutes
+    porteuses de code_gme='9096Z0' (placeholder d'erreur de groupage) et
+    indicateur_erreur='X' — même mécanisme WEB100T, encore plus régressif
+    (le séjour retombe jusqu'au format de son ouverture, ici 2020-2021)."""
+    clause = "finess_epmsi = ? AND substr(numero_semaine, 3, 4) = ? AND CAST(substr(numero_semaine, 1, 2) AS INTEGER) <= ?"
+    params = [finess, period["year"], period["max_week"]]
+    if finess == "680000973" and period["year"] == "2026":
+        # M1C/M1B ne sont plus les formats légitimes en 2026 (bascule
+        # S10/2025 déjà passée) — restreint à cette année pour ne pas
+        # exclure les lignes M1C réellement valides de 2023-2025 (voir
+        # docstring ci-dessus).
+        clause += " AND version_format_rhs_groupe NOT IN ('M1C', 'M1B')"
+    if axis_filter:
+        champ, valeur = axis_filter
+        if champ == "type_hospitalisation":
+            from src.viz.valorisation import TYPE_HOSPITALISATION_GROUPES
+
+            codes = [k for k, v in TYPE_HOSPITALISATION_GROUPES.items() if v == valeur]
+            clause += f" AND {champ} IN ({', '.join('?' for _ in codes)})"
+            params.extend(codes)
+        elif isinstance(valeur, (list, tuple, set)):
+            # Regroupement de plusieurs UF en un "service" défini par
+            # l'utilisateur (2026-08-06) : liste de valeurs -> IN (...).
+            valeurs = sorted(valeur)
+            clause += f" AND {champ} IN ({', '.join('?' for _ in valeurs)})"
+            params.extend(valeurs)
+        else:
+            clause += f" AND {champ} = ?"
+            params.append(valeur)
+    return clause, params
+
+
+def _all_presence_days_by_sejour(conn: sqlite3.Connection, finess: str) -> dict[str, int]:
+    """Jours de présence RHS, TOTAL sur toute la durée du séjour (pas restreint à une période),
+    par numero_admin_sejour — clé de la "vraie" durée moyenne de séjour (2026-08-18, demande
+    utilisateur). Contrairement à `dmh` (jours de présence SEULEMENT dans la période choisie, ce
+    qui tronque un séjour à cheval sur plusieurs campagnes/années), cette version reflète la durée
+    réelle du séjour dans son ensemble — dès lors qu'il a au moins une ligne RHS dans la période
+    observée (le filtre "au moins une ligne dans la période" identifie QUELS séjours entrent dans
+    la moyenne, mais leur contribution au numérateur n'est plus tronquée à cette période)."""
+    rows = conn.execute(
+        "SELECT numero_admin_sejour, jours_hors_weekend, jours_weekend FROM rhs_groupe WHERE finess_epmsi = ?",
+        [finess],
+    ).fetchall()
+    out: dict[str, int] = {}
+    for r in rows:
+        out[r["numero_admin_sejour"]] = out.get(r["numero_admin_sejour"], 0) + _count_present_days(r)
+    return out
+
+
+def section_sejours(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
+    all_presence = _all_presence_days_by_sejour(conn, finess)  # calculé une fois, hors boucle périodes
+    out = {}
+    for period in periods:
+        clause, params = _period_filter(period, finess, axis_filter)
+        rows = conn.execute(f"SELECT * FROM rhs_groupe WHERE {clause}", params).fetchall()
+        nb_rhs = len(rows)
+        sejours_periode = {r["numero_admin_sejour"] for r in rows}
+        nb_ssr = len(sejours_periode)
+        nb_journees = sum(_count_present_days(r) for r in rows)
+        nb_semaines = len({r["numero_semaine"] for r in rows})
+        dmh = nb_journees / nb_ssr if nb_ssr else 0
+        # Vraie DMS : jours de présence sur la durée COMPLÈTE de chaque séjour identifié dans la
+        # période (pas seulement ses jours dans la période) — voir _all_presence_days_by_sejour.
+        nb_journees_pleines = sum(all_presence.get(s, 0) for s in sejours_periode)
+        dms_vraie = nb_journees_pleines / nb_ssr if nb_ssr else 0
+        nb_lits_moy = nb_journees / (nb_semaines * 7) if nb_semaines else 0
+        nb_sans_erreur = sum(
+            1 for r in rows if not (r["indicateur_erreur"] or "").strip()
+        )
+        exh = 100 * nb_sans_erreur / nb_rhs if nb_rhs else 0
+        out[period["year"]] = {
+            "nb_ssr": nb_ssr,
+            "nb_rhs": nb_rhs,
+            "nb_journees": nb_journees,
+            "dmh": dmh,
+            "nb_journees_pleines": nb_journees_pleines,
+            "dms_vraie": dms_vraie,
+            "nb_lits_moy": nb_lits_moy,
+            "exh": exh,
+        }
+    return out
+
+
+def _last_rhs_presence_by_sejour(conn: sqlite3.Connection, finess: str) -> dict[tuple[str, str], datetime.date]:
+    """Pour chaque séjour (finess, numero_admin_sejour), date de fin (dimanche) de la
+    dernière semaine RHS effectivement présente.
+
+    Pour un séjour SSR long, le VID-HOSP peut ne représenter qu'une TRANCHE de
+    facturation (avec montants, taux de remboursement...) et pas la présence
+    physique complète : son date_sortie peut donc être antérieur à la fin réelle du
+    séjour alors que le patient est toujours suivi semaine après semaine en RHS. On
+    utilise cette date RHS comme borne de fin minimale pour ne pas perdre ces
+    patients (vu empiriquement sur un séjour réel : VID-HOSP date_sortie
+    antérieure, mais RHS toujours présent plusieurs semaines après).
+    """
+    rows = conn.execute(
+        "SELECT finess_epmsi, numero_admin_sejour, numero_semaine FROM rhs_groupe "
+        "WHERE numero_semaine IS NOT NULL AND finess_epmsi = ?",
+        [finess],
+    ).fetchall()
+    out: dict[tuple[str, str], datetime.date] = {}
+    for r in rows:
+        ns = r["numero_semaine"]
+        week, year = int(ns[:2]), ns[2:6]
+        try:
+            end = datetime.date.fromisocalendar(int(year), week, 7)
+        except ValueError:
+            continue
+        key = (r["finess_epmsi"], r["numero_admin_sejour"])
+        if key not in out or end > out[key]:
+            out[key] = end
+    return out
+
+
+def section_patients(
+    conn: sqlite3.Connection, period: dict, finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
+    """Patients distincts sur LA période de reporting, à partir de VID-HOSP
+    (pas de jointure RHS pour l'identité/sexe/âge — seule la borne de fin de
+    présence peut être étendue par la dernière semaine RHS du séjour, voir
+    _last_rhs_presence_by_sejour).
+
+    Un séjour compte pour un patient dès que sa plage [date_entree, fin réelle]
+    chevauche la fenêtre de reporting — un séjour à cheval sur deux années ne
+    compte le patient qu'UNE fois, pas une fois par année (il n'y a qu'une seule
+    période ici, pas un découpage par année civile).
+
+    L'effectif (F/M/Total) est dédoublonné par patient (numero_ipp — l'IPP
+    identifie directement le patient, contrairement au numéro de sécurité
+    sociale de l'assuré qui peut être celui d'un tiers, ex. conjoint), mais
+    l'âge moyen NE L'EST PAS : validé cellule par cellule contre
+    l'expression QlikView de référence `avg(G_AGE)` (dimensions année, sexe),
+    qui fait une moyenne simple sur tous les séjours de la période — un patient
+    avec 2 séjours dans l'année contribue 2 fois à la moyenne d'âge même s'il
+    n'est compté qu'une fois dans l'effectif. Âge = (date_entree − date_naissance)
+    en jours / 365,25, par séjour (pas par patient).
+
+    `axis_filter` (optionnel, TDB secondaire "par UF"/"par type
+    d'hospitalisation", 2026-08-04) : VID-HOSP n'a pas ces champs (propres au
+    RHS), donc pas de filtrage direct possible — on restreint plutôt aux
+    séjours ayant ≥1 ligne RHS correspondant au filtre sur la période (voir
+    _sejours_matching_axis). Proxy assumé, différent de la méthode VID-HOSP
+    pure validée pour le TDB principal non filtré.
+    """
+    period_start, period_end = period["start"], period["end"]
+    sejours_ok = _sejours_matching_axis(conn, period, finess, axis_filter)
+
+    rows = conn.execute(
+        "SELECT numero_ipp, sexe_beneficiaire, date_naissance_beneficiaire, "
+        "date_hospitalisation, date_entree, date_sortie, finess_epmsi, numero_admin_sejour "
+        "FROM vid_hosp WHERE (date_entree IS NOT NULL OR date_hospitalisation IS NOT NULL) AND finess_epmsi = ?",
+        [finess],
+    ).fetchall()
+    last_rhs_presence = _last_rhs_presence_by_sejour(conn, finess)
+
+    bucket = {"F": 0, "M": 0, "ages_f": [], "ages_m": []}
+    seen_ipp: set[str] = set()
+    for r in rows:
+        if sejours_ok is not None and _norm_numadmin(r["numero_admin_sejour"]) not in sejours_ok:
+            continue
+        start_raw = r["date_entree"] or r["date_hospitalisation"]
+        if not start_raw:
+            continue
+        start = datetime.date.fromisoformat(start_raw)
+        end = datetime.date.fromisoformat(r["date_sortie"]) if r["date_sortie"] else period_end
+        rhs_end = last_rhs_presence.get((r["finess_epmsi"], r["numero_admin_sejour"]))
+        if rhs_end is not None and rhs_end > end:
+            end = rhs_end
+        if end < start:
+            end = start
+
+        # chevauchement avec [period_start, period_end] ?
+        if end < period_start or start > period_end:
+            continue
+
+        ipp = r["numero_ipp"]
+        sexe = r["sexe_beneficiaire"]
+        age = None
+        if r["date_entree"] and r["date_naissance_beneficiaire"]:
+            entree = datetime.date.fromisoformat(r["date_entree"])
+            naissance = datetime.date.fromisoformat(r["date_naissance_beneficiaire"])
+            age = (entree - naissance).days / 365.25
+        if sexe == "2" and age is not None:
+            bucket["ages_f"].append(age)
+        elif sexe == "1" and age is not None:
+            bucket["ages_m"].append(age)
+
+        if ipp in seen_ipp:
+            continue
+        seen_ipp.add(ipp)
+        if sexe == "2":
+            bucket["F"] += 1
+        elif sexe == "1":
+            bucket["M"] += 1
+
+    total = bucket["F"] + bucket["M"]
+    ages_all = bucket["ages_f"] + bucket["ages_m"]
+    return {
+        "f": bucket["F"],
+        "m": bucket["M"],
+        "total": total,
+        "pct_f": 100 * bucket["F"] / total if total else 0,
+        "pct_m": 100 * bucket["M"] / total if total else 0,
+        "age_f": sum(bucket["ages_f"]) / len(bucket["ages_f"]) if bucket["ages_f"] else None,
+        "age_m": sum(bucket["ages_m"]) / len(bucket["ages_m"]) if bucket["ages_m"] else None,
+        "age_total": sum(ages_all) / len(ages_all) if ages_all else None,
+    }
+
+
+def section_journees_semaine(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
+    out = {}
+    for period in periods:
+        clause, params = _period_filter(period, finess, axis_filter)
+        rows = conn.execute(
+            f"SELECT numero_semaine, jours_hors_weekend, jours_weekend FROM rhs_groupe WHERE {clause}",
+            params,
+        ).fetchall()
+        per_week: dict[str, int] = {}
+        for r in rows:
+            week = r["numero_semaine"][:2]
+            per_week[week] = per_week.get(week, 0) + _count_present_days(r)
+        out[period["year"]] = dict(sorted(per_week.items()))
+    return out
+
+
+def _dedup_child_rows(
+    conn: sqlite3.Connection, table: str, rhs_ids: list[int], max_per_key: int = 2
+) -> list[sqlite3.Row]:
+    """Renvoie les lignes d'une table enfant (CSARR/CSAR) en plafonnant à `max_per_key`
+    occurrences identiques (même bloc complet, mêmes valeurs sur tous les champs) par
+    séjour/RHS/jour. Un même acte CSARR/CSAR peut légitimement être réalisé deux fois le
+    même jour (une fois le matin, une fois l'après-midi) — confirmé par l'utilisateur,
+    2026-07-28 : un seul exemplaire par jour serait un dédoublonnage trop agressif. Seul
+    un 3e exemplaire (ou plus) identique est un vrai doublon de transmission à écarter.
+    """
+    if not rhs_ids:
+        return []
+    cols = [c[1] for c in conn.execute(f"PRAGMA table_info({table})").fetchall() if c[1] != "id"]
+    col_list = ", ".join(cols)
+    placeholders = ",".join("?" * len(rhs_ids))
+    rows = conn.execute(
+        f"SELECT {col_list} FROM {table} WHERE parent_id IN ({placeholders}) ORDER BY parent_id, seq",
+        rhs_ids,
+    ).fetchall()
+    counts: dict[tuple, int] = {}
+    kept: list[sqlite3.Row] = []
+    for r in rows:
+        key = tuple(r[c] for c in cols if c != "seq")
+        n = counts.get(key, 0)
+        if n < max_per_key:
+            kept.append(r)
+        counts[key] = n + 1
+    return kept
+
+
+def section_indicateurs(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
+    out = {}
+    for period in periods:
+        clause, params = _period_filter(period, finess, axis_filter)
+        rhs_rows = conn.execute(f"SELECT * FROM rhs_groupe WHERE {clause}", params).fetchall()
+        nb_rhs = len(rhs_rows)
+
+        avq_phys, avq_cogn = [], []
+        das_counts = []
+        for r in rhs_rows:
+            phys_vals = [
+                r[f] for f in (
+                    "dependance_habillage_toilette", "dependance_deplacement",
+                    "dependance_alimentation", "dependance_continence",
+                ) if r[f] is not None
+            ]
+            if phys_vals:
+                # score AVQ = SOMME des items (pas la moyenne) — calé empiriquement
+                # sur le tableau de bord de référence (12.0 pour 4 items 1-4, pas 3.0)
+                avq_phys.append(sum(int(v) for v in phys_vals))
+            cogn_vals = [
+                r[f] for f in ("dependance_comportement", "dependance_relation")
+                if r[f] is not None
+            ]
+            if cogn_vals:
+                avq_cogn.append(sum(int(v) for v in cogn_vals))
+            das_counts.append(r["n1_nb_das"] or 0)
+
+        rhs_ids = [r["id"] for r in rhs_rows]
+        nb_csarr = 0
+        nb_csar = 0
+        nb_diag = 0
+        if rhs_ids:
+            placeholders = ",".join("?" * len(rhs_ids))
+            # NB CSARR = somme de nombre_realisations sur les blocs CSARR dédoublonnés
+            # (bloc complet identique = un seul acte, même si transmis deux fois) — validé
+            # exact (230) contre la référence sur S01-2024 : COUNT(*) brut donnait 239,
+            # COUNT(*) après dédoublonnage 226, seule la SOMME des réalisations post-dédoublonnage
+            # tombe juste à 230.
+            csarr_rows = _dedup_child_rows(conn, "rhs_groupe_csarr", rhs_ids)
+            nb_csarr = sum(r["nombre_realisations"] or 0 for r in csarr_rows)
+            csar_rows = _dedup_child_rows(conn, "rhs_groupe_csar", rhs_ids)
+            nb_csar = sum(r["nombre_realisations"] or 0 for r in csar_rows)
+            # NB DIAG = nombre de couples (RHS, code_das) DISTINCTS — validé exact contre
+            # le script QlikView de référence (bloc DAS chargé en "load distinct RHS_ID, G_DAS"),
+            # qui dédoublonne un même code DAS répété plusieurs fois dans une même semaine RHS.
+            nb_diag = conn.execute(
+                f"SELECT COUNT(DISTINCT parent_id || '|' || trim(code_das)) n "
+                f"FROM rhs_groupe_das WHERE parent_id IN ({placeholders})",
+                rhs_ids,
+            ).fetchone()["n"]
+
+        nb_journees = sum(_count_present_days(r) for r in rhs_rows)
+
+        # Nb CSAR(R) = nb_csarr + nb_csar (2026-09-17, demande utilisateur : CSAR remplace
+        # progressivement CSARR depuis 2026, un décompte limité à CSARR sous-estime l'activité
+        # réelle dans les établissements déjà transitionnés). Clé dict "nb_csarr" conservée
+        # pour ne pas casser le reste du pipeline, mais la valeur est désormais la somme.
+        nb_csar_r = nb_csarr + nb_csar
+        out[period["year"]] = {
+            "avq_phys_moy": sum(avq_phys) / len(avq_phys) if avq_phys else None,
+            "avq_cogn_moy": sum(avq_cogn) / len(avq_cogn) if avq_cogn else None,
+            "nb_csarr": nb_csar_r,
+            "nb_diag_approx": nb_diag,
+            "nb_das_moy_rhs": sum(das_counts) / len(das_counts) if das_counts else 0,
+            # approximation : (CSARR + CSAR) / nb RHS - à valider contre la définition exacte de "INTERV"
+            "nb_moy_interv_rhs": (nb_csarr + nb_csar) / nb_rhs if nb_rhs else 0,
+            "nb_moy_csarr_j": nb_csar_r / nb_journees if nb_journees else 0,
+        }
+    return out
+
+
+def section_activite_csarr(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
+    # Validé exact (2026-07-28) contre le rapport ATIH officiel "Activité CSARR par
+    # intervenant, année N" (année 2024 complète, 6 professions + total 14649 ; puis
+    # M01/M02/M03-2026 cumulatifs) : AUCUN dédoublonnage — SUM(nombre_realisations) brut,
+    # blocs identiques inclus. ATIH exclut de son rapport les séjours en erreur de
+    # groupage bloquante (ex. 0028 "mode d'entrée absent" — repéré sur le séjour
+    # 024909882, 2026) car ils n'ont pas de tarif valide (logique facturation). Choix
+    # délibéré de l'utilisateur (2026-07-28) : CE tableau de bord reste en logique
+    # ACTIVITÉ, pas facturation — on ne les exclut PAS ici, précisément pour que l'écart
+    # avec les chiffres officiels ATIH serve de signal d'alerte sur les séjours en
+    # erreur (voir section_erreurs_activite pour le décompte de ce qu'ils représentent).
+    labels = _load_intervenant_labels(conn)
+    out = {}
+    for period in periods:
+        clause, params = _period_filter(period, finess, axis_filter)
+        rows = conn.execute(
+            "SELECT c.code_intervenant, SUM(c.nombre_realisations) n "
+            "FROM rhs_groupe_csarr c "
+            "JOIN rhs_groupe r ON r.id = c.parent_id "
+            f"WHERE {clause.replace('numero_semaine', 'r.numero_semaine').replace('finess_epmsi', 'r.finess_epmsi')} "
+            "AND c.code_intervenant IS NOT NULL "
+            "GROUP BY c.code_intervenant ORDER BY n DESC",
+            params,
+        ).fetchall()
+        out[period["year"]] = [
+            {"code": r["code_intervenant"], "label": labels.get(r["code_intervenant"], r["code_intervenant"]), "n": r["n"]}
+            for r in rows
+        ]
+    return out
+
+
+_LIEU_FLAG_COL = {"HW": "mod_hw", "LJ": "mod_lj", "XH": "mod_xh", "L3": "mod_l3"}
+
+
+def _load_ponderation_actes(conn: sqlite3.Connection, nomenclature: str = "CSARR") -> dict[str, dict]:
+    """Table `nomenclature_ponderation_actes` chargée SANS dédoublonnage par
+    natural_key (contrairement à toutes les autres nomenclatures du projet) :
+    54 codes CSARR y ont plusieurs lignes, une par période de validité
+    (colonnes `debut`/`fin`, en années). Politique dernier-gagne appliquée ici
+    (choix utilisateur 2026-07-30, cohérent avec le reste du projet) : on
+    garde la ligne au `debut` le plus récent pour chaque code — le barème le
+    plus à jour est appliqué à toutes les années comparées, y compris les
+    plus anciennes. `nomenclature="CCAM"` (2026-09-11, ajouté pour le score de
+    réadaptation GLOBALE/SPÉCIALISÉE) réutilise la même fonction — les 56
+    actes CCAM de réadaptation n'ont ni doublon de code ni modulateur de lieu
+    éligible dans le fichier ATIH (mod_hw/lj/xh/l3 toujours vides), donc les
+    mêmes colonnes valent simplement False pour eux."""
+    rows = conn.execute(
+        "SELECT code, ponderation_patient, mod_hw, mod_lj, mod_xh, mod_l3, debut "
+        "FROM nomenclature_ponderation_actes WHERE nomenclature = ?",
+        [nomenclature],
+    ).fetchall()
+    best: dict[str, dict] = {}
+    for r in rows:
+        try:
+            debut = int(r["debut"]) if r["debut"] else -1
+        except ValueError:
+            debut = -1
+        prev = best.get(r["code"])
+        if prev is None or debut >= prev["_debut"]:
+            try:
+                pond = float(r["ponderation_patient"]) if r["ponderation_patient"] not in (None, "") else 0.0
+            except ValueError:
+                pond = 0.0
+            best[r["code"]] = {
+                "ponderation": pond,
+                "mod_hw": r["mod_hw"] == "x",
+                "mod_lj": r["mod_lj"] == "x",
+                "mod_xh": r["mod_xh"] == "x",
+                "mod_l3": r["mod_l3"] == "x",
+                "_debut": debut,
+            }
+    return best
+
+
+def _load_actes_specialises(conn: sqlite3.Connection) -> dict[str, set[str]]:
+    """GN -> ensemble des codes d'actes (CSARR + CCAM) marqueurs de
+    réadaptation SPÉCIALISÉE pour ce GN (nomenclature_actes_specialises,
+    voir src/nomenclatures/actes_specialises.py). Un GN absent de ce dict
+    n'a aucune notion de réadaptation spécialisée (GN non subdivisé sur ce
+    critère, ex. 0103, 0118, 0134 — 'PAS DE LISTE' dans le fichier ATIH)."""
+    rows = conn.execute("SELECT gn, code_acte FROM nomenclature_actes_specialises").fetchall()
+    out: dict[str, set[str]] = {}
+    for r in rows:
+        out.setdefault(r["gn"], set()).add(r["code_acte"])
+    return out
+
+
+def _load_modulateurs(conn: sqlite3.Connection) -> dict[str, dict]:
+    rows = conn.execute(
+        "SELECT code, majoration_individuel, majoration_collectif FROM nomenclature_ponderation_modulateurs"
+    ).fetchall()
+
+    def _pct(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None  # None, vide, ou texte type "sans objet"
+
+    return {r["code"]: {"individuel": _pct(r["majoration_individuel"]), "collectif": _pct(r["majoration_collectif"])} for r in rows}
+
+
+def _load_ponderation_actes_par_intervenant(conn: sqlite3.Connection, nomenclature: str = "CSARR") -> dict[tuple[str, str], dict]:
+    """Comme _load_ponderation_actes, mais indexée par (code, intervenant) au
+    lieu de code seul — nécessaire pour le chemin CSAR : la fonction de
+    groupage ATIH transcode un acte CSAR en un couple (acte CSARR, intervenant)
+    précis (cf. nomenclature_csar_transcodage_detail), et c'est CE couple qui
+    détermine la pondération (Manuel des GME vol.1 §3.3.1.2-3.3.1.3), pas
+    l'acte seul comme dans le chemin CSARR natif ci-dessus."""
+    rows = conn.execute(
+        "SELECT code, intervenant, ponderation_patient, mod_hw, mod_lj, mod_xh, mod_l3, debut "
+        "FROM nomenclature_ponderation_actes WHERE nomenclature = ?",
+        [nomenclature],
+    ).fetchall()
+    best: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        try:
+            debut = int(r["debut"]) if r["debut"] else -1
+        except ValueError:
+            debut = -1
+        key = (r["code"], r["intervenant"])
+        prev = best.get(key)
+        if prev is None or debut >= prev["_debut"]:
+            try:
+                pond = float(r["ponderation_patient"]) if r["ponderation_patient"] not in (None, "") else 0.0
+            except ValueError:
+                pond = 0.0
+            best[key] = {
+                "ponderation": pond,
+                "mod_hw": r["mod_hw"] == "x",
+                "mod_lj": r["mod_lj"] == "x",
+                "mod_xh": r["mod_xh"] == "x",
+                "mod_l3": r["mod_l3"] == "x",
+                "_debut": debut,
+            }
+    return best
+
+
+def _load_csar_transcodage(conn: sqlite3.Connection) -> dict[tuple[str, str, str], str]:
+    """(code_csar, intervenant, acte_coll) -> code_csarr transcodé, cf.
+    nomenclature_csar_transcodage_detail (CSAR_infos.xlsx, annexe 7)."""
+    rows = conn.execute(
+        "SELECT code_csar, intervenant, acte_coll, code_csarr FROM nomenclature_csar_transcodage_detail"
+    ).fetchall()
+    return {(r["code_csar"], r["intervenant"], r["acte_coll"]): r["code_csarr"] for r in rows}
+
+
+def _resolve_csar_transcodage(
+    csar_transcodage: dict[tuple[str, str, str], str], code_csar: str, intervenant: str, coll: int
+) -> str | None:
+    """Cherche le code CSARR transcodé pour (code_csar, intervenant, modalité
+    collective codée sur le RHS) : essaie d'abord la modalité exacte, puis '2'
+    (modalité sans effet sur le transcodage retenu, cf. nomenclature_csar_transcodage_detail).
+    Retourne None si aucune des deux n'existe dans la table ATIH — c'est-à-dire
+    que le couple (acte, intervenant, modalité) codé sur le RHS n'a aucune
+    correspondance officielle (souvent : modalité non autorisée pour cet acte,
+    cf. section_csar_actes_ignores)."""
+    code_csarr = csar_transcodage.get((code_csar, intervenant, str(coll)))
+    if code_csarr is None:
+        code_csarr = csar_transcodage.get((code_csar, intervenant, "2"))
+    return code_csarr
+
+
+def _load_csar_ponderation_temps(conn: sqlite3.Connection) -> dict[str, float]:
+    rows = conn.execute("SELECT modalite, ponderation FROM nomenclature_csar_ponderation_temps").fetchall()
+    return {r["modalite"]: float(r["ponderation"]) for r in rows}
+
+
+def _load_csar_majoration_lieu(conn: sqlite3.Connection) -> dict[str, dict]:
+    rows = conn.execute(
+        "SELECT modalite, majoration_individuel, majoration_collectif FROM nomenclature_csar_majoration_lieu"
+    ).fetchall()
+
+    def _pct(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None  # None, vide, ou texte type "sans objet"
+
+    return {r["modalite"]: {"individuel": _pct(r["majoration_individuel"]), "collectif": _pct(r["majoration_collectif"])} for r in rows}
+
+
+# Intervenants CSAR transitoires sans équivalent dans nomenclature_csar_transcodage_detail
+# (créés pour 2026, transposés vers l'intervenant CSARR "21 - infirmier" pendant la phase
+# de transition — Manuel des GME vol.1 §3.3.1.2).
+_CSAR_INTERVENANT_FALLBACK = {"80": "21", "81": "21"}
+
+# Modulateur de lieu CSAR -> flag(s) d'éligibilité à vérifier sur l'acte CSARR transcodé
+# (Manuel des GME vol.1 §3.3.1.4) : L1/L3 se transcodent vers le groupe HW/LJ/L3, L2 vers XH.
+_CSAR_LIEU_FLAGS = {"L1": ("mod_hw", "mod_lj"), "L2": ("mod_xh",), "L3": ("mod_l3",)}
+
+
+CCAM_PSEUDO_INTERVENANT = "CCAM"
+CCAM_PSEUDO_LABEL = "Actes CCAM (non rattachés à un intervenant)"
+
+
+def _join_clause_on_rhs_groupe(clause: str) -> str:
+    """Reporte les noms de colonnes bruts d'un `clause`/`params` de
+    `_period_filter` (pensé pour une requête directe sur `rhs_groupe`) vers
+    un alias `r.` — nécessaire dès qu'on joint une table enfant (CSARR, CCAM).
+    Couvre les seuls champs que `_period_filter` peut réellement émettre :
+    finess_epmsi/numero_semaine (toujours), version_format_rhs_groupe (cas
+    680000973/2026), et les deux champs d'axis_filter possibles."""
+    for champ in (
+        "finess_epmsi", "numero_semaine", "version_format_rhs_groupe",
+        "type_hospitalisation", "numero_unite_medicale",
+    ):
+        clause = clause.replace(champ, f"r.{champ}")
+    return clause
+
+
+def section_readaptation_intervenant(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
+    """Score de réadaptation par intervenant (2026-09-11, remplace l'ancien
+    "score pondéré" — demande utilisateur, suite à la vérification de la
+    formule officielle du Manuel des GME, ATIH, vol.1, section 3.3.2 ;
+    CSAR ajouté le 2026-09-17, cf. §3.3.1.3-3.3.1.4 du même manuel) :
+    - GLOBALE = somme des pondérations de TOUS les actes CSARR + CSAR + CCAM
+      réalisés (majoration de modulateur de lieu incluse pour le CSARR et le
+      CSAR). Un acte CSAR est d'abord transcodé en acte CSARR de référence
+      (nomenclature_csar_transcodage_detail) : sa pondération retenue est le
+      MAX entre celle du modulateur de temps CSAR et celle de l'acte CSARR
+      transcodé — les deux nomenclatures cohabitent selon l'établissement et
+      sa date de transition, sans double-compte possible (les blocs CSARR et
+      CSAR du RHS sont des actes distincts, jamais les deux pour un même soin).
+    - SPÉCIALISÉE = même somme, restreinte aux seuls actes marqueurs de la
+      réadaptation spécialisée DU GN DU SÉJOUR (nomenclature_actes_specialises,
+      cf. _load_actes_specialises) — 0 si le GN n'a pas cette notion. Pour un
+      acte CSAR, c'est le caractère spécialisé de l'acte CSARR transcodé qui
+      est utilisé (Manuel des GME vol.1 §3.2.1, dernier paragraphe).
+
+    Ces deux scores sont, par définition ATIH, des indicateurs par SÉJOUR (HC)
+    ou par SEMAINE (HTP) — pas par intervenant. Ce tableau les décompose quand
+    même par intervenant (demande utilisateur : voir qui apporte le plus
+    d'actes spécialisés), en sommant sur la période les pondérations de ses
+    seules réalisations — une somme CUMULÉE sur la période ("par séjour"
+    au sens du manuel, jamais divisée par des jours de présence), pas
+    l'intensité par séjour/jour du score officiel.
+
+    Limite assumée, inévitable : les actes CCAM n'ont AUCUN code intervenant
+    dans le RHS (contrairement au CSARR) — leur contribution ne peut donc pas
+    être attribuée à un professionnel précis. Elle apparaît à part, sous le
+    pseudo-intervenant CCAM_PSEUDO_INTERVENANT, plutôt que d'être omise (ce
+    qui sous-estimerait silencieusement le score officiel) ou faussement
+    répartie sur les intervenants CSARR."""
+    ponderations_csarr = _load_ponderation_actes(conn, "CSARR")
+    ponderations_ccam = _load_ponderation_actes(conn, "CCAM")
+    modulateurs = _load_modulateurs(conn)
+    actes_specialises = _load_actes_specialises(conn)
+    ponderations_csarr_par_inter = _load_ponderation_actes_par_intervenant(conn, "CSARR")
+    csar_transcodage = _load_csar_transcodage(conn)
+    ponderation_temps_csar = _load_csar_ponderation_temps(conn)
+    majoration_lieu_csar = _load_csar_majoration_lieu(conn)
+
+    out = {}
+    for period in periods:
+        clause, params = _period_filter(period, finess, axis_filter)
+        gn_by_sejour = _sejour_code_gme_by_period(conn, period, finess, 4, axis_filter)
+        join_clause = _join_clause_on_rhs_groupe(clause)
+
+        scores: dict[str, dict[str, float]] = {}
+
+        csarr_rows = conn.execute(
+            "SELECT c.code_intervenant, c.code_principal, c.code_modulateur_lieu, "
+            "c.nombre_realisations, c.nombre_reel_patients, r.numero_admin_sejour "
+            "FROM rhs_groupe_csarr c "
+            "JOIN rhs_groupe r ON r.id = c.parent_id "
+            f"WHERE {join_clause} AND c.code_intervenant IS NOT NULL",
+            params,
+        ).fetchall()
+        for r in csarr_rows:
+            acte = ponderations_csarr.get(r["code_principal"])
+            if acte is None:
+                continue
+            pct = 0.0
+            lieu = r["code_modulateur_lieu"]
+            flag_col = _LIEU_FLAG_COL.get(lieu)
+            if flag_col and acte[flag_col]:
+                modul = modulateurs.get(lieu)
+                if modul:
+                    individuel = (r["nombre_reel_patients"] or 1) <= 1
+                    raw = modul["individuel"] if individuel else modul["collectif"]
+                    pct = raw if raw is not None else 0.0
+            n = r["nombre_realisations"] or 1
+            weighted = acte["ponderation"] * (1 + pct / 100) * n
+            code = r["code_intervenant"]
+            s = scores.setdefault(code, {"n": 0.0, "globale": 0.0, "specialisee": 0.0})
+            s["n"] += n
+            s["globale"] += weighted
+            gn = gn_by_sejour.get(_norm_numadmin(r["numero_admin_sejour"]))
+            if gn and r["code_principal"] in actes_specialises.get(gn, ()):
+                s["specialisee"] += weighted
+
+        # CSAR (remplace progressivement CSARR depuis 2026, cf. Manuel des GME vol.1 §3.1.1) :
+        # chaque acte CSAR est d'abord transcodé en acte CSARR de référence pour le couple
+        # (code, intervenant, modalité collective), puis la pondération retenue est le MAX
+        # entre la pondération du modulateur de temps CSAR et celle de l'acte CSARR transcodé
+        # (§3.3.1.3), avec majoration de lieu propre au CSAR (§3.3.1.4). Pour un couple
+        # (acte transcodé, intervenant) non attendu — pondération CSARR transcodée à 0 — les
+        # modulateurs temps/lieu n'ont aucun effet (§3.3.1.3, dernier paragraphe) : on saute
+        # la ligne plutôt que de risquer de retenir à tort la seule pondération de temps.
+        csar_rows = conn.execute(
+            "SELECT c.code_intervenant, c.code_principal, c.code_modulateur_lieu, "
+            "c.code_modulateur_temps, c.modalite_collective, c.nombre_realisations, "
+            "r.numero_admin_sejour "
+            "FROM rhs_groupe_csar c "
+            "JOIN rhs_groupe r ON r.id = c.parent_id "
+            f"WHERE {join_clause} AND c.code_intervenant IS NOT NULL",
+            params,
+        ).fetchall()
+        for r in csar_rows:
+            intervenant = r["code_intervenant"]
+            coll = r["modalite_collective"] or 0
+            lookup_inter = _CSAR_INTERVENANT_FALLBACK.get(intervenant, intervenant)
+            code_csarr = _resolve_csar_transcodage(csar_transcodage, r["code_principal"], lookup_inter, coll)
+            if code_csarr is None:
+                continue
+            acte = ponderations_csarr_par_inter.get((code_csarr, lookup_inter))
+            if acte is None:
+                acte = ponderations_csarr_par_inter.get((code_csarr, "00"))
+            if acte is None or acte["ponderation"] == 0:
+                continue
+            pond_temps = ponderation_temps_csar.get(r["code_modulateur_temps"] or "Vide", 0.0)
+            retenue = max(pond_temps, acte["ponderation"])
+            pct = 0.0
+            lieu = r["code_modulateur_lieu"]
+            flag_cols = _CSAR_LIEU_FLAGS.get(lieu)
+            if flag_cols and any(acte[c] for c in flag_cols):
+                modul = majoration_lieu_csar.get(lieu)
+                if modul:
+                    raw = modul["collectif"] if coll else modul["individuel"]
+                    pct = raw if raw is not None else 0.0
+            n = r["nombre_realisations"] or 1
+            weighted = retenue * (1 + pct / 100) * n
+            s = scores.setdefault(intervenant, {"n": 0.0, "globale": 0.0, "specialisee": 0.0})
+            s["n"] += n
+            s["globale"] += weighted
+            gn = gn_by_sejour.get(_norm_numadmin(r["numero_admin_sejour"]))
+            if gn and code_csarr in actes_specialises.get(gn, ()):
+                s["specialisee"] += weighted
+
+        ccam_rows = conn.execute(
+            "SELECT cc.code_ccam, cc.nombre_realisations, r.numero_admin_sejour "
+            "FROM rhs_groupe_ccam cc "
+            "JOIN rhs_groupe r ON r.id = cc.parent_id "
+            f"WHERE {join_clause}",
+            params,
+        ).fetchall()
+        for r in ccam_rows:
+            acte = ponderations_ccam.get(r["code_ccam"])
+            if acte is None:
+                continue
+            n = r["nombre_realisations"] or 1
+            weighted = acte["ponderation"] * n
+            s = scores.setdefault(CCAM_PSEUDO_INTERVENANT, {"n": 0.0, "globale": 0.0, "specialisee": 0.0})
+            s["n"] += n
+            s["globale"] += weighted
+            gn = gn_by_sejour.get(_norm_numadmin(r["numero_admin_sejour"]))
+            if gn and r["code_ccam"] in actes_specialises.get(gn, ()):
+                s["specialisee"] += weighted
+
+        out[period["year"]] = scores
+    return out
+
+
+def section_csar_actes_ignores(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> list[dict]:
+    """Liste (annexe, 2026-09-17) des actes CSAR ignorés par le score de
+    réadaptation (section_readaptation_intervenant) faute de correspondance
+    dans la table de transcodage ATIH (nomenclature_csar_transcodage_detail)
+    pour le couple (code_csar, intervenant, modalité collective) codé sur le
+    RHS. Cas observé et vérifié le 2026-09-17 (établissement 680001112,
+    acte 07S07/intervenant 70/collectif) : la modalité collective codée
+    n'est PAS autorisée pour cet acte (colonne 'coll' vide dans mod_listes,
+    fichier associé CSAR, annexe 3 du guide de codage) — une non-conformité
+    au référentiel qui ne déclenche AUCUNE erreur de groupage ATIH
+    (indicateur_erreur reste vide) et ne serait donc, sans cette liste,
+    signalée nulle part : l'acte disparaît silencieusement du score.
+
+    Ne préjuge pas de la cause exacte (modalité interdite, code intervenant
+    hors liste, etc.) — reporte seulement les actes concrètement exclus, à
+    charge pour l'établissement de vérifier le motif au cas par cas."""
+    csar_transcodage = _load_csar_transcodage(conn)
+    labels = _load_intervenant_labels(conn)
+
+    out = []
+    for period in periods:
+        clause, params = _period_filter(period, finess, axis_filter)
+        join_clause = _join_clause_on_rhs_groupe(clause)
+        rows = conn.execute(
+            "SELECT c.code_principal, c.code_intervenant, c.modalite_collective, "
+            "c.date_realisation, c.nombre_realisations, r.numero_admin_sejour "
+            "FROM rhs_groupe_csar c "
+            "JOIN rhs_groupe r ON r.id = c.parent_id "
+            f"WHERE {join_clause} AND c.code_intervenant IS NOT NULL",
+            params,
+        ).fetchall()
+        for r in rows:
+            intervenant = r["code_intervenant"]
+            coll = r["modalite_collective"] or 0
+            lookup_inter = _CSAR_INTERVENANT_FALLBACK.get(intervenant, intervenant)
+            code_csarr = _resolve_csar_transcodage(csar_transcodage, r["code_principal"], lookup_inter, coll)
+            if code_csarr is not None:
+                continue
+            out.append({
+                "annee": period["year"],
+                "numero_admin_sejour": r["numero_admin_sejour"],
+                "date_realisation": r["date_realisation"],
+                "code_csar": r["code_principal"],
+                "intervenant": labels.get(intervenant, intervenant),
+                "modalite_collective": "Collectif" if coll else "Individuel",
+                "nombre_realisations": r["nombre_realisations"] or 1,
+            })
+    return out
+
+
+def section_erreurs_activite(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
+    """Décompte (diag, CSARR, CSAR) porté par des séjours en erreur de groupage
+    bloquante (indicateur_erreur rempli), à titre d'information seulement — ce tableau
+    de bord garde volontairement ces séjours dans tous les totaux (logique activité,
+    pas facturation), contrairement au rapport ATIH officiel qui les exclut. Un nombre
+    élevé ici est un signal d'alerte sur des séjours à corriger, pas une erreur de calcul.
+    """
+    out = {}
+    for period in periods:
+        clause, params = _period_filter(period, finess, axis_filter)
+        rhs_ids = [
+            r["id"] for r in conn.execute(
+                f"SELECT id FROM rhs_groupe WHERE {clause} AND indicateur_erreur IS NOT NULL AND trim(indicateur_erreur) != ''",
+                params,
+            ).fetchall()
+        ]
+        nb_diag = 0
+        nb_csarr = 0
+        nb_csar = 0
+        if rhs_ids:
+            placeholders = ",".join("?" * len(rhs_ids))
+            nb_diag = conn.execute(
+                f"SELECT COUNT(DISTINCT parent_id || '|' || trim(code_das)) n "
+                f"FROM rhs_groupe_das WHERE parent_id IN ({placeholders})",
+                rhs_ids,
+            ).fetchone()["n"]
+            nb_csarr = conn.execute(
+                f"SELECT SUM(nombre_realisations) n FROM rhs_groupe_csarr WHERE parent_id IN ({placeholders})",
+                rhs_ids,
+            ).fetchone()["n"] or 0
+            nb_csar = conn.execute(
+                f"SELECT SUM(nombre_realisations) n FROM rhs_groupe_csar WHERE parent_id IN ({placeholders})",
+                rhs_ids,
+            ).fetchone()["n"] or 0
+        out[period["year"]] = {
+            "nb_sejours_erreur": len({
+                r["numero_admin_sejour"] for r in conn.execute(
+                    f"SELECT numero_admin_sejour FROM rhs_groupe WHERE {clause} AND indicateur_erreur IS NOT NULL AND trim(indicateur_erreur) != ''",
+                    params,
+                ).fetchall()
+            }),
+            "nb_rhs_erreur": len(rhs_ids),
+            "nb_diag_erreur": nb_diag,
+            "nb_csarr_erreur": nb_csarr,
+            "nb_csar_erreur": nb_csar,
+        }
+    return out
+
+
+def section_absence_csarr(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
+    out = {}
+    for period in periods:
+        clause, params = _period_filter(period, finess, axis_filter)
+        rows = conn.execute(
+            f"SELECT numero_admin_sejour, n2_nb_csarr, jours_hors_weekend, jours_weekend FROM rhs_groupe WHERE {clause}",
+            params,
+        ).fetchall()
+        nb_rhs = len(rows)
+        rhs_sans_acte = [r for r in rows if (r["n2_nb_csarr"] or 0) == 0]
+        nb_rhs_sans_acte = len(rhs_sans_acte)
+        nb_jrs_sans_acte = sum(_count_present_days(r) for r in rhs_sans_acte)
+
+        csarr_par_sejour: dict[str, int] = {}
+        for r in rows:
+            s = r["numero_admin_sejour"]
+            csarr_par_sejour[s] = csarr_par_sejour.get(s, 0) + (r["n2_nb_csarr"] or 0)
+        nb_ssr_sans_acte = sum(1 for total in csarr_par_sejour.values() if total == 0)
+
+        out[period["year"]] = {
+            "nb_ssr_sans_acte": nb_ssr_sans_acte,
+            "nb_rhs_sans_acte": nb_rhs_sans_acte,
+            "nb_jrs_sans_acte": nb_jrs_sans_acte,
+            "pct_rhs_sans_acte": 100 * nb_rhs_sans_acte / nb_rhs if nb_rhs else 0,
+        }
+    return out
+
+
+def section_erreurs_groupage(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
+    out = {}
+    for period in periods:
+        clause, params = _period_filter(period, finess, axis_filter)
+        rows = conn.execute(
+            "SELECT indicateur_erreur, numero_admin_sejour FROM rhs_groupe "
+            f"WHERE {clause} AND indicateur_erreur IS NOT NULL AND indicateur_erreur != ''",
+            params,
+        ).fetchall()
+        par_code: dict[str, dict] = {}
+        for r in rows:
+            code = r["indicateur_erreur"]
+            bucket = par_code.setdefault(code, {"sejours": set(), "nb_rhs": 0})
+            bucket["sejours"].add(r["numero_admin_sejour"])
+            bucket["nb_rhs"] += 1
+        out[period["year"]] = [
+            {"code": code, "nb_ssr": len(b["sejours"]), "nb_rhs": b["nb_rhs"]}
+            for code, b in sorted(par_code.items())
+        ]
+    return out
+
+
+def section_incoherences_vidhosp_rhs(conn: sqlite3.Connection, finess: str) -> list[dict]:
+    """Détecte les séjours où le VID-HOSP ne concorde pas avec le RHS groupé :
+    dossier RHS présent avec des semaines hors de la plage [date_entree, date_sortie]
+    du VID-HOSP (dossier PMSI non clôturé alors que le RHS continue d'être transmis),
+    ou séjour RHS sans aucun enregistrement VID-HOSP du tout.
+
+    Repéré empiriquement sur un séjour réel : dossier administratif clôturé (un
+    autre dossier, EHPAD, ouvre le même jour — hors périmètre PMSI-SSR, 0 ligne
+    RHS), mais la clôture PMSI/VID-HOSP n'a jamais été faite : le RHS continue
+    à être transmis semaine après semaine bien après la date de sortie
+    officielle, alors que le VID-HOSP reste bloqué à cette date de sortie.
+    """
+    rhs_rows = conn.execute(
+        "SELECT finess_epmsi, numero_admin_sejour, numero_semaine, date_debut_sejour, date_fin_sejour "
+        "FROM rhs_groupe WHERE numero_admin_sejour IS NOT NULL AND finess_epmsi = ?",
+        [finess],
+    ).fetchall()
+
+    by_sejour: dict[tuple[str, str], dict] = {}
+    for r in rhs_rows:
+        key = (r["finess_epmsi"], r["numero_admin_sejour"])
+        b = by_sejour.setdefault(key, {"weeks": [], "date_debut": None, "date_fin": None})
+        ns = r["numero_semaine"]
+        if ns:
+            week, year = int(ns[:2]), ns[2:6]
+            try:
+                b["weeks"].append(datetime.date.fromisocalendar(int(year), week, 7))
+            except ValueError:
+                pass
+        if r["date_debut_sejour"]:
+            b["date_debut"] = min(b["date_debut"] or r["date_debut_sejour"], r["date_debut_sejour"])
+        if r["date_fin_sejour"]:
+            b["date_fin"] = max(b["date_fin"] or r["date_fin_sejour"], r["date_fin_sejour"])
+
+    vidhosp_by_sejour: dict[tuple[str, str], sqlite3.Row] = {}
+    for r in conn.execute(
+        "SELECT finess_epmsi, numero_admin_sejour, numero_immatriculation_assure, "
+        "date_entree, date_hospitalisation, date_sortie FROM vid_hosp WHERE finess_epmsi = ?",
+        [finess],
+    ).fetchall():
+        vidhosp_by_sejour[(r["finess_epmsi"], r["numero_admin_sejour"])] = r
+
+    anomalies = []
+    for key, b in by_sejour.items():
+        if not b["weeks"]:
+            continue
+        rhs_last_week = max(b["weeks"])
+        rhs_end = datetime.date.fromisoformat(b["date_fin"]) if b["date_fin"] else rhs_last_week
+        vh = vidhosp_by_sejour.get(key)
+        if vh is None:
+            anomalies.append({
+                "numero_admin_sejour": key[1],
+                "nir": None,
+                "vidhosp_entree": None,
+                "vidhosp_sortie": None,
+                "rhs_derniere_semaine": rhs_last_week.isoformat(),
+                "type": "Aucun enregistrement VID-HOSP pour ce séjour",
+            })
+            continue
+        vh_sortie = datetime.date.fromisoformat(vh["date_sortie"]) if vh["date_sortie"] else None
+        # Écart minimal avant de signaler : un séjour encore en cours a un date_sortie
+        # VID-HOSP provisoire (fin du mois de la transmission), à quelques jours de la
+        # dernière semaine RHS — pas une vraie incohérence. Seul un écart de plusieurs
+        # semaines trahit un dossier PMSI réellement non clôturé.
+        if vh_sortie is not None and (rhs_end - vh_sortie).days > 21:
+            anomalies.append({
+                "numero_admin_sejour": key[1],
+                "nir": vh["numero_immatriculation_assure"],
+                "vidhosp_entree": vh["date_entree"] or vh["date_hospitalisation"],
+                "vidhosp_sortie": vh["date_sortie"],
+                "rhs_derniere_semaine": rhs_last_week.isoformat(),
+                "type": "Dossier PMSI non clôturé (RHS transmis après la sortie VID-HOSP)",
+            })
+    anomalies.sort(key=lambda a: a["numero_admin_sejour"])
+    return anomalies
+
+
+def list_finess(conn: sqlite3.Connection) -> list[str]:
+    """Liste des FINESS présents en base (union RHS/VID-HOSP), triés."""
+    rows = conn.execute(
+        "SELECT DISTINCT finess_epmsi FROM rhs_groupe "
+        "UNION SELECT DISTINCT finess_epmsi FROM vid_hosp"
+    ).fetchall()
+    return sorted(r["finess_epmsi"] for r in rows if r["finess_epmsi"])
+
+
+TYPE_HOSPITALISATION_LABELS = {
+    "1": "Hospitalisation complète (HC)",
+    "2": "Hospitalisation partielle (HTP)",
+}
+"""Pas de distinction jour/nuit (2026-08-05, demande utilisateur —
+établissement non spécialisé en HTP de nuit, "tout est de jour") : le code
+RHS "3" (HTP nuit) est fusionné dans "2" dès valeurs_axe (voir
+TYPE_HOSPITALISATION_GROUPES dans valorisation.py) et n'apparaît donc jamais
+seul comme valeur d'axe."""
+
+
+def valeurs_axe(conn: sqlite3.Connection, periods: list[dict], finess: str, champ: str) -> list[str]:
+    """Valeurs distinctes de `champ` (`numero_unite_medicale` ou
+    `type_hospitalisation`) — sert à énumérer les TDB secondaires à générer
+    (un TDB complet PAR valeur, demande utilisateur 2026-08-04, voir
+    build(..., axis_filter=...)). Pour `type_hospitalisation`, les codes RHS
+    sont regroupés via TYPE_HOSPITALISATION_GROUPES (HTP jour/nuit fusionnés,
+    2026-08-05).
+
+    `numero_unite_medicale` : énumérée SUR TOUTE LA BASE de ce FINESS, PAS
+    restreinte aux périodes demandées (2026-08-05, bug trouvé en vérifiant
+    que la somme des UF reproduit le total établissement) — la ventilation
+    UF de montant_br_tot répartit chaque séjour sur TOUTES ses journées de
+    présence, toutes années confondues (séjours à cheval), donc un séjour
+    facturé sur la campagne 2025 mais ayant fréquenté une UF UNIQUEMENT en
+    2024 ou 2026 doit quand même voir cette UF proposée, sous peine de faire
+    disparaître sa part du total (un montant non négligeable manquant constaté
+    sur un établissement réel avant ce correctif, plusieurs séjours ayant
+    visité une UF hors de la fenêtre de campagne). `type_hospitalisation` reste restreinte aux périodes
+    demandées : sa ventilation est scopée par CAMPAGNE (colonne SQL exacte,
+    pas de présence multi-année à couvrir), donc pas concernée par ce bug."""
+    if champ == "numero_unite_medicale":
+        rows = conn.execute(
+            "SELECT DISTINCT numero_unite_medicale FROM rhs_groupe "
+            "WHERE finess_epmsi = ? AND numero_unite_medicale IS NOT NULL AND numero_unite_medicale != ''",
+            [finess],
+        ).fetchall()
+        return sorted(r[0] for r in rows)
+
+    from src.viz.valorisation import TYPE_HOSPITALISATION_GROUPES
+
+    values: set[str] = set()
+    for period in periods:
+        clause, params = _period_filter(period, finess)
+        rows = conn.execute(
+            f"SELECT DISTINCT {champ} FROM rhs_groupe WHERE {clause} AND {champ} IS NOT NULL AND {champ} != ''",
+            params,
+        ).fetchall()
+        values.update(TYPE_HOSPITALISATION_GROUPES.get(r[0], r[0]) for r in rows)
+    return sorted(values)
+
+
+def _sejours_matching_axis(
+    conn: sqlite3.Connection, period: dict, finess: str, axis_filter: tuple[str, str] | None
+) -> set[str] | None:
+    """Séjours ayant au moins une ligne RHS correspondant à `axis_filter` sur
+    la période — utilisé pour restreindre la section Patients (VID-HOSP,
+    aucune notion d'UF/type d'hospitalisation propre) dans un TDB secondaire.
+    Renvoie None si `axis_filter` est None (pas de restriction)."""
+    if not axis_filter:
+        return None
+    clause, params = _period_filter(period, finess, axis_filter)
+    rows = conn.execute(
+        f"SELECT DISTINCT numero_admin_sejour FROM rhs_groupe WHERE {clause}", params
+    ).fetchall()
+    return {_norm_numadmin(r[0]) for r in rows}
+
+
+_GME_CODE_LENGTH = {"CM": 2, "GN": 4, "GME": 7}
+
+
+def _load_gme_labels(conn: sqlite3.Connection, quoi: str) -> dict[str, str]:
+    rows = conn.execute(
+        "SELECT code, libelle_court, libelle_long FROM nomenclature_gme WHERE kind = ?", [quoi]
+    ).fetchall()
+    return {r["code"]: (r["libelle_long"] or r["libelle_court"] or r["code"]) for r in rows}
+
+
+def _sejour_code_gme_by_period(
+    conn: sqlite3.Connection,
+    period: dict,
+    finess: str,
+    length: int,
+    axis_filter: tuple[str, str] | None = None,
+) -> dict[int, str]:
+    """Pour chaque séjour actif dans la période, le code GME (tronqué à
+    `length` caractères — CM=2/GN=4/GME=7, cf. gme.py) de sa DERNIÈRE semaine
+    RHS connue dans la période : représente son classement le plus à jour,
+    au cas où un séjour serait re-groupé d'une semaine à l'autre."""
+    clause, params = _period_filter(period, finess, axis_filter)
+    rows = conn.execute(
+        f"SELECT numero_admin_sejour, numero_semaine, code_gme FROM rhs_groupe "
+        f"WHERE {clause} AND code_gme IS NOT NULL AND code_gme != ''",
+        params,
+    ).fetchall()
+    best: dict[int, tuple[int, str]] = {}
+    for numadmin, numero_semaine, code in rows:
+        numadmin = _norm_numadmin(numadmin)
+        week = int(numero_semaine[:2])
+        prev = best.get(numadmin)
+        if prev is None or week >= prev[0]:
+            best[numadmin] = (week, code[:length])
+    return {k: v[1] for k, v in best.items()}
+
+
+def section_palmares_gme(
+    conn: sqlite3.Connection,
+    periods: list[dict],
+    finess: str,
+    quoi: str,
+    top_n: int = 5,
+    axis_filter: tuple[str, str] | None = None,
+) -> dict:
+    """Palmarès des `top_n` codes CM/GN/GME les plus fréquents (classés sur
+    l'EFFECTIF total cumulé sur toutes les périodes comparées — mêmes 5 codes
+    affichés pour chaque année, même si leur rang change d'une année à
+    l'autre), avec effectif (nb séjours) et valorisation (montant_br_tot,
+    même filtre de comparabilité campagne/max_week que la section 6) par
+    colonne-année, plus le % de chacun par rapport au total (tous codes, pas
+    seulement le top `top_n`) de sa colonne.
+
+    Un séjour compte pour le code GME de sa DERNIÈRE semaine RHS connue dans
+    la période (voir _sejour_code_gme_by_period) — cohérent avec le principe
+    "classement le plus à jour" déjà utilisé ailleurs dans ce module.
+    """
+    from src.viz.valorisation import EXCLUSION_MONTANT_OFFICIEL, _derniere_semaine_rhs_par_sejour
+
+    length = _GME_CODE_LENGTH[quoi]
+    labels = _load_gme_labels(conn, quoi)
+
+    effectifs: dict[str, dict[str, int]] = {}
+    valorisations: dict[str, dict[str, float]] = {}
+
+    for period in periods:
+        y = period["year"]
+        sejour_codes = _sejour_code_gme_by_period(conn, period, finess, length, axis_filter)
+
+        eff: dict[str, int] = {}
+        for code in sejour_codes.values():
+            eff[code] = eff.get(code, 0) + 1
+        effectifs[y] = eff
+
+        derniere_semaines = _derniere_semaine_rhs_par_sejour(conn, int(y), finess)
+        clause = f"WHERE campagne = ? AND montant_br_tot IS NOT NULL AND {EXCLUSION_MONTANT_OFFICIEL}"
+        params: list = [int(y)]
+        if finess is not None:
+            clause += " AND finess_epmsi = ?"
+            params.append(finess)
+        rows = conn.execute(
+            "SELECT numero_admin_sejour, montant_br_sej "
+            f"FROM valorisation_sejour {clause}",
+            params,
+        ).fetchall()
+        val: dict[str, float] = {}
+        for numadmin, montant in rows:
+            numadmin = _norm_numadmin(numadmin)
+            derniere = derniere_semaines.get(numadmin)
+            if derniere is None or derniere > period["max_week"]:
+                continue
+            code = sejour_codes.get(numadmin)
+            if code is None:
+                continue
+            val[code] = val.get(code, 0.0) + montant
+        valorisations[y] = val
+
+    totals: dict[str, int] = {}
+    for eff in effectifs.values():
+        for code, n in eff.items():
+            totals[code] = totals.get(code, 0) + n
+    top_codes = sorted(totals, key=lambda c: totals[c], reverse=True)[:top_n]
+
+    total_eff_by_year = {y: sum(eff.values()) for y, eff in effectifs.items()}
+    total_val_by_year = {y: sum(val.values()) for y, val in valorisations.items()}
+
+    rows_out = []
+    for code in top_codes:
+        row = {"code": code, "libelle": labels.get(code, code), "data": {}}
+        for period in periods:
+            y = period["year"]
+            n = effectifs[y].get(code, 0)
+            v = valorisations[y].get(code, 0.0)
+            tot_n, tot_v = total_eff_by_year[y], total_val_by_year[y]
+            row["data"][y] = {
+                "effectif": n,
+                "pct_effectif": (100.0 * n / tot_n) if tot_n else 0.0,
+                "valorisation": v,
+                "pct_valorisation": (100.0 * v / tot_v) if tot_v else 0.0,
+            }
+        rows_out.append(row)
+
+    return {"quoi": quoi, "rows": rows_out}
+
+
+# Libellés des caractères structurels du code GME (cf. décision utilisateur
+# 2026-07-30 sur le sens des lettres GR/GL, et 2026-08-03 sur les sévérités) :
+# GR (5e caractère) = type de rééducation ; GL (6e caractère) = niveau de
+# dépendance (HC uniquement) ; 7e caractère = sévérité. "ERR" est une clé
+# de repli (pas un vrai caractère du code) pour tout séjour dont le type GR
+# n'est pas reconnu — cas confirmé empiriquement : `9096ZZ0`, le code_gme
+# placeholder d'un séjour en erreur de groupage bloquante (indicateur_erreur
+# rempli, code_retour_groupage='28' = "mode d'entrée absent") — ne pas le
+# classer à tort sous une vraie catégorie (ex. sévérité "0", qui a par
+# ailleurs un sens réel pour les vrais séjours HTP).
+_GR_LABELS = {
+    "P": "Pédiatrique (HC)",
+    "S": "Spécialisée (HC)",
+    "T": "Globale (HC)",
+    "U": "Autre (HC)",
+    "H": "Pédiatrique (HTP)",
+    "I": "Très intensive (HTP)",
+    "J": "Intensive (HTP)",
+    "K": "Modérée (HTP)",
+    "L": "Indifférenciée (HTP)",
+}
+_GL_LABELS = {"A": "Niveau A", "B": "Niveau B", "C": "Niveau C"}
+_SEVERITE_LABELS = {"0": "HTP", "1": "HC sans sévérité", "2": "HC avec sévérité"}
+_ERREUR_KEY, _ERREUR_LABEL = "ERR", "Erreur de groupage"
+
+
+def _structure_bucket_key(code: str, block: str) -> str:
+    gr_letter = code[4] if len(code) > 4 else None
+    if gr_letter not in _GR_LABELS:
+        return _ERREUR_KEY
+    if block == "gr":
+        return gr_letter
+    if block == "gl":
+        gl_letter = code[5] if len(code) > 5 else None
+        return gl_letter if gl_letter in _GL_LABELS else _ERREUR_KEY
+    sev = code[6] if len(code) > 6 else None
+    return sev if sev in _SEVERITE_LABELS else _ERREUR_KEY
+
+
+def section_structure_gme(
+    conn: sqlite3.Connection, periods: list[dict], finess: str, axis_filter: tuple[str, str] | None = None
+) -> dict:
+    """Section 9 — trois blocs statistiques TRANSVERSES (toutes CM/GN
+    confondues, pas de top N) sur la structure du groupage GME, demandés par
+    l'utilisateur en complément des palmarès CM/GN (sections 7-8) : type de
+    rééducation (GR), groupe de lourdeur (GL), sévérité — chacun avec un
+    sous-total. Même principe d'attribution séjour→code que section_palmares_gme
+    (dernière semaine RHS connue de la période) et même filtre de
+    comparabilité valorisation que la section 6.
+    """
+    from src.viz.valorisation import EXCLUSION_MONTANT_OFFICIEL, _derniere_semaine_rhs_par_sejour
+
+    blocks = ("gr", "gl", "sev")
+    effectifs: dict[str, dict[str, dict[str, int]]] = {b: {} for b in blocks}
+    valorisations: dict[str, dict[str, dict[str, float]]] = {b: {} for b in blocks}
+
+    for period in periods:
+        y = period["year"]
+        sejour_codes = _sejour_code_gme_by_period(conn, period, finess, 7, axis_filter)
+
+        for block in blocks:
+            eff: dict[str, int] = {}
+            for code in sejour_codes.values():
+                k = _structure_bucket_key(code, block)
+                eff[k] = eff.get(k, 0) + 1
+            effectifs[block][y] = eff
+
+        derniere_semaines = _derniere_semaine_rhs_par_sejour(conn, int(y), finess)
+        clause = f"WHERE campagne = ? AND montant_br_tot IS NOT NULL AND {EXCLUSION_MONTANT_OFFICIEL}"
+        params: list = [int(y)]
+        if finess is not None:
+            clause += " AND finess_epmsi = ?"
+            params.append(finess)
+        rows = conn.execute(
+            "SELECT numero_admin_sejour, montant_br_sej "
+            f"FROM valorisation_sejour {clause}",
+            params,
+        ).fetchall()
+        val_by_block: dict[str, dict[str, float]] = {b: {} for b in blocks}
+        for numadmin, montant in rows:
+            numadmin = _norm_numadmin(numadmin)
+            derniere = derniere_semaines.get(numadmin)
+            if derniere is None or derniere > period["max_week"]:
+                continue
+            code = sejour_codes.get(numadmin)
+            if code is None:
+                continue
+            for block in blocks:
+                k = _structure_bucket_key(code, block)
+                val_by_block[block][k] = val_by_block[block].get(k, 0.0) + montant
+        for block in blocks:
+            valorisations[block][y] = val_by_block[block]
+
+    labels_by_block = {"gr": _GR_LABELS, "gl": _GL_LABELS, "sev": _SEVERITE_LABELS}
+    order_by_block = {"gr": list(_GR_LABELS), "gl": list(_GL_LABELS), "sev": list(_SEVERITE_LABELS)}
+
+    def build_rows(block: str) -> list[dict]:
+        eff_by_year = effectifs[block]
+        val_by_year = valorisations[block]
+        totals_by_key: dict[str, int] = {}
+        for eff in eff_by_year.values():
+            for k, n in eff.items():
+                totals_by_key[k] = totals_by_key.get(k, 0) + n
+        keys = [k for k in order_by_block[block] if totals_by_key.get(k)]
+        if totals_by_key.get(_ERREUR_KEY):
+            keys.append(_ERREUR_KEY)
+
+        rows_out = []
+        for key in keys:
+            row = {"code": key, "libelle": labels_by_block[block].get(key, _ERREUR_LABEL), "data": {}}
+            for period in periods:
+                y = period["year"]
+                eff, val = eff_by_year.get(y, {}), val_by_year.get(y, {})
+                n, v = eff.get(key, 0), val.get(key, 0.0)
+                tot_n, tot_v = sum(eff.values()), sum(val.values())
+                row["data"][y] = {
+                    "effectif": n,
+                    "pct_effectif": (100.0 * n / tot_n) if tot_n else 0.0,
+                    "valorisation": v,
+                    "pct_valorisation": (100.0 * v / tot_v) if tot_v else 0.0,
+                }
+            rows_out.append(row)
+
+        subtotal = {"code": None, "libelle": "Sous-total", "data": {}}
+        for period in periods:
+            y = period["year"]
+            eff, val = eff_by_year.get(y, {}), val_by_year.get(y, {})
+            tot_n, tot_v = sum(eff.values()), sum(val.values())
+            subtotal["data"][y] = {
+                "effectif": tot_n,
+                "pct_effectif": 100.0 if tot_n else 0.0,
+                "valorisation": tot_v,
+                "pct_valorisation": 100.0 if tot_v else 0.0,
+            }
+        rows_out.append(subtotal)
+        return rows_out
+
+    return {
+        "gr": {"titre": "Type de rééducation (GR)", "rows": build_rows("gr")},
+        "gl": {"titre": "Groupe de lourdeur (GL)", "rows": build_rows("gl")},
+        "sev": {"titre": "Sévérité", "rows": build_rows("sev")},
+    }
+
+
+def section_valorisation(
+    conn: sqlite3.Connection,
+    periods: list[dict],
+    finess: str,
+    sejours: dict,
+    axis_filter: tuple[str, str] | None = None,
+) -> dict:
+    """Section 6 — Valorisation : montant BR (Budget Régulé) reconstitué pour
+    la période, réparti au prorata temporis par jour de présence (voir
+    src/viz/valorisation.py — répartition uniforme du montant de chaque
+    CAMPAGNE sur ses jours de présence RHS attribuables), puis 3 prix moyens
+    dérivés (demande utilisateur 2026-07-30) :
+    - PMCT (prix moyen par cas traité)   = montant BR / nb séjours (nb_ssr)
+    - PMST (prix moyen par semaine traitée) = montant BR / nb semaines (nb_rhs
+      — chaque ligne RHS groupé = une semaine ISO d'un séjour)
+    - PMJT (prix moyen par jour traité)  = montant BR / nb journées de
+      présence (nb_journees)
+    `sejours` = data["sejours"] déjà calculé (section_sejours), réutilisé pour
+    ces dénominateurs plutôt que recalculé ici.
+
+    Ajout 2026-07-31 (demande utilisateur, vérification qualité) :
+    `montant_br_tot` = figure OFFICIELLE ATIH (le montant reçu/facturé),
+    affichée à côté de `montant_br_pt` (renommé depuis `montant_br`, notre
+    calcul pro rata temporis) pour que l'utilisateur puisse comparer les
+    deux. Pour rester comparable à une vraie transmission M04 (le cas de
+    2026, où le fichier source EST une transmission M04), les campagnes
+    2024/2025 — dont on ne dispose qu'en transmission M12 (année complète) —
+    sont restreintes aux séjours dont l'activité RHS ne dépasse pas la
+    semaine limite `max_week` de la période (voir
+    montant_br_tot_campagne_comparable dans src/viz/valorisation.py) : un
+    séjour encore ouvert après cette semaine n'aurait pas eu de montant
+    stable/connu dans une vraie transmission M04 de son année, même s'il
+    apparaît déjà soldé dans le fichier M12 qu'on a chargé. Approximation
+    assumée (pas de vraie transmission M04 2024/2025 disponible).
+
+    `axis_filter` (optionnel, TDB secondaire "par UF"/"par type
+    d'hospitalisation", 2026-08-04, décision utilisateur) : `montant_br_pt`
+    est reproraté sur les seuls jours de présence RHS qui tombent dans le
+    filtre (voir valeur_sur_periode/compute_valeur_journaliere).
+
+    `montant_br_tot` par axe (2026-08-05, précisé après question utilisateur
+    en pratique sur un cas réel où rien ne s'affichait pour l'axe HTP, puis
+    corrigé après remarque utilisateur sur la méthode UF, voir ci-dessous) :
+    - `type_hospitalisation` : ventilation EXACTE, via la colonne NATIVE
+      `valorisation_sejour.type_hospitalisation` (C/P — indépendante du champ
+      RHS, voir RHS_VERS_VALO_TYPE_HOSPITALISATION). Vérifié manuellement par
+      l'utilisateur sur un établissement réel : HC + HTP reconstitue
+      exactement le total établissement déjà validé, et le montant HC seul
+      déjà confirmé contre la restitution Ovalide le 2026-07-31.
+    - `numero_unite_medicale` : AUCUNE colonne équivalente dans
+      valorisation_sejour. Ventilé au PRORATA DES JOURNÉES DE PRÉSENCE par
+      UF, TOUTES campagnes confondues (pas restreint à la période affichée —
+      demande utilisateur explicite 2026-08-05, ex. séjour de 100j dont 80j
+      en UF A/20j en UF B ⇒ 80%/20% du montant OFFICIEL, même si le séjour
+      est à cheval sur plusieurs périodes/campagnes). Corrige une première
+      version (utilisant `montant_br_pt`, restreint aux jours DANS la
+      période étudiée) dont la somme sur toutes les UF ne reproduisait PAS
+      le total établissement pour un séjour actif au-delà de la période —
+      celle-ci si, par construction (`montant_br_tot_exact=False` reste mis
+      pour signaler que c'est un modèle, pas une colonne source réelle).
+    - Sans axe : figure officielle ATIH complète (comme avant).
+
+    `montant_br_tot_sans_filtre` / `montant_br_non_fact` (2026-08-05, demande
+    utilisateur) : `montant_br_tot_sans_filtre` reprend le même calcul SANS
+    exclure les séjours nv_nonfactam/nv_chain/nv_attente_dts (exclure=False,
+    voir montant_br_tot_campagne_comparable) ; `montant_br_non_fact` est la
+    différence (montant_br_tot_sans_filtre − montant_br_tot) — la recette
+    "perdue" à cause de ces anomalies. Calculé pour le TDB principal et l'axe
+    type_hospitalisation (même colonne exacte) ; absent (None) pour l'axe UF
+    (montant_br_tot y est déjà une approximation, pas la vraie base ATIH).
+
+    `estimation_en_cours` (ESSAI, 2026-08-05, demande utilisateur) : pour
+    les séjours <90j non clos "propres" (aucune anomalie nv_chain/
+    nv_attente_dts/nv_nonfactam — voir sejours_non_factures_sans_anomalie),
+    applique le PMJT déjà calculé ci-dessous (donc SANS boucle : le PMJT
+    n'est jamais recalculé à partir de cette estimation) à leurs journées de
+    présence — filtrées par le même axe le cas échéant — pour estimer la
+    recette qu'ils produiront une fois facturés.
+
+    `supplements` / `non_valorises` (2026-08-21, décision utilisateur) :
+    depuis ce correctif, TOUS les montants ci-dessus (`montant_br_tot`,
+    `montant_br_pt`...) sont basés sur `montant_br_sej` (= montant_br_gmt +
+    montant_br_gmth SEUL, sans transport/molécules onéreuses/cancérologie —
+    voir src/viz/valorisation.py), pas `montant_br_tot` au sens CSV du terme.
+    `supplements` (montant_br_supplements_campagne_comparable) donne ces
+    3 suppléments À PART, jamais mélangés au prix par journée. `non_valorises`
+    (sejours_non_valorises_campagne) liste par cause les séjours actifs sur
+    la période sans AUCUN montant_br_sej connu (anomalie NV_*, erreur de
+    groupage, ou simplement en cours). Absents (None) sur un TDB secondaire
+    par axe (UF/type d'hospitalisation) — pas de sens à les y ventiler."""
+    from src.viz.valorisation import (
+        estimation_recettes_sejours_en_cours,
+        montant_br_supplements_campagne_comparable,
+        montant_br_tot_campagne_comparable,
+        sejours_non_valorises_campagne,
+        valeur_sur_periode,
+    )
+
+    out = {}
+    for period in periods:
+        y = period["year"]
+        montant_br_pt = valeur_sur_periode(conn, period["start"], period["end"], finess, axis_filter)
+        sej = sejours[y]
+        pmjt = montant_br_pt / sej["nb_journees"] if sej["nb_journees"] else None
+        montant_br_tot_sans_filtre = None
+        montant_br_non_fact = None
+        montant_br_tot_exact = True
+        if not axis_filter:
+            montant_br_tot = montant_br_tot_campagne_comparable(conn, y, period["max_week"], finess)
+            montant_br_tot_sans_filtre = montant_br_tot_campagne_comparable(
+                conn, y, period["max_week"], finess, exclure=False
+            )
+            montant_br_non_fact = montant_br_tot_sans_filtre - montant_br_tot
+        else:
+            montant_br_tot = montant_br_tot_campagne_comparable(
+                conn, y, period["max_week"], finess, axis_filter=axis_filter
+            )
+            montant_br_tot_sans_filtre = montant_br_tot_campagne_comparable(
+                conn, y, period["max_week"], finess, exclure=False, axis_filter=axis_filter
+            )
+            montant_br_non_fact = montant_br_tot_sans_filtre - montant_br_tot
+            montant_br_tot_exact = axis_filter[0] == "type_hospitalisation"
+        estimation_en_cours = estimation_recettes_sejours_en_cours(conn, period, finess, pmjt, axis_filter)
+        montant_br_pt_avec_estimation = montant_br_pt + estimation_en_cours["montant"]
+        # Suppléments (transport/MO/cancéro) et séjours non valorisés : hors
+        # axis_filter (pas de sens à les ventiler par UF/type d'hosp., et
+        # ça alourdirait le TDB secondaire — demande utilisateur 2026-08-21,
+        # affichés seulement sur le TDB principal).
+        supplements = None if axis_filter else montant_br_supplements_campagne_comparable(conn, y, period["max_week"], finess)
+        non_valorises = None if axis_filter else sejours_non_valorises_campagne(conn, y, period["max_week"], finess)
+        out[y] = {
+            "montant_br_pt": montant_br_pt,
+            "montant_br_tot": montant_br_tot,
+            "montant_br_tot_exact": montant_br_tot_exact,
+            "montant_br_tot_sans_filtre": montant_br_tot_sans_filtre,
+            "montant_br_non_fact": montant_br_non_fact,
+            "estimation_en_cours": estimation_en_cours,
+            "montant_br_pt_avec_estimation": montant_br_pt_avec_estimation,
+            "supplements": supplements,
+            "non_valorises": non_valorises,
+            "pmct": montant_br_pt / sej["nb_ssr"] if sej["nb_ssr"] else None,
+            "pmst": montant_br_pt / sej["nb_rhs"] if sej["nb_rhs"] else None,
+            "pmjt": pmjt,
+        }
+    return out
+
+
+def build(
+    finess: str,
+    years: list[str] | None = None,
+    axis_filter: tuple[str, str] | None = None,
+    mois_fin: int | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> dict:
+    """`years` (optionnel, ex. ["2025", "2026"], max 3) restreint le TDB aux
+    années choisies dans la page "TDB choix" — voir compute_reporting_periods.
+    Sans argument, comportement inchangé (toutes les années comparables
+    disponibles), pour ne pas casser les appels existants (CLI, main()).
+
+    `axis_filter` (optionnel, ex. `("numero_unite_medicale", "3001")` ou
+    `("type_hospitalisation", "1")`, 2026-08-04) : produit un TDB complet
+    restreint à cette seule valeur d'UF/type d'hospitalisation — un TDB
+    secondaire = un appel à build() par valeur (voir
+    src/viz/render_dashboard.py generate_axis_reports()), pas une section en
+    plus du TDB principal.
+
+    `mois_fin` (optionnel, 1-12, 2026-08-05) : voir compute_reporting_periods —
+    impose le mois de fin de période (toujours cumulatif depuis janvier).
+
+    `conn` (optionnel, 2026-08-25, correctif de performance) : connexion
+    déjà ouverte à réutiliser au lieu d'en ouvrir/fermer une nouvelle — ne
+    PAS la fermer ici, l'appelant en reste propriétaire. Permet à
+    generate_axis_reports() de partager une connexion sur toute la boucle
+    par UF, pour que le cache de valorisation.py (voir
+    _rhs_presence_days_by_sejour) profite à toutes les valeurs d'axe au lieu
+    de tout recalculer à chaque UF. Sans argument, comportement inchangé
+    (connexion locale ouverte puis fermée)."""
+    conn_owned = conn is None
+    if conn is None:
+        conn = connect()
+    periods = compute_reporting_periods(conn, finess, years, mois_fin)
+    years = [p["year"] for p in periods]
+    sejours = section_sejours(conn, periods, finess, axis_filter)
+    data = {
+        "finess": finess,
+        "periods": periods,
+        "years": years,
+        "sejours": sejours,
+        "patients": {p["year"]: section_patients(conn, p, finess, axis_filter) for p in periods},
+        "journees_semaine": section_journees_semaine(conn, periods, finess, axis_filter),
+        "indicateurs": section_indicateurs(conn, periods, finess, axis_filter),
+        "activite_csarr": section_activite_csarr(conn, periods, finess, axis_filter),
+        "readaptation_intervenant": section_readaptation_intervenant(conn, periods, finess, axis_filter),
+        "csar_actes_ignores": section_csar_actes_ignores(conn, periods, finess, axis_filter),
+        "valorisation": section_valorisation(conn, periods, finess, sejours, axis_filter),
+        "palmares_cm": section_palmares_gme(conn, periods, finess, "CM", axis_filter=axis_filter),
+        "palmares_gn": section_palmares_gme(conn, periods, finess, "GN", axis_filter=axis_filter),
+        "structure_gme": section_structure_gme(conn, periods, finess, axis_filter),
+        "erreurs_activite": section_erreurs_activite(conn, periods, finess, axis_filter),
+        "absence_csarr": section_absence_csarr(conn, periods, finess, axis_filter),
+        "erreurs_groupage": section_erreurs_groupage(conn, periods, finess, axis_filter),
+        "incoherences_vidhosp_rhs": section_incoherences_vidhosp_rhs(conn, finess),
+    }
+    if conn_owned:
+        conn.close()
+    return data
+
+
+if __name__ == "__main__":
+    import json
+    import sys
+    conn = connect()
+    target = sys.argv[1] if len(sys.argv) > 1 else list_finess(conn)[0]
+    conn.close()
+    print(json.dumps(build(target), ensure_ascii=False, indent=1))
