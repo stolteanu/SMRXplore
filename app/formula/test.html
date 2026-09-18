@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Formula engine — tests</title>
+<style>
+  body{font-family:ui-monospace,monospace;background:#12181a;color:#dfe7e3;padding:24px;font-size:14px;}
+  .pass{color:#7fd8a8;} .fail{color:#e0897a;font-weight:700;}
+  .case{padding:6px 0;border-bottom:1px solid #263230;}
+  .formula{color:#9fb0a8;}
+  #summary{font-size:16px;margin-bottom:16px;padding:10px;border-radius:6px;}
+</style>
+</head>
+<body>
+<h1>Formula engine — jeu de tests (données synthétiques)</h1>
+<div id="summary"></div>
+<div id="out"></div>
+
+<!-- Catalogue minimal, formes fidèles à catalogue.js réel (dims/measures, col/derive/numeric) -->
+<script>
+  const SOURCES = {
+    rhs: {
+      dims: [
+        { id: "code_gme", label: "GME", col: "code_gme" },
+        { id: "numero_admin_sejour", label: "NDA", col: "numero_admin_sejour" },
+        { id: "date_debut_sejour", label: "Date début", col: "date_debut_sejour" },
+      ],
+      measures: [
+        { id: "nb_journees", label: "Journées", derive: r => (String(r.jours_hors_weekend||"")+String(r.jours_weekend||"")).split("").filter(c=>c==="1").length },
+        { id: "score_test", label: "Score (test)", col: "score_test", numeric: true },
+      ],
+    },
+    valo: {
+      dims: [
+        { id: "code_gme", label: "GME", col: "code_gme" },
+        { id: "numero_admin_sejour", label: "NDA", col: "numero_admin_sejour" },
+      ],
+      measures: [
+        { id: "montant_br_tot", label: "Montant total", col: "montant_br_tot", numeric: true },
+      ],
+    },
+    das: {
+      dims: [
+        { id: "numero_admin_sejour", label: "NDA", col: "numero_admin_sejour" },
+      ],
+      measures: [
+        { id: "id", label: "id", col: "id", numeric: true },
+      ],
+    },
+  };
+
+  function parseDateStr(s) { if (!s) return null; const d = new Date(s + "T00:00:00"); return isNaN(d) ? null : d; }
+
+  // Stub minimal de sourceRowFor (app.js réel fait la même chose via resolveForeignRow) :
+  // foreignIdx[srcKey] est une Map<ligne de base, ligne cible>.
+  function sourceRowFor(cfg, baseRow, foreignIdx, baseSrcKey) {
+    if (cfg.srcKey === baseSrcKey) return baseRow;
+    const idx = foreignIdx && foreignIdx[cfg.srcKey];
+    return idx ? (idx.get(baseRow) || null) : null;
+  }
+</script>
+
+<script src="errors.js"></script>
+<script src="tokenizer.js"></script>
+<script src="registry.js"></script>
+<script src="types.js"></script>
+<script src="parser.js"></script>
+<script src="evaluate.js"></script>
+
+<script>
+  // ---- données synthétiques : un séjour de 2 semaines (2 lignes RHS), 1 ligne Valo, 3 DAS ----
+  const rhsRow1 = { code_gme: "28Z13Z", numero_admin_sejour: "000123", date_debut_sejour: "2026-01-05", jours_hors_weekend: "1111100", jours_weekend: "00", score_test: 7 }; // 5
+  const rhsRow2 = { code_gme: "28Z13Z", numero_admin_sejour: "000123", date_debut_sejour: "2026-01-05", jours_hors_weekend: "1111100", jours_weekend: "11" }; // 7
+  const valoRow1 = { code_gme: "28Z13Z", numero_admin_sejour: "000123", montant_br_tot: 2400 };
+  const dasRow1 = { numero_admin_sejour: "000123", id: 1 };
+  const dasRow2 = { numero_admin_sejour: "000123", id: 2 };
+  const dasRow3 = { numero_admin_sejour: "999999", id: 3 };
+  const rhsRowOtherSejour = { code_gme: "06M08Z", numero_admin_sejour: "999999", date_debut_sejour: "2026-02-01", jours_hors_weekend: "1000000", jours_weekend: "00" }; // 1
+  const valoRow2 = { code_gme: "06M08Z", numero_admin_sejour: "999999", montant_br_tot: 300 };
+
+  const foreignIdx = {
+    valo: new Map([[rhsRow1, valoRow1], [rhsRow2, valoRow1], [rhsRowOtherSejour, valoRow2]]),
+  };
+
+  const cases = [];
+  function t(desc, formula, ctx, expect) { cases.push({ desc, formula, ctx, expect }); }
+
+  // 1. Agrégation simple, une seule source.
+  t("Sum(nb_journees) sur 2 lignes RHS d'un même séjour",
+    "Sum([nb_journees])",
+    { baseSrcKey: "rhs", cellRows: [rhsRow1, rhsRow2], foreignIdx },
+    12);
+
+  // 2. Exemple de référence : valo par jour de présence — vérifie le dédoublonnage cross-source
+  //    (2 lignes RHS pointent vers LA MÊME ligne Valo : Sum() ne doit pas la compter 2x).
+  t("Round(Sum(valo.montant_br_tot) / Sum(nb_journees), 2) — dédoublonnage attendu",
+    "Round(Sum([valo].[montant_br_tot]) / Sum([nb_journees]), 2)",
+    { baseSrcKey: "rhs", cellRows: [rhsRow1, rhsRow2], foreignIdx },
+    200); // 2400 / 12, PAS 4800/12=400
+
+  // 3. Comptage distinct + traversée DAS -> NDA (grain le plus fin -> NDA).
+  t("Count(das.id) / Count(Distinct numero_admin_sejour) sur 3 DAS, 2 séjours",
+    "Count([das].[id]) / Count(Distinct [numero_admin_sejour])",
+    { baseSrcKey: "das", cellRows: [dasRow1, dasRow2, dasRow3], foreignIdx: {} },
+    1.5);
+
+  // 4. Agrégation conditionnelle (If imbriqué dans Sum).
+  t("Sum(If(code_gme='28Z13Z', nb_journees)) — filtre un GME précis",
+    "Sum(If([code_gme] = '28Z13Z', [nb_journees]))",
+    { baseSrcKey: "rhs", cellRows: [rhsRow1, rhsRow2, rhsRowOtherSejour], foreignIdx },
+    12);
+
+  // 5. Fonctions texte + date, en mode ligne dans un If.
+  t("Year(date_debut_sejour) via Sum(If(...))",
+    "Sum(If(Year([date_debut_sejour]) = 2026, [nb_journees]))",
+    { baseSrcKey: "rhs", cellRows: [rhsRow1, rhsRow2], foreignIdx },
+    12);
+
+  // 6. Division par zéro : résultat vide (null), pas une exception.
+  t("Division par zéro -> null, pas d'exception",
+    "Sum([nb_journees]) / Sum(If([code_gme] = 'INEXISTANT', [nb_journees]))",
+    { baseSrcKey: "rhs", cellRows: [rhsRow1, rhsRow2], foreignIdx },
+    null);
+
+  // ---- cas d'erreur attendus ----
+  function te(desc, formula, ctx, expectCode) { errCases.push({ desc, formula, ctx, expectCode }); }
+  const errCases = [];
+
+  te("Sum() sur un champ texte -> TYPE_MISMATCH",
+    "Sum([code_gme])", { baseSrcKey: "rhs" }, "TYPE_MISMATCH");
+
+  te("Champ inconnu -> UNKNOWN_FIELD",
+    "Sum([nb_jour])", { baseSrcKey: "rhs" }, "UNKNOWN_FIELD");
+
+  te("Champ numérique non agrégé combiné à une mesure -> UNAGGREGATED",
+    "[score_test] + Sum([nb_journees])", { baseSrcKey: "rhs" }, "UNAGGREGATED");
+
+  te("Parenthèse non fermée -> UNCLOSED_PAREN",
+    "Sum([nb_journees]", { baseSrcKey: "rhs" }, "UNCLOSED_PAREN");
+
+  te("Agrégat imbriqué -> NESTED_AGGREGATE",
+    "Sum(Sum([nb_journees]))", { baseSrcKey: "rhs" }, "NESTED_AGGREGATE");
+
+  te("Conversion explicite Num#() débloque un champ texte-de-chiffres",
+    "Sum(Num#([code_gme]))", { baseSrcKey: "rhs", cellRows: [rhsRow1], foreignIdx }, null); // ne doit PAS lever d'erreur
+
+  // ---- exécution ----
+  const out = document.getElementById("out");
+  let pass = 0, fail = 0;
+
+  for (const c of cases) {
+    const res = Formula.run(c.formula, c.ctx);
+    const ok = res.ok && (Number.isFinite(res.value) ? Math.abs(res.value - c.expect) < 1e-9 : res.value === c.expect);
+    if (ok) pass++; else fail++;
+    const div = document.createElement("div");
+    div.className = "case";
+    div.innerHTML = `<span class="${ok ? "pass" : "fail"}">${ok ? "✓" : "✗"}</span> ${c.desc}<br>`
+      + `<span class="formula">${c.formula}</span> → attendu <b>${c.expect}</b>, obtenu <b>${res.ok ? res.value : "ERREUR: " + res.error.message}</b>`;
+    out.appendChild(div);
+  }
+
+  for (const c of errCases) {
+    const res = Formula.run(c.formula, c.ctx);
+    let ok;
+    if (c.expectCode === null) ok = res.ok;
+    else ok = !res.ok && res.error.code === c.expectCode;
+    if (ok) pass++; else fail++;
+    const div = document.createElement("div");
+    div.className = "case";
+    const got = res.ok ? `pas d'erreur (valeur=${res.value})` : `${res.error.code} — ${res.error.message}`;
+    div.innerHTML = `<span class="${ok ? "pass" : "fail"}">${ok ? "✓" : "✗"}</span> ${c.desc}<br>`
+      + `<span class="formula">${c.formula}</span> → attendu <b>${c.expectCode ?? "OK"}</b>, obtenu <b>${got}</b>`;
+    out.appendChild(div);
+  }
+
+  const summary = document.getElementById("summary");
+  summary.textContent = `${pass} / ${pass + fail} tests passés`;
+  summary.style.background = fail ? "#3a231e" : "#1c332c";
+  summary.style.color = fail ? "#f0bcae" : "#bfe8d8";
+</script>
+</body>
+</html>

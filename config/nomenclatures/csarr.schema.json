@@ -1,0 +1,15 @@
+{
+  "nomenclature": "csarr",
+  "spec_source": "Fichier complémentaire CSARR (ATIH), feuille CSARR_2026_avec_infos, lignes TypeLigne='L' uniquement (code + libellé, hors modulateurs/gestes complémentaires/consignes de codage/dates de validité/etc.)",
+  "table": "nomenclature_csarr",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "code acte CSARR (ex. ALQ+183)"},
+    {"name": "libelle", "type": "TEXT"},
+    {"name": "parent_code", "type": "TEXT", "note": "CodeHier : code de subdivision (nomenclature_csarr_hierarchie) sous lequel l'acte est classé, profondeur variable (2 à 4 niveaux)"}
+  ],
+  "notes": [
+    "La feuille 'codes supprimés' du même classeur n'est pas chargée (dernier-libellé-gagne, version en vigueur seulement, comme CIM-10 et CCAM).",
+    "Aucun doublon de code trouvé dans la source (contrairement à CCAM) — pas de tri par date de validité nécessaire ici."
+  ]
+}

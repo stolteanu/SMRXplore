@@ -1,0 +1,13 @@
+{
+  "nomenclature": "csar_ponderation_temps",
+  "spec_source": "CSAR_infos.xlsx (ATIH, annexe 7), feuille modulateur_modalite_extension, lignes Variable=Temps — reprend le Tableau 3 du Manuel des GME vol.1 §3.3.1.3",
+  "table": "nomenclature_csar_ponderation_temps",
+  "natural_key": ["modalite"],
+  "columns": [
+    {"name": "modalite", "type": "TEXT", "modalite": {"Vide": "absence de codage", "T0": "< 45 min", "T1": "[45;70[ min", "T2": "[70;100[ min", "T3": "[100;130[ min", "T4": ">= 130 min"}},
+    {"name": "ponderation", "type": "REAL", "note": "Vide=0, T0=25, T1=50, T2=80, T3=110, T4=140"}
+  ],
+  "notes": [
+    "Manuel des GME vol.1 §3.3.1.3 : pour un acte CSAR, la pondération retenue par la fonction de groupage est le MAX entre cette pondération de temps et la pondération de l'acte CSARR transcodé (cf. nomenclature_csar_transcodage_detail + nomenclature_ponderation_actes) — sauf pour les couples (acte, intervenant) non attendus (pondération CSARR transcodée = 0), où le modulateur de temps n'a aucun effet."
+  ]
+}

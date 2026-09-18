@@ -1,0 +1,16 @@
+{
+  "nomenclature": "gme",
+  "spec_source": "Fichier ATIH 'TOTAL_listes_groupes' (groupage SMR), feuille 'libelles' — colonnes quoi/code/lib_court/lib_long, toute la hiérarchie CM->GN->GR->GL->GME en une seule table plate",
+  "table": "nomenclature_gme",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "longueur fixe par niveau : CM=2, GN=4, GR=5, GL=6, GME=7 caractères ; le code GME (7 car.) correspond exactement au champ code_gme des RHS groupé"},
+    {"name": "kind", "type": "TEXT", "modalite": {"CM": "Catégorie Majeure", "GN": "Groupe Nosologique", "GR": "Groupe Racine", "GL": "Groupe (niveau de lourdeur/GHM)", "GME": "Groupe Médico-Économique — niveau terminal, celui stocké dans les RHS groupé"}},
+    {"name": "parent_code", "type": "TEXT", "note": "NULL pour CM ; sinon le code tronqué à la longueur du niveau parent (ex. un GME de 7 caractères tronqué à 6 donne son GL parent)"},
+    {"name": "libelle_court", "type": "TEXT"},
+    {"name": "libelle_long", "type": "TEXT"}
+  ],
+  "notes": [
+    "Permet enfin de résoudre le libellé et la hiérarchie complète du champ code_gme (RHS groupé, positions 55-61) qui était jusqu'ici stocké atomique sans décomposition (cf. rhs_groupe.schema.json)."
+  ]
+}

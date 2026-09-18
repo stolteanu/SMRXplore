@@ -1,0 +1,16 @@
+{
+  "nomenclature": "csar_transcodage_detail",
+  "spec_source": "CSAR_infos.xlsx (ATIH, annexe 7 du Manuel des GME vol.1/vol.3), feuille transcodage_CSAR_détail",
+  "table": "nomenclature_csar_transcodage_detail",
+  "natural_key": ["code_csar", "intervenant", "acte_coll"],
+  "columns": [
+    {"name": "code_csar", "type": "TEXT"},
+    {"name": "intervenant", "type": "TEXT", "note": "code intervenant CSAR (cf. nomenclature_csar_intervenants)"},
+    {"name": "acte_coll", "type": "TEXT", "modalite": {"0": "acte codé en individuel", "1": "acte codé en collectif", "2": "modalité sans effet sur le transcodage retenu"}},
+    {"name": "code_csarr", "type": "TEXT", "note": "acte CSARR transcodé retenu par la fonction de groupage pour ce couple (code_csar, intervenant, acte_coll) — sert de clé de recherche dans nomenclature_ponderation_actes pour la pondération"}
+  ],
+  "notes": [
+    "Utilisé par le calcul du score de réadaptation (section_readaptation_intervenant, src/viz/tableau_de_bord.py) : un acte CSAR est d'abord transcodé en acte CSARR de référence via cette table, avant d'appliquer la pondération CSARR (Manuel des GME vol.1, §3.1.1).",
+    "Recherche : essayer (code_csar, intervenant, str(modalite_collective RHS)) puis, si absent, (code_csar, intervenant, '2'). Pour les intervenants CSAR transitoires '80'/'81' absents de cette table, se rabattre sur l'intervenant '21' (infirmier), transposition documentée au §3.3.1.2 du Manuel des GME vol.1."
+  ]
+}

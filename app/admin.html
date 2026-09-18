@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<script src="theme.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>PMSI-SMR — Mise à jour des données</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e;
+    --muted: #898781; --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6; --ok: #1baf7a; --err: #d64545;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+      --muted: #898781; --border: rgba(255,255,255,0.10);
+      --accent: #3987e5; --ok: #199e70; --err: #e5605a;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+    --muted: #898781; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5; --ok: #199e70; --err: #e5605a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page); color: var(--ink); min-height: 100vh; padding: 32px 16px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  header { margin-bottom: 22px; }
+  header .back { font-size: 12.5px; color: var(--ink-2); text-decoration: none; }
+  header h1 { font-size: clamp(20px, 3.5vw, 26px); margin: 10px 0 6px; }
+  header p { color: var(--ink-2); font-size: 13.5px; margin: 0; max-width: 62ch; }
+
+  .zone {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px 20px; margin-bottom: 16px;
+  }
+  .zone h2 { font-size: 15px; margin: 0 0 4px; }
+  .zone .hint { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+  .drop {
+    border: 1.5px dashed var(--border); border-radius: 10px; padding: 16px;
+    text-align: center; font-size: 13px; color: var(--ink-2); cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .drop.dragover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .drop input { display: none; }
+
+  ul.files { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  ul.files li {
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    font-size: 12.5px; background: var(--page);
+  }
+  .file-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .file-name { font-family: ui-monospace, monospace; word-break: break-all; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .badge.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .badge.err { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
+  .badge.pending { background: color-mix(in srgb, var(--muted) 20%, transparent); color: var(--ink-2); }
+  .file-msg { margin-top: 6px; color: var(--ink-2); }
+  .file-msg.err { color: var(--err); }
+  button.retirer {
+    background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--ink-2);
+    font-size: 11px; padding: 3px 8px; cursor: pointer;
+  }
+  .meta-form { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+  .meta-form input {
+    width: 90px; padding: 5px 7px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--ink); font-size: 12px;
+  }
+  .meta-form input.finess { width: 110px; }
+  .meta-form button {
+    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 5px 10px; font-size: 12px; cursor: pointer;
+  }
+  .meta-form button.quand-meme { background: var(--err); }
+
+  .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+  #action-btn {
+    background: var(--accent); color: #fff; border: none; border-radius: 8px;
+    padding: 11px 20px; font-size: 13.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  #action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  #action-btn.pret { background: var(--ok); }
+  #global-status { font-size: 12.5px; color: var(--ink-2); }
+  #global-status.err { color: var(--err); }
+  #charger-output {
+    margin-top: 12px; max-height: 260px; overflow: auto; display: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; font-size: 11.5px; white-space: pre-wrap; font-family: ui-monospace, monospace;
+  }
+
+  .zone.danger { border-color: color-mix(in srgb, var(--err) 35%, var(--border)); }
+  .supp-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .supp-form input.finess {
+    width: 140px; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--page); color: var(--ink); font-size: 13px; font-family: ui-monospace, monospace;
+  }
+  .supp-form label { font-size: 12.5px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
+  #supp-apercu-btn {
+    background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--ink);
+    font-size: 12.5px; padding: 7px 12px; cursor: pointer;
+  }
+  #supp-apercu-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  #supp-preview {
+    margin-top: 12px; display: none; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; background: var(--page); font-size: 12.5px;
+  }
+  #supp-preview h3 { font-size: 12.5px; margin: 0 0 6px; }
+  #supp-preview ul { margin: 4px 0 10px; padding-left: 18px; font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--ink-2); }
+  #supp-preview .warn { color: var(--err); font-weight: 600; }
+  #supp-confirmer-btn {
+    background: var(--err); color: #fff; border: none; border-radius: 6px;
+    padding: 8px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; margin-top: 4px;
+  }
+  #supp-status { margin-top: 10px; font-size: 12.5px; color: var(--ink-2); }
+  #supp-status.err { color: var(--err); }
+  #supp-status.ok { color: var(--ok); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="back" href="/index.html">&larr; Retour</a>
+    <h1>Mise à jour des données</h1>
+    <p>Dépose ici les fichiers reçus tels quels (rien à renommer, rien à ranger).
+       Une fois tous les fichiers déposés, lance le contrôle : s'il n'y a aucune
+       erreur, le bouton devient « Mettre à jour » et recharge la base.</p>
+  </header>
+
+  <div id="zones"></div>
+
+  <div class="actions">
+    <div id="global-status"></div>
+    <button id="action-btn" disabled>Contrôler</button>
+  </div>
+  <pre id="charger-output"></pre>
+
+  <div class="zone danger">
+    <h2>Supprimer un établissement</h2>
+    <p class="hint">Purge toutes les données d'un établissement (base + tableaux de bord générés).
+       Retirer ses fichiers des zones ci-dessus ne suffit pas : « Mettre à jour » n'ajoute que ce
+       qu'il trouve, il ne supprime jamais rien.</p>
+    <div class="supp-form">
+      <input class="finess" id="supp-finess" placeholder="FINESS (9 chiffres)" maxlength="9">
+      <label><input type="checkbox" id="supp-fichiers-source"> aussi supprimer ses fichiers source dans les zones ci-dessus (définitif, non régénérable)</label>
+      <button id="supp-apercu-btn">Aperçu</button>
+    </div>
+    <div id="supp-preview"></div>
+    <div id="supp-status"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var CATEGORIES = [
+    { cle: "rhs", label: "RHS groupé", hint: "Fichier(s) texte .txt fournis par l'établissement, sans modification." },
+    { cle: "vdh", label: "VID-HOSP", hint: "Fichier(s) texte .txt fournis par l'établissement, sans modification." },
+    { cle: "valorisation", label: "VisualValoSejours", hint: "Restitution ATIH CSV (.csv), sans modification." }
+  ];
+
+  var zonesEl = document.getElementById("zones");
+  var actionBtn = document.getElementById("action-btn");
+  var globalStatus = document.getElementById("global-status");
+  var chargerOutput = document.getElementById("charger-output");
+  var etat = {}; // cle -> [meta,...]
+  var mode = "controler"; // "controler" | "mettre_a_jour"
+
+  CATEGORIES.forEach(function (cat) {
+    var zone = document.createElement("div");
+    zone.className = "zone";
+    zone.innerHTML =
+      '<h2>' + cat.label + '</h2>' +
+      '<p class="hint">' + cat.hint + '</p>' +
+      '<div class="drop" data-cat="' + cat.cle + '">' +
+      'Cliquer pour choisir un ou plusieurs fichiers, ou les glisser ici' +
+      '<input type="file" multiple>' +
+      '</div>' +
+      '<ul class="files" data-cat="' + cat.cle + '"></ul>';
+    zonesEl.appendChild(zone);
+
+    var drop = zone.querySelector(".drop");
+    var input = drop.querySelector("input");
+    drop.addEventListener("click", function () { input.click(); });
+    input.addEventListener("change", function () {
+      uploadFiles(cat.cle, input.files);
+      input.value = "";
+    });
+    ["dragover", "dragenter"].forEach(function (evt) {
+      drop.addEventListener(evt, function (e) { e.preventDefault(); drop.classList.add("dragover"); });
+    });
+    ["dragleave", "drop"].forEach(function (evt) {
+      drop.addEventListener(evt, function (e) { e.preventDefault(); drop.classList.remove("dragover"); });
+    });
+    drop.addEventListener("drop", function (e) {
+      if (e.dataTransfer && e.dataTransfer.files.length) uploadFiles(cat.cle, e.dataTransfer.files);
+    });
+  });
+
+  function uploadFiles(categorie, fileList) {
+    var files = Array.prototype.slice.call(fileList);
+    var chain = Promise.resolve();
+    files.forEach(function (file) {
+      chain = chain.then(function () { return uploadOne(categorie, file); });
+    });
+    chain.then(refreshEtat).catch(function (err) {
+      globalStatus.textContent = "Erreur d'envoi : " + err;
+      globalStatus.className = "err";
+    });
+  }
+
+  function uploadOne(categorie, file) {
+    var fd = new FormData();
+    fd.append("categorie", categorie);
+    fd.append("file", file, file.name);
+    return fetch("/api/upload", { method: "POST", body: fd })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.body.error || "échec de l'envoi");
+      });
+  }
+
+  function refreshEtat() {
+    return fetch("/api/upload/etat").then(function (r) { return r.json(); }).then(function (data) {
+      etat = data;
+      render();
+    });
+  }
+
+  function totalFichiers() {
+    return CATEGORIES.reduce(function (n, c) { return n + (etat[c.cle] || []).length; }, 0);
+  }
+
+  function render() {
+    CATEGORIES.forEach(function (cat) {
+      var ul = zonesEl.querySelector('ul.files[data-cat="' + cat.cle + '"]');
+      ul.innerHTML = "";
+      (etat[cat.cle] || []).forEach(function (meta) {
+        ul.appendChild(renderItem(cat.cle, meta));
+      });
+    });
+    mode = "controler";
+    actionBtn.textContent = "Contrôler";
+    actionBtn.classList.remove("pret");
+    actionBtn.disabled = totalFichiers() === 0;
+    globalStatus.textContent = "";
+    globalStatus.className = "";
+  }
+
+  function renderItem(categorie, meta, resultat) {
+    var li = document.createElement("li");
+    var needForm = meta.finess === null || meta.annee === null || meta.mois === null;
+
+    var badge = '<span class="badge pending">en attente</span>';
+    if (resultat) badge = resultat.ok
+      ? '<span class="badge ok">OK</span>'
+      : (resultat.ecrasement_requis
+          ? '<span class="badge err">confirmation requise</span>'
+          : (resultat.confirmation_erreurs_requise
+              ? '<span class="badge err">anomalies détectées</span>'
+              : '<span class="badge err">erreur</span>'));
+
+    li.innerHTML =
+      '<div class="file-row">' +
+      '<span class="file-name">' + escapeHtml(meta.original_name) + '</span>' +
+      badge +
+      '</div>';
+
+    var retirerBtn = document.createElement("button");
+    retirerBtn.className = "retirer";
+    retirerBtn.textContent = "Retirer";
+    retirerBtn.addEventListener("click", function () {
+      fetch("/api/upload/retirer", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categorie: categorie, id: meta.id })
+      }).then(refreshEtat);
+    });
+    li.querySelector(".file-row").appendChild(retirerBtn);
+
+    if (resultat && resultat.message) {
+      var msg = document.createElement("div");
+      msg.className = "file-msg" + (resultat.ok ? "" : " err");
+      msg.textContent = resultat.message;
+      li.appendChild(msg);
+    }
+
+    if (resultat && resultat.ecrasement_requis) {
+      var confirmBox = document.createElement("div");
+      confirmBox.className = "meta-form";
+      confirmBox.innerHTML = '<button type="button">Confirmer le remplacement de ' + escapeHtml(resultat.cible) + '</button>';
+      confirmBox.querySelector("button").addEventListener("click", function () {
+        fetch("/api/upload/confirmer-ecrasement", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categorie: categorie, id: meta.id })
+        }).then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+          .then(function (res) {
+            if (!res.ok) { alert(res.body.error || "Échec de la confirmation."); return; }
+            globalStatus.textContent = "Confirmé — relance le contrôle pour finaliser.";
+            globalStatus.className = "";
+          });
+      });
+      li.appendChild(confirmBox);
+    }
+
+    if (resultat && resultat.confirmation_erreurs_requise) {
+      var confirmErrBox = document.createElement("div");
+      confirmErrBox.className = "meta-form";
+      confirmErrBox.innerHTML = '<button type="button" class="quand-meme">Mettre à jour quand même</button>';
+      confirmErrBox.querySelector("button").addEventListener("click", function () {
+        fetch("/api/upload/confirmer-malgre-erreurs", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categorie: categorie, id: meta.id })
+        }).then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+          .then(function (res) {
+            if (!res.ok) { alert(res.body.error || "Échec de la confirmation."); return; }
+            globalStatus.textContent = "Confirmé — relance le contrôle pour finaliser.";
+            globalStatus.className = "";
+          });
+      });
+      li.appendChild(confirmErrBox);
+    }
+
+    if (needForm) {
+      var form = document.createElement("div");
+      form.className = "meta-form";
+      form.innerHTML =
+        '<input class="finess" placeholder="FINESS (9 chiffres)" maxlength="9">' +
+        '<input class="annee" placeholder="Année" maxlength="4">' +
+        '<input class="mois" placeholder="Mois (1-12)" maxlength="2">' +
+        '<button type="button">Valider</button>';
+      form.querySelector("button").addEventListener("click", function () {
+        var finess = form.querySelector(".finess").value.trim();
+        var annee = parseInt(form.querySelector(".annee").value, 10);
+        var mois = parseInt(form.querySelector(".mois").value, 10);
+        fetch("/api/upload/meta", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categorie: categorie, id: meta.id, finess: finess, annee: annee, mois: mois })
+        }).then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+          .then(function (res) {
+            if (!res.ok) { alert(res.body.error || "Informations invalides."); return; }
+            refreshEtat();
+          });
+      });
+      li.appendChild(form);
+    }
+
+    return li;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  actionBtn.addEventListener("click", function () {
+    if (mode === "controler") {
+      lancerControle();
+    } else {
+      lancerMiseAJour();
+    }
+  });
+
+  function lancerControle() {
+    actionBtn.disabled = true;
+    globalStatus.textContent = "Contrôle en cours…";
+    globalStatus.className = "";
+    fetch("/api/upload/controler", { method: "POST" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.erreur_globale) {
+          globalStatus.textContent = data.erreur_globale;
+          globalStatus.className = "err";
+          actionBtn.disabled = totalFichiers() === 0;
+          return;
+        }
+        var resultsById = {};
+        (data.resultats || []).forEach(function (r) { resultsById[r.categorie + ":" + r.id] = r; });
+
+        if (data.pret) {
+          zonesEl.querySelectorAll("ul.files").forEach(function (ul) { ul.innerHTML = ""; });
+          globalStatus.textContent = (data.resultats || []).length + " fichier(s) contrôlé(s) et rangé(s). Prêt à mettre à jour la base.";
+          globalStatus.className = "";
+          mode = "mettre_a_jour";
+          actionBtn.textContent = "Mettre à jour";
+          actionBtn.classList.add("pret");
+          actionBtn.disabled = false;
+        } else {
+          refreshEtatWithResults(resultsById);
+          var attenteConfirmation = (data.resultats || []).some(function (r) { return r.ecrasement_requis; });
+          globalStatus.textContent = attenteConfirmation
+            ? "Au moins un fichier remplace une version existante — confirme le remplacement ci-dessus puis relance le contrôle."
+            : "Au moins un fichier en erreur — corrige-le puis relance le contrôle.";
+          globalStatus.className = "err";
+          mode = "controler";
+          actionBtn.textContent = "Contrôler";
+          actionBtn.classList.remove("pret");
+          actionBtn.disabled = false;
+        }
+      })
+      .catch(function (err) {
+        globalStatus.textContent = "Erreur : " + err;
+        globalStatus.className = "err";
+        actionBtn.disabled = false;
+      });
+  }
+
+  function refreshEtatWithResults(resultsById) {
+    fetch("/api/upload/etat").then(function (r) { return r.json(); }).then(function (data) {
+      etat = data;
+      CATEGORIES.forEach(function (cat) {
+        var ul = zonesEl.querySelector('ul.files[data-cat="' + cat.cle + '"]');
+        ul.innerHTML = "";
+        (etat[cat.cle] || []).forEach(function (meta) {
+          var resultat = resultsById[cat.cle + ":" + meta.id];
+          ul.appendChild(renderItem(cat.cle, meta, resultat));
+        });
+      });
+    });
+  }
+
+  function lancerMiseAJour() {
+    actionBtn.disabled = true;
+    globalStatus.textContent = "Mise à jour en cours (peut prendre quelques dizaines de secondes)…";
+    globalStatus.className = "";
+    chargerOutput.style.display = "none";
+    fetch("/api/charger", { method: "POST" })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (res) {
+        globalStatus.textContent = res.ok ? "Terminé." : "Erreur pendant la mise à jour.";
+        globalStatus.className = res.ok ? "" : "err";
+        chargerOutput.textContent = res.body.output || res.body.error || "";
+        chargerOutput.style.display = chargerOutput.textContent ? "block" : "none";
+        mode = "controler";
+        actionBtn.textContent = "Contrôler";
+        actionBtn.classList.remove("pret");
+        actionBtn.disabled = true;
+      })
+      .catch(function (err) {
+        globalStatus.textContent = "Erreur réseau : " + err;
+        globalStatus.className = "err";
+        actionBtn.disabled = false;
+      });
+  }
+
+  refreshEtat();
+
+  // --- Suppression d'un établissement ---
+  var suppFiness = document.getElementById("supp-finess");
+  var suppFichiersSource = document.getElementById("supp-fichiers-source");
+  var suppApercuBtn = document.getElementById("supp-apercu-btn");
+  var suppPreview = document.getElementById("supp-preview");
+  var suppStatus = document.getElementById("supp-status");
+
+  function suppFinessValide() {
+    return /^\d{9}$/.test(suppFiness.value.trim());
+  }
+
+  suppApercuBtn.addEventListener("click", function () {
+    suppStatus.textContent = "";
+    suppStatus.className = "";
+    if (!suppFinessValide()) {
+      suppStatus.textContent = "FINESS invalide (9 chiffres attendus).";
+      suppStatus.className = "err";
+      return;
+    }
+    var finess = suppFiness.value.trim();
+    var avecSource = suppFichiersSource.checked;
+    suppApercuBtn.disabled = true;
+    suppPreview.style.display = "none";
+    fetch("/api/supprimer/apercu", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ finess: finess, fichiers_source: avecSource })
+    })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (res) {
+        suppApercuBtn.disabled = false;
+        if (!res.ok) { suppStatus.textContent = res.body.error || "Erreur."; suppStatus.className = "err"; return; }
+        renderSuppPreview(res.body, finess, avecSource);
+      })
+      .catch(function (err) {
+        suppApercuBtn.disabled = false;
+        suppStatus.textContent = "Erreur : " + err;
+        suppStatus.className = "err";
+      });
+  });
+
+  function ul(items) {
+    if (!items.length) return "";
+    return "<ul>" + items.map(function (f) { return "<li>" + escapeHtml(f) + "</li>"; }).join("") + "</ul>";
+  }
+
+  function renderSuppPreview(a, finess, avecSource) {
+    if (a.rien_a_supprimer) {
+      suppPreview.style.display = "none";
+      suppStatus.textContent = "Aucune trace trouvée pour " + finess + " — rien à supprimer.";
+      suppStatus.className = "";
+      return;
+    }
+    var html = "<h3>À supprimer pour " + escapeHtml(finess) + "</h3>";
+    html += "<div>Base pmsi.db :</div><ul>";
+    Object.keys(a.lignes).forEach(function (table) {
+      html += "<li>" + escapeHtml(table) + " — " + a.lignes[table] + " ligne(s)</li>";
+    });
+    html += "</ul>";
+    html += "<div>Artefacts générés (app/) : " + a.fichiers_generes.length + " fichier(s)</div>" + ul(a.fichiers_generes);
+    if (avecSource) {
+      html += '<div class="warn">Fichiers source (input/) : ' + a.fichiers_source.length + ' fichier(s) — SUPPRESSION DÉFINITIVE, non régénérable</div>' + ul(a.fichiers_source);
+    } else {
+      html += "<div>Fichiers source (input/) : conservés</div>";
+    }
+    html += '<button id="supp-confirmer-btn">Confirmer la suppression définitive de ' + escapeHtml(finess) + '</button>';
+    suppPreview.innerHTML = html;
+    suppPreview.style.display = "block";
+    suppStatus.textContent = "";
+    suppStatus.className = "";
+
+    document.getElementById("supp-confirmer-btn").addEventListener("click", function () {
+      lancerSuppression(finess, avecSource);
+    });
+  }
+
+  function lancerSuppression(finess, avecSource) {
+    var btn = document.getElementById("supp-confirmer-btn");
+    btn.disabled = true;
+    suppStatus.textContent = "Suppression en cours…";
+    suppStatus.className = "";
+    fetch("/api/supprimer/executer", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ finess: finess, fichiers_source: avecSource })
+    })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (res) {
+        if (!res.ok) {
+          suppStatus.textContent = res.body.error || "Erreur pendant la suppression.";
+          suppStatus.className = "err";
+          btn.disabled = false;
+          return;
+        }
+        suppPreview.style.display = "none";
+        suppFiness.value = "";
+        suppFichiersSource.checked = false;
+        suppStatus.textContent = finess + " supprimé et republié dans l'explorateur.";
+        suppStatus.className = "ok";
+      })
+      .catch(function (err) {
+        suppStatus.textContent = "Erreur réseau : " + err;
+        suppStatus.className = "err";
+        btn.disabled = false;
+      });
+  }
+})();
+</script>
+<script>PmsiTheme.mount();</script>
+</body>
+</html>

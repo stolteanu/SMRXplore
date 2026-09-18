@@ -1,0 +1,15 @@
+{
+  "nomenclature": "csar_hierarchie",
+  "spec_source": "Guide de codage CSAR (guide_csar_version_n1_2026.pdf), §1.2 et en-têtes de chapitre de l'Annexe 1 — un seul niveau (11 chapitres), transcrit manuellement car absent du fichier xlsx",
+  "table": "nomenclature_csar_hierarchie",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "2 chiffres, ex. '01'..'11', correspond aux 2 premiers caractères d'un code CSAR"},
+    {"name": "kind", "type": "TEXT", "modalite": {"chapitre": "seul niveau existant pour le CSAR"}},
+    {"name": "parent_code", "type": "TEXT", "note": "toujours NULL (pas de niveau supérieur)"},
+    {"name": "libelle", "type": "TEXT"}
+  ],
+  "notes": [
+    "Contrairement à CIM-10/CCAM/CSARR, cette table n'est PAS générée depuis un fichier source structuré : les 11 libellés de chapitre sont recopiés du guide de codage PDF (pas d'automatisation possible, le xlsx ne les contient pas)."
+  ]
+}

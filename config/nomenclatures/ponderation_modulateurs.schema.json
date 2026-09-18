@@ -1,0 +1,15 @@
+{
+  "nomenclature": "ponderation_modulateurs",
+  "spec_source": "Fichier ATIH ACTES_ponderations.xlsx, feuille 'modulateurs' — majoration de pondération par modulateur CSARR (lieu + technicité)",
+  "table": "nomenclature_ponderation_modulateurs",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "code modulateur CSARR (EZ, HW, LJ, ME, RW, TF, XH, L3, ZV, QM, QI, QF, QS, QQ, QC)"},
+    {"name": "libelle", "type": "TEXT"},
+    {"name": "majoration_individuel", "type": "INTEGER", "note": "majoration de pondération appliquée à un acte individuel codé avec ce modulateur"},
+    {"name": "majoration_collectif", "type": "TEXT", "note": "majoration pour un acte collectif ; 'sans objet' pour XH (pas de sens en collectif) — texte, pas toujours numérique"}
+  ],
+  "notes": [
+    "15 modulateurs au total. Un acte n'est éligible à la majoration d'un modulateur donné que si son mod_<code> correspondant est marqué 'x' dans nomenclature_ponderation_actes."
+  ]
+}

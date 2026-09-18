@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<script src="theme.js"></script>
+<meta charset="UTF-8">
+<meta name="color-scheme" content="light dark">
+<title>Explorateur TDB PMSI-SMR</title>
+<style>
+  /* Thème clair/sombre/système (cf. theme.js) : la couleur d'accent --bleu reste celle choisie par
+     l'utilisateur (#trendColorPos et #themeColorPicker dans app.js la pilotent, indépendamment du
+     thème clair/sombre) — seuls les tons neutres (fond, surfaces, texte, bordures) changent avec le
+     thème. Motif à 3 états standard : le bloc nu (:root) est le thème clair par défaut, le bloc
+     @media ne s'applique que si l'OS est en sombre ET qu'aucun choix explicite "clair" n'a été fait,
+     et [data-theme="dark"] gagne dans tous les cas si l'utilisateur a choisi "sombre" à la main. */
+  :root {
+    --bleu: #1a5276; --bleu-clair: color-mix(in srgb, var(--bleu) 12%, #ffffff); --bordure: #d5dbdb; --vert: #1e8449;
+    --texte: #212f3c; --gris: #7f8c8d;
+    --page: #f4f6f7; --surface: #ffffff; --surface-alt: #fafcfd; --surface-alt-2: #fbfcfc;
+    --surface-subtotal: #f2f6f4; --surface-trend: #f7f5ea;
+    --danger: #c0392b; --danger-border: #e6b0aa; --surface-danger: #fdecea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bleu-clair: color-mix(in srgb, var(--bleu) 25%, var(--surface));
+      --bordure: #3a4147; --vert: #2ea866;
+      --texte: #e8ecef; --gris: #9aa5ab;
+      --page: #14181a; --surface: #1e2427; --surface-alt: #242b2e; --surface-alt-2: #262d30;
+      --surface-subtotal: #1c2b23; --surface-trend: #2b2a1e;
+      --danger: #e57368; --danger-border: #6b3330; --surface-danger: #3a2320;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bleu-clair: color-mix(in srgb, var(--bleu) 25%, var(--surface));
+    --bordure: #3a4147; --vert: #2ea866;
+    --texte: #e8ecef; --gris: #9aa5ab;
+    --page: #14181a; --surface: #1e2427; --surface-alt: #242b2e; --surface-alt-2: #262d30;
+    --surface-subtotal: #1c2b23; --surface-trend: #2b2a1e;
+    --danger: #e57368; --danger-border: #6b3330; --surface-danger: #3a2320;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; padding: 0; background: var(--page); color: var(--texte); }
+  header { background: var(--bleu); color: #fff; padding: 14px 24px; }
+  header h1 { margin: 0; font-size: 1.3em; }
+  header p { margin: 4px 0 0; font-size: 0.85em; opacity: 0.85; }
+  main { max-width: 1300px; margin: 20px auto; padding: 0 16px 60px; }
+  .panel { background: var(--surface); border: 1px solid var(--bordure); border-radius: 6px; padding: 16px 20px; margin-bottom: 18px; }
+  .panel h2 { margin: 0 0 12px; font-size: 1.05em; color: var(--bleu); border-bottom: 2px solid var(--bleu-clair); padding-bottom: 6px; }
+  .row { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 160px; }
+  .field label { font-size: 0.8em; color: var(--gris); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+  select, button { font-family: inherit; font-size: 0.92em; }
+  select { padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; background: var(--surface); color: var(--texte); min-width: 200px; }
+  .checks { display: flex; flex-wrap: wrap; gap: 10px; }
+  .checks label { font-weight: normal; text-transform: none; letter-spacing: normal; font-size: 0.92em; display: flex; align-items: center; gap: 4px; color: var(--texte); }
+  button.primary { background: var(--bleu); color: #fff; border: none; padding: 9px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; }
+  button.primary:hover { background: color-mix(in srgb, var(--bleu) 82%, #000000); }
+  button.secondary { background: var(--surface); color: var(--bleu); border: 1px solid var(--bleu); padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+  button.secondary:hover { background: var(--bleu-clair); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .source-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .source-tabs button { padding: 8px 18px; border: 1px solid var(--bordure); background: var(--surface); border-radius: 20px; cursor: pointer; font-weight: 600; color: var(--gris); }
+  .source-tabs button.active { background: var(--bleu); color: #fff; border-color: var(--bleu); }
+  .dims-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  #status { font-size: 0.85em; color: var(--gris); margin-top: 10px; min-height: 1.2em; }
+  #status.err { color: var(--danger); font-weight: 600; }
+  input.champ-err { border-color: var(--danger) !important; background: var(--surface-danger); }
+  .champ-err-msg { font-size: 0.78em; color: var(--danger); margin-top: 4px; min-height: 1.1em; }
+  .var-list { display: flex; flex-direction: column; gap: 8px; }
+  .var-row { display: flex; gap: 6px; align-items: center; background: var(--surface-alt); border: 1px solid var(--bordure); border-radius: 4px; padding: 6px; }
+  .var-row select { min-width: 0; flex: 1 1 auto; }
+  .var-row select.mode-sel { flex: 0 0 150px; min-width: 130px; }
+  .var-row input.expr-label { flex: 1 1 120px; min-width: 90px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; background: var(--surface); color: var(--texte); }
+  .btn-remove { flex: 0 0 auto; background: var(--surface); border: 1px solid var(--danger-border); color: var(--danger); border-radius: 4px; width: 28px; height: 28px; cursor: pointer; font-weight: 700; line-height: 1; }
+  .btn-remove:hover { background: var(--surface-danger); }
+  .reorder-btns { flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; }
+  .btn-reorder { background: var(--surface); border: 1px solid var(--bordure); color: var(--bleu); border-radius: 3px; width: 22px; height: 15px; cursor: pointer; font-size: 0.65em; line-height: 1; padding: 0; }
+  .btn-reorder:hover:not(:disabled) { background: var(--bleu-clair); }
+  .btn-reorder:disabled { opacity: 0.35; cursor: default; }
+  .btn-add { margin-top: 4px; align-self: flex-start; background: var(--surface); border: 1px dashed var(--bleu); color: var(--bleu); border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.85em; }
+  .btn-add:hover { background: var(--bleu-clair); }
+  .btn-toggle-all { margin-left: 8px; background: var(--surface); border: 1px solid var(--bleu); color: var(--bleu); border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.85em; font-weight: 400; }
+  .btn-toggle-all:hover { background: var(--bleu-clair); }
+  #recapBox { font-size: 0.9em; }
+  #recapBox dl { display: grid; grid-template-columns: 160px 1fr; gap: 4px 12px; margin: 0; }
+  #recapBox dt { color: var(--gris); font-weight: 600; }
+  #recapBox dd { margin: 0; }
+  th.exprhead { font-weight: 600; font-size: 0.85em; }
+  /* Plus de plafond de hauteur (retour utilisateur) : le tableau se déploie sur toute sa hauteur
+     réelle, aussi grand soit-il. overflow-x reste nécessaire pour les tableaux très larges (beaucoup
+     de colonnes/sous-totaux), qui débordent sinon la largeur de la page plutôt que de défiler. */
+  #resultWrap { overflow-x: auto; overflow-y: visible; }
+  /* width:auto (pas 100%) : chaque colonne se calibre sur son propre contenu (table-layout auto par
+     défaut) plutôt que d'être étirée uniformément sur toute la largeur du conteneur — une colonne
+     à libellé/valeurs courts (ex. sexe) reste étroite, une colonne à libellé long en profite pour
+     s'élargir un peu au lieu que toutes se partagent la largeur à égalité. */
+  table.pivot { border-collapse: collapse; width: auto; font-size: 0.88em; }
+  table.pivot th, table.pivot td { border: 1px solid var(--bordure); padding: 6px 10px; text-align: right; white-space: nowrap; }
+  /* Le collant est posé sur <thead> en un bloc, pas sur chaque <th> individuellement : avec
+     plusieurs lignes d'en-tête (sous-totaux colonne, dimensions imbriquées), poser top:0 sur
+     chaque <th> les faisait tous se figer à la même position au défilement, se superposant les
+     uns aux autres et cachant la 1ère ligne de données (constaté par l'utilisateur, capture à
+     l'appui). Un seul point d'ancrage pour tout le bloc d'en-tête règle ça : les lignes gardent
+     leur empilement naturel, seul l'ensemble se fige en haut du cadre défilant. */
+  table.pivot thead { position: sticky; top: 0; z-index: 3; }
+  table.pivot th { background: var(--bleu-clair); text-align: center; white-space: normal; }
+  /* Tri interactif des lignes (clic sur l'en-tête de la variable en lignes ou sur "Total" d'une
+     expression) — seulement câblé quand il n'y a qu'une variable en lignes (cf. wirePivotSortClicks
+     dans app.js), donc ces classes n'apparaissent jamais en même temps qu'un rowspan de groupe. */
+  table.pivot th.sortable-th { cursor: pointer; }
+  table.pivot th.sortable-th:hover { background: color-mix(in srgb, var(--bleu) 18%, var(--bleu-clair)); }
+  table.pivot th.sort-asc .th-label::after { content: " \25B2"; }
+  table.pivot th.sort-desc .th-label::after { content: " \25BC"; }
+  /* Libellé d'en-tête : retour à la ligne dans la largeur calibrée par le contenu (pas de troncature
+     à une seule ligne), jusqu'à 3 lignes — au-delà, coupé avec une ellipse plutôt que d'élargir la
+     colonne à l'infini pour un seul libellé démesuré. display:-webkit-box (nécessaire pour
+     -webkit-line-clamp) est posé sur ce span interne, pas sur le <th> lui-même, pour ne pas casser
+     son display:table-cell natif (indispensable à la mise en page du tableau). */
+  table.pivot th .th-label {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+    overflow: hidden; text-overflow: ellipsis;
+    white-space: normal; word-break: break-word; max-width: 150px; margin: 0 auto;
+  }
+  /* Chaque variable de ligne (pas seulement la 1ère) reste figée au défilement horizontal — le
+     décalage "left" exact de chaque niveau (2e variable, 3e...) dépend de la largeur réelle de la
+     colonne précédente, calculée en JS après rendu (cf. applyRowheadSticky) via l'attribut
+     data-lvl posé sur chaque cellule concernée ; le left:0 ci-dessous n'est qu'un repli pour le
+     tout 1er niveau avant ce calcul. Sans ça, la 2e variable de ligne défilait avec le corps du
+     tableau et se retrouvait cachée sous la 1ère, restée figée (constaté par l'utilisateur).
+     z-index 2 (sous le thead à 3, au-dessus des cellules de données) et 4 pour les en-têtes de
+     ligne (coin haut-gauche, doivent rester au-dessus à la fois du thead et des rowhead du corps). */
+  /* Contrairement aux en-têtes de colonne (largeur multipliée par le nombre de colonnes, donc
+     limitée à 3 lignes ci-dessus), l'en-tête de ligne est une seule colonne sticky : le libellé
+     peut s'y afficher en entier, sur autant de lignes que nécessaire, sans ellipse. */
+  table.pivot td.rowhead { text-align: left; font-weight: 600; background: var(--surface-alt); position: sticky; left: 0; z-index: 2; white-space: normal; word-break: break-word; max-width: 260px; }
+  table.pivot th[data-lvl] { position: sticky; left: 0; z-index: 4; }
+  table.pivot tr:nth-child(even) td:not(.rowhead) { background: var(--surface-alt-2); }
+  table.pivot tr.totalrow td { background: var(--bleu-clair) !important; font-weight: 700; border-top: 2px solid var(--bleu); }
+  table.pivot tr.subtotalrow td { background: var(--surface-subtotal) !important; font-weight: 600; border-top: 1px solid var(--bleu-clair); font-style: italic; }
+  table.pivot td.totalcol { background: var(--bleu-clair) !important; font-weight: 700; border-left: 2px solid var(--bleu); }
+  /* Sous-total colonne : même traitement que les sous-totaux ligne (tr.subtotalrow), en colonne. */
+  table.pivot .colsubtotal { background: var(--surface-subtotal) !important; font-weight: 600; font-style: italic; border-left: 1px solid var(--bleu-clair); }
+  /* Tendance (options A/C de la comparaison de maquettes), déclinées indépendamment sur les deux
+     axes : fond dégradé + flèche par cellule (delta vs le niveau précédent de la dernière variable
+     en colonnes et/ou en lignes), colonne "Tendance" à droite (mini-graphique sur toute la série
+     d'une ligne) et ligne "Tendance" en bas (mini-graphique sur toute la série d'une colonne).
+     Couleurs pilotées par --trend-pos/--trend-neg, réglables par l'utilisateur (cf.
+     #trendColorPos/#trendColorNeg dans app.js). Limité aux cellules de détail : les lignes/colonnes
+     de sous-total et de total agrègent des ensembles différents d'un groupe à l'autre, un delta n'y
+     serait pas comparable (cf. commentaire de renderMultiPivotTable dans app.js). */
+  table.pivot td.trend-heat-pos { background: color-mix(in srgb, var(--trend-pos, #1f7a4d) calc(var(--trend-alpha, 0) * 100%), var(--surface)) !important; }
+  table.pivot td.trend-heat-neg { background: color-mix(in srgb, var(--trend-neg, #b1502f) calc(var(--trend-alpha, 0) * 100%), var(--surface)) !important; }
+  .trend-arrow { display: inline-block; font-size: 0.62em; margin-right: 4px; vertical-align: middle; }
+  .trend-arrow.trend-pos { color: var(--trend-pos, #1f7a4d); }
+  .trend-arrow.trend-neg { color: var(--trend-neg, #b1502f); }
+  .trend-arrow.trend-flat { color: var(--gris); }
+  table.pivot th.trendcol, table.pivot td.trendcol { text-align: left; border-left: 2px solid var(--bleu-clair); }
+  table.pivot tr.trendrow td { background: var(--surface-trend) !important; border-top: 1px solid var(--bleu-clair); }
+  .trend-spark { display: block; color: var(--gris); }
+  /* Ces overrides de graphique (grille/axes/libellés SVG) ne s'appliquent qu'en thème sombre : en
+     clair, les couleurs fixes (CH_MUTED/CH_GRID/CH_AXIS, cf. app.js) restent celles d'origine —
+     seul l'affichage à l'écran est concerné, jamais les exports (SVG/PNG composés à la demande dans
+     un document détaché, cf. buildCombinedGraphSvg). Les couleurs de séries de données (barres,
+     lignes, aires...) ne sont jamais des attributs "line"/"text"/"polygon fill=none" : sélecteurs
+     choisis pour ne toucher que la grille/les axes/les libellés, jamais les données elles-mêmes. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .chart-panel svg text { fill: var(--gris) !important; }
+    :root:not([data-theme="light"]) .chart-panel svg line[stroke-width="1"] { stroke: var(--bordure) !important; }
+    :root:not([data-theme="light"]) .chart-panel svg polygon[fill="none"] { stroke: var(--bordure) !important; }
+  }
+  :root[data-theme="dark"] .chart-panel svg text { fill: var(--gris) !important; }
+  :root[data-theme="dark"] .chart-panel svg line[stroke-width="1"] { stroke: var(--bordure) !important; }
+  :root[data-theme="dark"] .chart-panel svg polygon[fill="none"] { stroke: var(--bordure) !important; }
+  .export-bar { display: flex; gap: 10px; margin-top: 14px; }
+  .meta-line { font-size: 0.82em; color: var(--gris); margin-bottom: 10px; }
+  .mode-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .mode-tabs button { padding: 9px 20px; border: 1px solid var(--bordure); background: var(--surface); border-radius: 20px; cursor: pointer; font-weight: 700; color: var(--gris); }
+  .mode-tabs button.active { background: var(--vert); color: #fff; border-color: var(--vert); }
+  .entry-choice { flex: 1 1 260px; text-align: left; background: var(--surface); border: 2px solid var(--bordure); border-radius: 8px; padding: 18px 20px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
+  .entry-choice:hover { border-color: var(--bleu); background: var(--bleu-clair); }
+  .entry-choice strong { color: var(--bleu); font-size: 1.05em; }
+  .entry-choice span { color: var(--gris); font-size: 0.88em; font-weight: normal; }
+  .back-link { margin: 0 0 14px; }
+  .back-link a { color: var(--bleu); text-decoration: none; font-size: 0.88em; font-weight: 600; }
+  .back-link a:hover { text-decoration: underline; }
+  .filter-row { display: flex; gap: 6px; align-items: center; background: var(--surface-alt); border: 1px solid var(--bordure); border-radius: 4px; padding: 6px; flex-wrap: wrap; }
+  .filter-row select.op-sel { flex: 0 0 150px; }
+  .filter-row input.filter-val { flex: 1 1 140px; min-width: 100px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; background: var(--surface); color: var(--texte); }
+  .filter-row input.filter-val2 { flex: 1 1 100px; min-width: 80px; padding: 6px 8px; border: 1px solid var(--bordure); border-radius: 4px; background: var(--surface); color: var(--texte); }
+  .filter-row select.filter-multiselect { flex: 1 1 220px; min-height: 88px; }
+  .filter-row span.filter-note { font-size: 0.82em; color: var(--gris); }
+  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+  .chart-panel { border: 1px solid var(--bordure); border-radius: 6px; padding: 12px; background: var(--surface); display: flex; flex-direction: column; align-items: center; }
+  .chart-panel h4 { margin: 0 0 8px; font-size: 0.9em; color: var(--bleu); text-align: center; }
+  .chart-panel > div { max-width: 100%; }
+  .chart-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 16px; margin-top: 8px; font-size: 0.82em; }
+  .legend-item { display: flex; align-items: center; gap: 5px; }
+  .legend-swatch { width: 11px; height: 11px; border-radius: 2px; display: inline-block; flex: none; }
+  .fiche-header { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 20px; margin-bottom: 16px; }
+  .fiche-header dt { font-size: 0.78em; color: var(--gris); font-weight: 600; text-transform: uppercase; }
+  .fiche-header dd { margin: 2px 0 0; font-size: 0.98em; }
+  table.semaines { border-collapse: collapse; width: 100%; font-size: 0.88em; margin-bottom: 16px; }
+  table.semaines th, table.semaines td { border: 1px solid var(--bordure); padding: 6px 9px; text-align: left; }
+  table.semaines th { background: var(--bleu-clair); }
+  details.semaine-detail { border: 1px solid var(--bordure); border-radius: 4px; margin-bottom: 8px; background: var(--surface); }
+  details.semaine-detail summary { padding: 8px 12px; cursor: pointer; font-weight: 600; background: var(--surface-alt); }
+  details.semaine-detail .semaine-body { padding: 10px 14px; }
+  .badge { display: inline-block; background: var(--bleu-clair); color: var(--bleu); border-radius: 3px; padding: 1px 7px; font-size: 0.82em; margin: 2px 4px 2px 0; }
+  .badge.err { background: var(--surface-danger); color: var(--danger); }
+  table.actes-mini { border-collapse: collapse; width: 100%; font-size: 0.85em; margin: 6px 0 10px; }
+  table.actes-mini th, table.actes-mini td { border: 1px solid var(--bordure); padding: 4px 8px; text-align: left; }
+  table.actes-mini th { background: var(--surface-alt); }
+  #printExport { display: none; }
+  @media print {
+    body * { visibility: hidden; }
+    #printExport, #printExport * { visibility: visible; }
+    #printExport { display: block; position: absolute; top: 0; left: 0; width: 100%; }
+    #printExport table { border-collapse: collapse; width: 100%; font-size: 11px; table-layout: auto; }
+    #printExport th, #printExport td { border: 1px solid #999; padding: 4px 7px; word-break: break-word; }
+    #printExport th { background: var(--bleu-clair) !important; -webkit-print-color-adjust: exact; }
+    #printExport img, #printExport svg { max-width: 100%; height: auto; display: block; margin: 0 auto 12px; }
+  }
+</style>
+<script>
+// Applique la couleur de thème mémorisée avant le premier rendu (évite le flash de la couleur par
+// défaut). app.js (chargé plus bas) prend ensuite le relais pour le sélecteur et les changements.
+(function () {
+  try {
+    var c = localStorage.getItem("pmsi_explorateur_theme_color");
+    if (c) document.documentElement.style.setProperty("--bleu", c);
+  } catch (e) {}
+})();
+</script>
+</head>
+<body>
+<header>
+  <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+    <div>
+      <h1>Explorateur TDB — PMSI-SMR</h1>
+      <p>Tableau de bord interactif portable (RHS groupé / VID-HOSP / Valorisation) — 100% local, aucune donnée envoyée nulle part.</p>
+    </div>
+    <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap; color:#fff;">
+      <div id="themeModeToggle" style="color:#fff;"></div>
+      <label style="display:flex; align-items:center; gap:8px; font-size:0.82em; white-space:nowrap;">
+        Couleur du thème
+        <input type="color" id="themeColorPicker" value="#1a5276" style="width:34px; height:28px; padding:0; border:none; border-radius:4px; cursor:pointer; background:none;">
+        <button type="button" id="btnThemeColorReset" style="background:transparent; border:1px solid rgba(255,255,255,0.6); color:#fff; border-radius:4px; padding:5px 10px; cursor:pointer; font-size:0.85em;">Réinitialiser</button>
+      </label>
+    </div>
+  </div>
+</header>
+<main>
+
+  <div class="panel" id="panelDbPicker" style="display:none">
+    <h2>Ouvrir la base de données</h2>
+    <p style="font-size:0.9em;color:var(--gris)">
+      Ouverture directe du fichier (double-clic) détectée : le navigateur ne permet pas de charger
+      <code>data/pmsi.db</code> automatiquement dans ce mode. Sélectionnez le fichier manuellement
+      (il se trouve dans <code>app/data/pmsi.db</code>, à côté de cette page) :
+    </p>
+    <input type="file" id="dbFileInput" accept=".db,.sqlite,.sqlite3">
+  </div>
+
+  <div class="panel" id="panelEntry" style="display:none">
+    <h2>Que voulez-vous faire ?</h2>
+    <div class="row" style="gap:16px;">
+      <button class="entry-choice" data-parcours="requetes">
+        <strong>Requêtes sur mesure</strong>
+        <span>Tableaux croisés et listes filtrées sur plusieurs séjours — statistiques agrégées.</span>
+      </button>
+      <button class="entry-choice" data-parcours="dossier">
+        <strong>Aperçu dossier</strong>
+        <span>Recherche d'un séjour précis par NDA — fiche RHS complète, semaine par semaine.</span>
+      </button>
+    </div>
+  </div>
+
+  <div id="flowRequetes" style="display:none">
+  <p class="back-link"><a href="#" id="btnBackFromRequetes">&larr; Changer de parcours</a></p>
+
+  <div class="panel" id="panelSelection">
+    <h2>1. Filtres <button type="button" id="btnChargerDerniereSelection" class="btn-toggle-all">Charger la dernière sélection</button></h2>
+    <div class="row">
+      <div class="field">
+        <label>Établissement(s) <button type="button" id="btnToggleFiness" class="btn-toggle-all">Tout sélectionner</button></label>
+        <div class="checks" id="checksFiness"><span style="color:var(--gris)">Chargement…</span></div>
+      </div>
+      <div class="field">
+        <label>Année(s)</label>
+        <div class="checks" id="checksAnnees"></div>
+      </div>
+      <div class="field">
+        <label for="selPeriodeMode">Période</label>
+        <select id="selPeriodeMode">
+          <option value="cumule" selected>Cumulé depuis janvier, jusqu'au mois</option>
+          <option value="perso">Plage personnalisée (mêmes jour/mois chaque année)</option>
+        </select>
+      </div>
+      <div class="field" id="champMoisCumule">
+        <label for="selMois">Jusqu'au mois</label>
+        <select id="selMois"></select>
+      </div>
+      <div class="field" id="champPeriodePerso" style="display:none">
+        <label>Du (JJ/MM) au (JJ/MM)</label>
+        <div class="row" style="gap:6px;">
+          <input type="text" id="inpPeriodeDebut" placeholder="JJ/MM" size="6" maxlength="5">
+          <span style="align-self:center;">→</span>
+          <input type="text" id="inpPeriodeFin" placeholder="JJ/MM" size="6" maxlength="5">
+        </div>
+        <div class="champ-err-msg" id="periodePersoErrMsg"></div>
+      </div>
+    </div>
+    <div class="field" style="width:100%; margin-top:14px;">
+      <label>Filtres additionnels — s'appliquent à toute l'exploration (tableaux et graphiques)</label>
+      <div class="var-list" id="globalFilterList"></div>
+      <button class="btn-add" id="btnAddGlobalFilter">+ Ajouter un filtre</button>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <div class="panel" id="panelSortieChoice" style="display:none">
+    <h2>2. Que voulez-vous produire ?</h2>
+    <div class="row" style="gap:16px;">
+      <button class="entry-choice" data-sortie="tableaux">
+        <strong>Tableaux</strong>
+        <span>Tableau croisé ou liste filtrée — export HTML / PDF / Word / Excel.</span>
+      </button>
+      <button class="entry-choice" data-sortie="graphique">
+        <strong>Graphique</strong>
+        <span>Barres, lignes, aires, camembert, nuage de points — avec vignettes (petits multiples).</span>
+      </button>
+    </div>
+  </div>
+
+  <div id="flowTableaux" style="display:none">
+  <p class="back-link"><a href="#" id="btnBackFromTableaux">&larr; Changer de sortie</a></p>
+
+  <div class="panel" id="panelModeTabs" style="display:none">
+    <div class="source-tabs" id="modeTabs">
+      <button data-mode="pivot" class="active">Tableau croisé</button>
+      <button data-mode="liste">Liste filtrée</button>
+    </div>
+  </div>
+
+  <div id="modePivot">
+  <div class="panel" id="panelPivot" style="display:none">
+    <h2>2. Construire le tableau</h2>
+    <p style="font-size:0.82em;color:var(--gris);margin:0 0 14px;">
+      Les variables en <strong>lignes</strong>, <strong>colonnes</strong> et
+      <strong>expressions</strong> ci-dessous peuvent être choisies dans n'importe lequel des
+      fichiers — leur provenance est indiquée entre parenthèses — et sont rattachées aux données
+      par séjour ; chaque expression compte/somme sur les lignes réelles de son propre fichier,
+      quelle que soit la combinaison choisie.
+    </p>
+
+    <div class="row">
+      <div class="field" style="flex:1; min-width:320px;">
+        <label>Lignes</label>
+        <div class="var-list" id="rowDimsList"></div>
+        <button class="btn-add" id="btnAddRowDim">+ Ajouter une variable</button>
+        <label id="rowSubtotalWrap" style="display:none; margin-top:8px; font-size:0.85em; align-items:center; gap:6px;">
+          <input type="checkbox" id="chkRowSubtotal"> Sous-totaux par 1ère variable de regroupement
+        </label>
+      </div>
+      <div class="field" style="flex:1; min-width:320px;">
+        <label>Colonnes (facultatif)</label>
+        <div class="var-list" id="colDimsList"></div>
+        <button class="btn-add" id="btnAddColDim">+ Ajouter une variable</button>
+        <label id="colSubtotalWrap" style="display:none; margin-top:8px; font-size:0.85em; align-items:center; gap:6px;">
+          <input type="checkbox" id="chkColSubtotal"> Sous-totaux par 1ère variable de regroupement
+        </label>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <div class="field" style="flex:1; min-width:420px;">
+        <label>Expressions (mesure × fonction — plusieurs possibles)</label>
+        <div class="var-list" id="exprList"></div>
+        <button class="btn-add" id="btnAddExpr">+ Ajouter une expression</button>
+      </div>
+    </div>
+
+    <label style="display:flex; align-items:center; gap:6px; margin-top:14px; font-size:0.85em;">
+      <input type="checkbox" id="chkHideEmptyPivot"> Masquer les valeurs (vide) des variables en lignes/colonnes
+    </label>
+
+    <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--bordure);">
+      <div style="display:flex; gap:28px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:0.78em; font-weight:700; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Tendance — colonnes</div>
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.85em;">
+            <input type="checkbox" id="chkTrendHeat"> Surligner l'évolution (fond dégradé + flèche) par rapport au niveau précédent de la dernière variable en colonnes
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; margin-top:8px;">
+            <input type="checkbox" id="chkTrendSpark"> Ajouter une colonne "Tendance" (mini-graphique sur toute la série, à droite)
+          </label>
+        </div>
+        <div>
+          <div style="font-size:0.78em; font-weight:700; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Tendance — lignes</div>
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.85em;">
+            <input type="checkbox" id="chkTrendHeatRow"> Surligner l'évolution (fond dégradé + flèche) par rapport au niveau précédent de la dernière variable en lignes
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; margin-top:8px;">
+            <input type="checkbox" id="chkTrendSparkRow"> Ajouter une ligne "Tendance" (mini-graphique sur toute la série, en bas)
+          </label>
+        </div>
+      </div>
+      <p style="font-size:0.78em; color:var(--gris); margin:8px 0 0;">
+        Si les deux dégradés (lignes et colonnes) sont cochés en même temps sur une même cellule, celui des colonnes est prioritaire.
+      </p>
+      <div id="trendColorsWrap" style="display:none; align-items:center; gap:18px; margin-top:8px; font-size:0.85em;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          Couleur hausse <input type="color" id="trendColorPos" value="#1f7a4d">
+        </label>
+        <label style="display:flex; align-items:center; gap:6px;">
+          Couleur baisse <input type="color" id="trendColorNeg" value="#b1502f">
+        </label>
+        <button type="button" class="btn-toggle-all" id="btnTrendColorsReset">Réinitialiser</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="panelRecap" style="display:none">
+    <h2>3. Récapitulatif — vérifier avant de générer</h2>
+    <div id="recapBox"></div>
+    <div class="row" style="margin-top:14px;">
+      <button class="primary" id="btnGenerer">Générer le tableau</button>
+    </div>
+  </div>
+  </div>
+
+  <div id="modeListe" style="display:none">
+  <div class="panel" id="panelListeSrc">
+    <h2>2. Table de départ &amp; filtres</h2>
+    <div class="source-tabs" id="sourceTabsListe">
+      <button data-src="rhs" class="active">RHS groupé (séjours/semaines)</button>
+      <button data-src="vidhosp">VID-HOSP (facturation/patients)</button>
+      <button data-src="valo">Valorisation</button>
+      <button data-src="das">DAS (diagnostics associés)</button>
+      <button data-src="csarr">Actes CSARR</button>
+      <button data-src="csar">Actes CSAR</button>
+      <button data-src="ccam">Actes CCAM</button>
+    </div>
+    <p style="font-size:0.82em;color:var(--gris);margin:-8px 0 14px;">
+      Chaque ligne du résultat est une ligne de la table ci-dessus (pas d'agrégation). Les filtres
+      peuvent porter sur cette table ou sur une autre (rattachement par séjour) : un filtre sur un
+      autre fichier retient les lignes dont le séjour a <strong>au moins une</strong> ligne correspondante.
+    </p>
+    <div class="field" style="width:100%">
+      <label>Filtres (tous combinés en ET)</label>
+      <div class="var-list" id="filterList"></div>
+      <button class="btn-add" id="btnAddFilter">+ Ajouter un filtre</button>
+    </div>
+    <div class="field" style="width:100%; margin-top:14px;">
+      <label>Colonnes à afficher</label>
+      <div class="var-list" id="listeColsList"></div>
+      <button class="btn-add" id="btnAddListeCol">+ Ajouter une colonne</button>
+    </div>
+    <div class="row" style="margin-top:14px;">
+      <button class="primary" id="btnGenererListe">Générer la liste</button>
+    </div>
+    <div id="statusListe" style="font-size:0.85em;color:var(--gris);margin-top:10px;"></div>
+  </div>
+  </div>
+
+  <div class="panel" id="panelResult" style="display:none">
+    <h2>4. Résultat</h2>
+    <div class="meta-line" id="resultMeta"></div>
+    <div id="resultWrap"></div>
+    <div class="export-bar">
+      <button class="secondary" id="btnOuvrirTableauPage" disabled>Ouvrir dans une nouvelle page ↗</button>
+      <button class="secondary" id="btnExportHtml" disabled title="L'impression/export PDF se fait depuis ce fichier HTML (bouton Imprimer intégré)">Exporter en HTML</button>
+      <button class="secondary" id="btnExportXls" disabled>Exporter en Excel (.xls)</button>
+    </div>
+  </div>
+  </div>
+
+  <div id="flowGraphique" style="display:none">
+  <p class="back-link"><a href="#" id="btnBackFromGraphique">&larr; Changer de sortie</a></p>
+
+  <div class="panel" id="panelGraphBuild">
+    <h2>3. Construire le graphique</h2>
+    <p style="font-size:0.82em;color:var(--gris);margin:0 0 14px;">
+      Les variables ci-dessous peuvent venir de n'importe quel fichier — leur provenance est
+      indiquée entre parenthèses — et sont rattachées aux données par séjour ; chaque mesure
+      compte/somme sur les lignes réelles de son propre fichier, quelle que soit la combinaison
+      choisie.
+    </p>
+
+    <div class="row">
+      <div class="field" style="flex:1; min-width:260px;">
+        <label>Axe X (jusqu'à 3 variables imbriquées)</label>
+        <div class="var-list" id="graphXDimsList"></div>
+        <button class="btn-add" id="btnAddGraphXDim">+ Ajouter une variable</button>
+      </div>
+      <div class="field" style="flex:1; min-width:260px;">
+        <label>Série / légende (facultatif, max 3)</label>
+        <div class="var-list" id="graphSeriesDimsList"></div>
+        <button class="btn-add" id="btnAddGraphSeriesDim">+ Ajouter une variable</button>
+      </div>
+      <div class="field" style="flex:1; min-width:260px;">
+        <label>Vignettes — petits multiples (facultatif, max 3)</label>
+        <div class="var-list" id="graphFacetDimsList"></div>
+        <button class="btn-add" id="btnAddGraphFacetDim">+ Ajouter une variable</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <div class="field" style="flex:1; min-width:320px;">
+        <label>Mesure(s) Y (mesure × fonction)</label>
+        <div class="var-list" id="graphExprList"></div>
+        <button class="btn-add" id="btnAddGraphExpr">+ Ajouter une expression</button>
+      </div>
+    </div>
+
+    <label style="display:flex; align-items:center; gap:6px; margin-top:14px; font-size:0.85em;">
+      <input type="checkbox" id="chkHideEmptyGraph"> Masquer les valeurs (vide) des variables (axe X/Série/Vignettes)
+    </label>
+
+    <div class="row" style="margin-top:14px;">
+      <div class="field" style="width:100%;">
+        <label>Type de graphique <span style="text-transform:none;font-weight:normal;">(laissez vide pour une suggestion automatique selon les variables choisies)</span></label>
+        <div class="mode-tabs" id="chartTypeTabs">
+          <button data-type="barres">Barres</button>
+          <button data-type="barres_horiz">Barres horizontales</button>
+          <button data-type="barres_empilees">Barres empilées</button>
+          <button data-type="lignes">Lignes</button>
+          <button data-type="aires">Aires</button>
+          <button data-type="combo">Barres + lignes (mixte)</button>
+          <button data-type="camembert">Camembert</button>
+          <button data-type="sunburst">Sunburst</button>
+          <button data-type="nuage">Nuage de points</button>
+          <button data-type="bulles">Bulles (bubble chart)</button>
+          <button data-type="carte_chaleur">Carte de chaleur</button>
+          <button data-type="boxplot">Boîte à moustaches</button>
+          <button data-type="histogramme">Histogramme</button>
+          <button data-type="treemap">Treemap</button>
+          <button data-type="sankey">Sankey (flux)</button>
+          <button data-type="radar">Radar</button>
+        </div>
+        <p style="font-size:0.82em;color:var(--gris);margin:6px 0 0;">Bulles : nécessite 3 mesures (X, Y, taille). Barres + lignes (mixte) : nécessite 2 mesures (la 1ʳᵉ en barres, les suivantes en ligne(s) sur un axe secondaire) — ignore la Série. Sankey : nécessite une variable de Série (la cible des flux — l'axe X en est la source). Radar : nécessite au moins 3 catégories en axe X. Barres/Lignes/Aires avec plusieurs mesures (sans Série) : la 1ʳᵉ mesure garde l'axe de gauche, les suivantes passent automatiquement sur un axe de droite indépendant (évite qu'une mesure à grande échelle, ex. valorisation, n'écrase une mesure à petite échelle, ex. nombre de RHS). Barres, Bulles et Carte de chaleur proposent une option Affichage 3D (visible uniquement dans "Ouvrir en interactif").</p>
+      </div>
+    </div>
+
+    <div class="row" id="ringColorsField" style="margin-top:14px; display:none;">
+      <div class="field" style="width:100%;">
+        <label>Couleurs par niveau (camembert imbriqué / treemap) <span style="text-transform:none;font-weight:normal;">— un dégradé de la teinte choisie est appliqué aux valeurs de chaque niveau</span></label>
+        <div id="ringColorsList"></div>
+      </div>
+    </div>
+
+    <div class="row" id="chartOptionsField" style="margin-top:14px; display:none; gap:24px; align-items:flex-end;">
+      <div class="field">
+        <label>Étiquettes de données</label>
+        <select id="selDataLabelsMode">
+          <option value="aucune">Aucune</option>
+          <option value="valeurs">Valeurs</option>
+          <option value="pct_col">% en colonne (par catégorie)</option>
+          <option value="pct_ligne">% en ligne (par série)</option>
+          <option value="pct_total">% du total</option>
+        </select>
+      </div>
+      <div class="field" id="splineField" style="display:none;">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:normal;text-transform:none;letter-spacing:normal;">
+          <input type="checkbox" id="chkSpline" style="width:auto;"> Lignes arrondies (spline)
+        </label>
+      </div>
+      <div class="field" id="movAvgField" style="display:none;">
+        <label>Moyenne mobile <span style="text-transform:none;font-weight:normal;">(points, vide/0 = désactivée)</span></label>
+        <input type="number" id="inpMovAvg" min="2" step="1" style="width:90px;" placeholder="ex. 5">
+      </div>
+      <div class="field" id="donutField" style="display:none;">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:normal;text-transform:none;letter-spacing:normal;">
+          <input type="checkbox" id="chkDonut" style="width:auto;"> Donut (trou central)
+        </label>
+      </div>
+      <div class="field" id="explodedField" style="display:none;">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:normal;text-transform:none;letter-spacing:normal;">
+          <input type="checkbox" id="chkExploded" style="width:auto;"> Parts écartées (exploded)
+        </label>
+      </div>
+      <div class="field" id="graph3dField" style="display:none;">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:normal;text-transform:none;letter-spacing:normal;">
+          <input type="checkbox" id="chk3d" style="width:auto;"> Affichage 3D <span style="text-transform:none;font-weight:normal;color:var(--gris);">(vue interactive uniquement)</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="row" id="seriesColorsField" style="margin-top:14px; display:none;">
+      <div class="field" style="width:100%;">
+        <label>Couleurs des séries <span style="text-transform:none;font-weight:normal;">— par position (1ʳᵉ série, 2ᵉ série…), appliqué que la Série provienne d'une variable ou de plusieurs mesures</span></label>
+        <div id="seriesColorsList"></div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <button class="primary" id="btnGenererGraph">Générer le graphique</button>
+      <button class="secondary" id="btnOuvrirPlotly" style="margin-left:10px;">Ouvrir en interactif (zoom, survol…) ↗</button>
+    </div>
+    <div id="statusGraph" style="font-size:0.85em;color:var(--gris);margin-top:10px;"></div>
+  </div>
+
+  <div class="panel" id="panelGraphResult" style="display:none">
+    <h2>4. Résultat</h2>
+    <div class="meta-line" id="graphResultMeta"></div>
+    <div id="graphResultWrap" class="chart-grid"></div>
+    <div class="export-bar">
+      <button class="secondary" id="btnOuvrirGraphPage" disabled>Ouvrir dans une nouvelle page ↗</button>
+      <button class="secondary" id="btnGraphExportPng" disabled>Exporter en PNG</button>
+      <button class="secondary" id="btnGraphExportSvg" disabled title="Vectoriel — meilleure fidélité et le plus souvent le plus léger">Exporter en SVG</button>
+      <button class="secondary" id="btnGraphExportHtml" disabled title="L'impression/export PDF se fait depuis ce fichier HTML (bouton Imprimer intégré)">Exporter en HTML</button>
+      <button class="secondary" id="btnGraphExportXls" disabled>Exporter en Excel (données)</button>
+    </div>
+  </div>
+  </div>
+  </div>
+
+  <div id="flowDossier" style="display:none">
+  <p class="back-link"><a href="#" id="btnBackFromDossier">&larr; Changer de parcours</a></p>
+  <div id="modeFiche">
+  <div class="panel" id="panelFicheSaisie">
+    <h2>2. Rechercher un séjour</h2>
+    <div class="row">
+      <div class="field">
+        <label for="selFicheFiness">Établissement</label>
+        <select id="selFicheFiness"></select>
+      </div>
+      <div class="field">
+        <label for="inpFicheNda">N° Dossier administratif (NDA)</label>
+        <input type="text" id="inpFicheNda" placeholder="ex. 027080510" style="padding:6px 8px;border:1px solid var(--bordure);border-radius:4px;min-width:220px;">
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <button class="primary" id="btnRechercherFiche">Rechercher</button>
+      </div>
+    </div>
+    <div id="statusFiche" style="font-size:0.85em;color:var(--gris);margin-top:10px;"></div>
+  </div>
+  <div class="panel" id="panelFicheResult" style="display:none"></div>
+  </div>
+  </div>
+
+</main>
+
+<div id="printExport"></div>
+<style id="printPageStyle">@page { size: A4 portrait; margin: 12mm; }</style>
+
+<script src="lib/sql-wasm.js"></script>
+<script src="catalogue.js"></script>
+<script src="formula/errors.js"></script>
+<script src="formula/tokenizer.js"></script>
+<script src="formula/registry.js"></script>
+<script src="formula/types.js"></script>
+<script src="formula/parser.js"></script>
+<script src="formula/evaluate.js"></script>
+<script src="explorer/session-variables.js"></script>
+<script src="explorer/variable-editor.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

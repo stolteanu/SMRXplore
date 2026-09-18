@@ -1,0 +1,64 @@
+# Données patients réelles (RHS/VID-HOSP/valorisation, même anonymisées) —
+# ne doivent jamais entrer dans l'historique de version.
+input/
+data/
+
+# app/ mélange du code source (interface de lancement/exploration) et des
+# artefacts générés (tableaux de bord dérivés de données patients réelles —
+# établissement, activité, montants) : on ignore tout par défaut, puis on
+# ré-autorise explicitement les fichiers SOURCE (jamais les rapports générés
+# tableau_de_bord_*/annexe_*/journal_*/generated/, ni app/data/pmsi.db —
+# celui-ci déjà couvert par la règle data/ ci-dessus).
+app/*
+!app/index.html
+!app/admin.html
+!app/tdb-choix.html
+!app/explorateur.html
+!app/catalogue.js
+!app/app.js
+!app/plotly_viewer.html
+!app/theme.js
+!app/lib/
+!app/lib/**
+!app/formula/
+!app/formula/**
+!app/explorer/
+!app/explorer/**
+
+output/
+temp/
+
+# Sauvegardes automatiques de pmsi.db (tools/sauvegarder_db.py) — données patients réelles,
+# jamais dans git ; rotation locale sur les 5 dernières uniquement.
+backups/
+
+__pycache__/
+*.pyc
+
+# Environnement virtuel local (Python 3.11, verrouillé pour matcher la CI
+# — voir README, section Développement) — spécifique à la machine, jamais versionné.
+.venv/
+
+# Build PyInstaller (launch.exe autonome, voir README de build) — binaire
+# régénérable via `python -m PyInstaller --onefile --name launch --distpath . --workpath build --specpath build launch.py`,
+# spécifique à la machine/architecture qui l'a produit : pas dans git.
+build/
+launch.exe
+
+# Config Claude Code locale à cette machine (permissions), pas du projet.
+.claude/settings.local.json
+
+# Déploiement portable SMRXplore (exe + ressources + bac à sable) — régénéré
+# depuis ce dépôt via tools/deployer_smrxplore.py, jamais versionné (contient
+# potentiellement des données patients réelles une fois utilisé).
+SMRXPLORE/
+
+# Fichiers de travail ponctuels (extraits de debug/investigation) laissés à
+# la racine — peuvent contenir des données patients réelles, jamais dans git.
+scratch_*
+
+# Sortie de tools/anonymiser_sources.py — même anonymisée, jamais versionnée
+# par précaution (contient aussi anon/_seed.secret.json, la clé qui permet
+# de reproduire la correspondance réel->pseudonyme : à protéger comme un
+# secret, jamais partagée).
+anon/

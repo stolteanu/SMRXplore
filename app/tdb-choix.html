@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<script src="theme.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>PMSI-SMR — TDB choix</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e;
+    --muted: #898781; --border: rgba(11,11,11,0.10); --grid: #e1e0d9;
+    --rhs: #2a78d6; --vid: #1baf7a; --warn: #fab219; --warn-ink: #6b4c00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+      --muted: #898781; --border: rgba(255,255,255,0.10); --grid: #2c2c2a;
+      --rhs: #3987e5; --vid: #199e70; --warn: #fab219; --warn-ink: #3a2900;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+    --muted: #898781; --border: rgba(255,255,255,0.10); --grid: #2c2c2a;
+    --rhs: #3987e5; --vid: #199e70; --warn: #fab219; --warn-ink: #3a2900;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page); color: var(--ink);
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 32px 16px 56px; }
+  a.back { color: var(--ink-2); font-size: 13px; text-decoration: none; }
+  a.back:hover { text-decoration: underline; }
+  h1 { font-size: 22px; margin: 14px 0 4px; }
+  p.sub { color: var(--ink-2); font-size: 13.5px; margin: 0 0 24px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 20px; margin-bottom: 18px;
+  }
+  .card h2 {
+    font-size: 12.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--ink-2); margin: 0 0 12px;
+  }
+  .chip-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  label.chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer; user-select: none;
+    background: var(--page);
+  }
+  label.chip input { accent-color: var(--rhs); }
+  label.chip.disabled { opacity: 0.4; cursor: not-allowed; }
+  label.chip input[type="radio"] { accent-color: var(--vid); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  select#mois-fin {
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; font-size: 13px; background: var(--page); color: var(--ink);
+  }
+  button#go {
+    background: var(--rhs); color: #fff; border: none; border-radius: 8px;
+    padding: 12px 22px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button#go:disabled { opacity: 0.5; cursor: not-allowed; }
+  .apparence-row { display: flex; gap: 20px; align-items: flex-end; flex-wrap: wrap; margin-top: 12px; }
+  .apparence-row label { font-size: 12.5px; color: var(--ink-2); display: flex; flex-direction: column; gap: 4px; }
+  .apparence-row input[type="color"] { width: 44px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
+  .apparence-row select {
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+    font-size: 13px; background: var(--page); color: var(--ink);
+  }
+  .apparence-row button {
+    border: 1px solid var(--border); background: var(--page); color: var(--ink);
+    border-radius: 8px; padding: 7px 12px; font-size: 12.5px; cursor: pointer; height: 30px;
+  }
+  .msg {
+    font-size: 13px; padding: 10px 14px; border-radius: 8px; margin-top: 14px;
+  }
+  .msg.error { background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border)); color: var(--ink); }
+  #results { margin-top: 20px; }
+  .report {
+    border-bottom: 1px solid var(--grid); padding: 12px 0; font-size: 13.5px;
+  }
+  .report:last-child { border-bottom: none; }
+  .report .fin { font-weight: 700; margin-bottom: 6px; }
+  .link-row { display: inline-flex; align-items: center; gap: 4px; margin-right: 14px; }
+  .report-check { display: none; accent-color: var(--rhs); cursor: pointer; }
+  #results.selecting .report-check { display: inline-block; }
+  .report a {
+    color: var(--rhs); text-decoration: none; font-size: 13px;
+  }
+  .report a:hover { text-decoration: underline; }
+  .spinner { font-size: 13px; color: var(--ink-2); }
+  #export-zone { margin-top: 16px; }
+  #export-zone button {
+    border: 1px solid var(--border); background: var(--page); color: var(--ink);
+    border-radius: 8px; padding: 9px 16px; font-size: 13px; cursor: pointer;
+  }
+  #export-zone button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #export-msg { font-size: 12.5px; color: var(--ink-2); margin-top: 8px; }
+  .fin-block { border-top: 1px solid var(--grid); padding-top: 12px; margin-top: 12px; }
+  .fin-block:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+  .fin-block h3 { font-size: 12.5px; margin: 0 0 8px; color: var(--ink); }
+  .uf-chip-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  label.chip.small { padding: 4px 10px; font-size: 12px; }
+  label.chip.small.grouped { opacity: 0.35; }
+  .new-groupe { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .new-groupe input[type="text"] {
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+    font-size: 13px; background: var(--page); color: var(--ink); min-width: 180px;
+  }
+  .new-groupe button {
+    border: 1px solid var(--border); background: var(--page); color: var(--ink);
+    border-radius: 8px; padding: 7px 12px; font-size: 12.5px; cursor: pointer;
+  }
+  .new-groupe button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .new-groupe-msg {
+    font-size: 12.5px; color: var(--ink); background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+    border-radius: 8px; padding: 5px 10px;
+  }
+  .groupe-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .groupe-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: color-mix(in srgb, var(--vid) 14%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--vid) 40%, var(--border));
+    border-radius: 999px; padding: 6px 8px 6px 12px; font-size: 12.5px;
+  }
+  .groupe-tag .remove {
+    cursor: pointer; color: var(--ink-2); font-weight: 700; line-height: 1;
+    border-radius: 999px; width: 16px; height: 16px; display: inline-flex;
+    align-items: center; justify-content: center;
+  }
+  .groupe-tag .remove:hover { color: var(--ink); }
+  .groupe-tag label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .groupe-tag input[type="checkbox"] { accent-color: var(--vid); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/index.html">&larr; Accueil</a>
+  <h1>Tableaux de bord simples — choix</h1>
+  <p class="sub">Sélectionnez les années (3 maximum), les établissements, et éventuellement un TDB secondaire.</p>
+
+  <div class="card">
+    <h2>Années à comparer (3 max.)</h2>
+    <div id="years" class="chip-grid"><span class="hint">Chargement…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Établissements (FINESS)</h2>
+    <div id="finess" class="chip-grid"><span class="hint">Chargement…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>TDB secondaire</h2>
+    <div class="chip-grid">
+      <label class="chip"><input type="radio" name="axis" value="none" checked> Aucun</label>
+      <label class="chip"><input type="radio" name="axis" value="uf"> Par UF</label>
+      <label class="chip"><input type="radio" name="axis" value="type_hospitalisation"> Par type d'hospitalisation (HC / HTP)</label>
+    </div>
+  </div>
+
+  <div class="card" id="groupes-uf-card" style="display:none;">
+    <h2>Regroupement et filtre par UF (optionnel)</h2>
+    <p class="hint" style="margin-top:0;">Les services n'existent pas dans le PMSI : définissez ici vos propres regroupements d'UF. Les cases à cocher servent aussi de filtre : cochez uniquement les UF (ou groupes) que vous voulez voir générées, décochez celles à exclure. Pour créer un groupe, cochez ses UF, donnez un nom, ajoutez le groupe (un seul TDB sera généré pour tout le groupe). Dès que vous touchez une case ou créez un groupe, seules les UF/groupes cochés génèrent un TDB — les UF jamais touchées n'en génèrent plus. Tant que rien n'est touché, comportement par défaut : chaque UF génère son propre TDB individuel. Ce paramétrage est mémorisé sur cet ordinateur, par établissement.</p>
+    <div id="groupes-uf-body"><span class="hint">Sélectionnez au moins un établissement.</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Mois de fin de période</h2>
+    <select id="mois-fin">
+      <option value="">Auto (dernière transmission)</option>
+      <option value="1">Janvier</option>
+      <option value="2">Février</option>
+      <option value="3">Mars</option>
+      <option value="4">Avril</option>
+      <option value="5">Mai</option>
+      <option value="6">Juin</option>
+      <option value="7">Juillet</option>
+      <option value="8">Août</option>
+      <option value="9">Septembre</option>
+      <option value="10">Octobre</option>
+      <option value="11">Novembre</option>
+      <option value="12">Décembre</option>
+    </select>
+    <p class="hint">La période reste toujours cumulative depuis janvier (semaine 01), convention ATIH — ce choix ne fixe que la fin.</p>
+  </div>
+
+  <div class="card">
+    <h2>Signalisation couleur</h2>
+    <label class="chip"><input type="checkbox" id="signalisation-couleur"> Colorer les cellules selon la tendance (hausse/baisse vs période précédente)</label>
+    <p class="hint">Même dégradé vert/orange (avec flèche ▲/▼) que dans l'Explorateur — l'intensité de la couleur suit l'ampleur de la variation.</p>
+  </div>
+
+  <div class="card">
+    <h2>Apparence du TDB (optionnel)</h2>
+    <label class="chip"><input type="checkbox" id="app-active"> Personnaliser l'apparence de ce TDB</label>
+    <div id="app-fields" class="apparence-row" style="display:none;">
+      <label>Couleur de fond (page)<br><input type="color" id="app-fond" value="#f9f9f7"></label>
+      <label>Couleur du contenu (tableaux)<br><input type="color" id="app-contenu" value="#fcfcfb"></label>
+      <label>Police<br>
+        <select id="app-police">
+          <option value="systeme">Système</option>
+          <option value="arial">Arial</option>
+          <option value="verdana">Verdana</option>
+          <option value="georgia">Georgia</option>
+        </select>
+      </label>
+      <label>Couleur des cadres de section<br><input type="color" id="app-cadre" value="#2a78d6"></label>
+      <button type="button" id="app-reset">Réinitialiser</button>
+    </div>
+    <p class="hint">Décochez pour garder le thème habituel du TDB. Les regroupements de section et les lignes de total sont automatiquement affichés un peu plus foncés que la couleur de contenu choisie.</p>
+  </div>
+
+  <button id="go" disabled>Générer le(s) TDB</button>
+  <div id="msg"></div>
+  <div id="results"></div>
+  <div id="export-zone" hidden>
+    <button type="button" id="export-btn">Exporter…</button>
+    <div id="export-msg"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const MAX_ANNEES = 3;
+  const yearsBox = document.getElementById("years");
+  const finessBox = document.getElementById("finess");
+  const goBtn = document.getElementById("go");
+  const msgBox = document.getElementById("msg");
+  const resultsBox = document.getElementById("results");
+
+  // Un nom de groupe d'UF est saisi librement par l'utilisateur (voir plus
+  // bas) puis réinjecté ici via innerHTML — échappement systématique avant
+  // insertion (audit 2026-09-18).
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  const exportZone = document.getElementById("export-zone");
+  const exportBtn = document.getElementById("export-btn");
+  const exportMsg = document.getElementById("export-msg");
+  // Pas de variable JS séparée pour l'état "sélection en cours" : la classe
+  // CSS .selecting sur #results EST cet état (une seule source de vérité,
+  // relue via classList.contains ci-dessous — audit 2026-09-18).
+  function setExportMode(on) {
+    resultsBox.classList.toggle("selecting", on);
+    if (on) resultsBox.querySelectorAll(".report-check").forEach(cb => { cb.checked = true; });
+    exportBtn.textContent = on ? "Enregistrer la sélection" : "Exporter…";
+    exportMsg.textContent = "";
+  }
+
+  exportBtn.addEventListener("click", () => {
+    if (!resultsBox.classList.contains("selecting")) {
+      setExportMode(true);
+      return;
+    }
+    // Sélection au lien près (Tableau de bord / Annexe / Journal / TDB
+    // secondaires) — pas par établissement entier — demande utilisateur
+    // 2026-09-16 : chaque case cochée porte son URL générée dans
+    // data-url (posée au rendu du résultat, cf. plus bas).
+    const fichiers = [...resultsBox.querySelectorAll(".report-check:checked")].map(cb => cb.dataset.url);
+    if (!fichiers.length) {
+      exportMsg.textContent = "Cochez au moins un tableau à exporter.";
+      return;
+    }
+    exportBtn.disabled = true;
+    // Le sélecteur de dossier natif (tkinter, côté serveur) s'ouvre pendant
+    // l'appel réseau ci-dessous — la requête ne répond qu'une fois
+    // l'utilisateur validé/annulé le dialogue (voir /api/exporter).
+    exportMsg.textContent = "Choisissez le dossier de destination dans la fenêtre qui s'ouvre…";
+    fetch("/api/exporter", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fichiers })
+    })
+      .then(r => r.json().then(body => ({ ok: r.ok, body })))
+      .then(({ ok, body }) => {
+        exportBtn.disabled = false;
+        if (!ok) {
+          exportMsg.textContent = body.error || "Erreur inconnue.";
+          return;
+        }
+        if (body.cancelled) {
+          exportMsg.textContent = "Export annulé.";
+          return;
+        }
+        setExportMode(false);
+        const nb = body.copies.length;
+        exportMsg.textContent = body.erreurs.length
+          ? `${nb} fichier(s) exporté(s) vers ${body.destination} — erreurs : ${body.erreurs.join(", ")}`
+          : `${nb} fichier(s) exporté(s) vers ${body.destination}.`;
+      })
+      .catch(err => {
+        exportBtn.disabled = false;
+        exportMsg.textContent = `Erreur réseau : ${err}`;
+      });
+  });
+
+  let yearsByFiness = {};
+
+  function selectedValues(container, name) {
+    return Array.from(container.querySelectorAll(`input[name="${name}"]:checked`)).map(i => i.value);
+  }
+
+  // --- Regroupement d'UF en "services" (2026-08-06) -------------------
+  // Notion absente du PMSI : purement définie par l'utilisateur, jamais
+  // codée en dur ici. Persistée en localStorage, PAR ÉTABLISSEMENT
+  // (clé `pmsi_uf_groupes_<finess>`), pour ne pas avoir à la resaisir à
+  // chaque génération.
+  const groupesUfCard = document.getElementById("groupes-uf-card");
+  const groupesUfBody = document.getElementById("groupes-uf-body");
+  const ufListCache = {}; // finess -> Promise<string[]>
+
+  function lsKey(finess) { return `pmsi_uf_groupes_${finess}`; }
+  function lsKeyNoms(finess) { return `pmsi_uf_noms_${finess}`; }
+  function lsKeySelection(finess) { return `pmsi_uf_selection_${finess}`; }
+  function lsKeyGroupesActifs(finess) { return `pmsi_uf_groupes_actifs_${finess}`; }
+
+  function loadGroupes(finess) {
+    try {
+      return JSON.parse(localStorage.getItem(lsKey(finess)) || "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  function saveGroupes(finess, groupes) {
+    localStorage.setItem(lsKey(finess), JSON.stringify(groupes));
+  }
+
+  // Historique des noms de groupe déjà utilisés pour cet établissement,
+  // pour les reproposer même si le groupe correspondant a été supprimé
+  // depuis (ex. resaisi avec d'autres UF).
+  function loadNomsHistory(finess) {
+    try {
+      return JSON.parse(localStorage.getItem(lsKeyNoms(finess)) || "[]");
+    } catch {
+      return [];
+    }
+  }
+
+  function rememberNom(finess, nom) {
+    const noms = loadNomsHistory(finess);
+    if (!noms.includes(nom)) {
+      noms.push(nom);
+      localStorage.setItem(lsKeyNoms(finess), JSON.stringify(noms));
+    }
+  }
+
+  // Sélection individuelle d'UF (2026-08-25, décision utilisateur) : les
+  // cases à cocher servent aussi de FILTRE, pas seulement à composer un
+  // groupe. Une UF cochée sans être nommée/regroupée reste incluse en
+  // individuel ; une UF non cochée et non regroupée est exclue. `null`
+  // (clé absente) = jamais touché => pas de filtre (comportement historique,
+  // toutes les UF). Une fois la clé écrite (même vide), le filtre est actif.
+  function loadSelection(finess) {
+    const raw = localStorage.getItem(lsKeySelection(finess));
+    if (raw === null) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  function saveSelection(finess, selection) {
+    localStorage.setItem(lsKeySelection(finess), JSON.stringify(selection));
+  }
+
+  // Groupes ACTIFS (2026-08-25, décision utilisateur) : un groupe défini
+  // est proposé comme une case à cocher à part (comme une UF), pour ne pas
+  // avoir à recocher ses UF individuelles ni à le redéfinir à chaque fois.
+  // Mais un groupe défini n'est PAS coché par défaut — il faut le cocher
+  // explicitement pour qu'il soit inclus dans la génération en cours.
+  function loadGroupesActifs(finess) {
+    try {
+      return JSON.parse(localStorage.getItem(lsKeyGroupesActifs(finess)) || "[]");
+    } catch {
+      return [];
+    }
+  }
+
+  function saveGroupesActifs(finess, noms) {
+    localStorage.setItem(lsKeyGroupesActifs(finess), JSON.stringify(noms));
+  }
+
+  function fetchUfList(finess) {
+    if (!ufListCache[finess]) {
+      ufListCache[finess] = fetch(`/api/uf-list?finess=${encodeURIComponent(finess)}`)
+        .then(r => r.json())
+        .then(body => body.uf || []);
+    }
+    return ufListCache[finess];
+  }
+
+  function currentAxis() {
+    const el = document.querySelector('input[name="axis"]:checked');
+    return el ? el.value : "none";
+  }
+
+  function refreshGroupesUfCard() {
+    const finessList = selectedValues(finessBox, "finess");
+    if (currentAxis() !== "uf" || finessList.length === 0) {
+      groupesUfCard.style.display = "none";
+      return;
+    }
+    groupesUfCard.style.display = "";
+    groupesUfBody.innerHTML = "";
+    finessList.forEach(finess => renderFinessGroupBlock(finess));
+  }
+
+  function renderFinessGroupBlock(finess) {
+    const block = document.createElement("div");
+    block.className = "fin-block";
+    block.innerHTML = `<h3>${finess}</h3><div class="uf-chip-grid"><span class="hint">Chargement des UF…</span></div>
+      <div class="new-groupe"></div><div class="groupe-list"></div>`;
+    groupesUfBody.appendChild(block);
+
+    fetchUfList(finess).then(ufs => {
+      const groupes = loadGroupes(finess);
+      const grouped = new Set(Object.values(groupes).flat());
+      const selection = loadSelection(finess); // null = pas de filtre (toutes cochées par défaut)
+      const chipGrid = block.querySelector(".uf-chip-grid");
+      chipGrid.innerHTML = ufs.length
+        ? ufs.map(uf => {
+            const isGrouped = grouped.has(uf);
+            const checked = isGrouped || (selection !== null && selection.includes(uf));
+            return `<label class="chip small${isGrouped ? " grouped" : ""}">
+              <input type="checkbox" value="${uf}" ${checked ? "checked" : ""} ${isGrouped ? "disabled" : ""}> ${uf}</label>`;
+          }).join("")
+        : '<span class="hint">Aucune UF trouvée.</span>';
+
+      // Cocher/décocher une UF (non regroupée) active le mode filtre : dès
+      // qu'une case est touchée, seules les UF cochées (individuellement ou
+      // via un groupe) génèrent un TDB — cf. loadSelection().
+      chipGrid.addEventListener("change", (ev) => {
+        const input = ev.target;
+        if (input.tagName !== "INPUT" || input.disabled) return;
+        const current = loadSelection(finess) || [];
+        const setSel = new Set(current.filter(u => !grouped.has(u)));
+        if (input.checked) setSel.add(input.value); else setSel.delete(input.value);
+        saveSelection(finess, Array.from(setSel));
+      });
+
+      const datalistId = `noms-${finess}`;
+      const noms = loadNomsHistory(finess);
+      const newGroupe = block.querySelector(".new-groupe");
+      newGroupe.innerHTML = `
+        <input type="text" placeholder="Nom du service (ex. Cardiologie)" list="${datalistId}">
+        <datalist id="${datalistId}">${noms.map(n => `<option value="${n}">`).join("")}</datalist>
+        <button type="button">+ Créer le groupe</button>
+        <span class="new-groupe-msg" style="display:none;"></span>`;
+      const nameInput = newGroupe.querySelector("input");
+      const addBtn = newGroupe.querySelector("button");
+      const msgEl = newGroupe.querySelector(".new-groupe-msg");
+      addBtn.addEventListener("click", () => {
+        const nom = nameInput.value.trim();
+        // :checked capte aussi les UF déjà groupées (disabled mais restées
+        // cochées visuellement) — exclues ici, sinon un nouveau groupe
+        // absorbe par erreur les UF d'un groupe précédent.
+        const chosen = Array.from(chipGrid.querySelectorAll("input:checked:not(:disabled)")).map(i => i.value);
+        if (!nom || chosen.length === 0) {
+          msgEl.style.display = "";
+          msgEl.textContent = !nom
+            ? "Donnez un nom au groupe avant de le créer."
+            : "Cochez au moins une UF avant de créer le groupe.";
+          if (!nom) nameInput.focus();
+          return;
+        }
+        const g = loadGroupes(finess);
+        g[nom] = chosen;
+        saveGroupes(finess, g);
+        rememberNom(finess, nom);
+        const sel = loadSelection(finess);
+        if (sel !== null) saveSelection(finess, sel.filter(u => !chosen.includes(u)));
+        block.remove();
+        renderFinessGroupBlock(finess);
+      });
+
+      renderGroupeList(block, finess, ufs);
+    });
+  }
+
+  function renderGroupeList(block, finess, ufs) {
+    const list = block.querySelector(".groupe-list");
+    const groupes = loadGroupes(finess);
+    const noms = Object.keys(groupes);
+    const actifs = new Set(loadGroupesActifs(finess));
+    list.innerHTML = noms.length ? "" : "";
+    noms.forEach(nom => {
+      const tag = document.createElement("span");
+      tag.className = "groupe-tag";
+      tag.innerHTML = `<label><input type="checkbox" ${actifs.has(nom) ? "checked" : ""}> ${nom} (${groupes[nom].join(", ")})</label>
+        <span class="remove" title="Supprimer le groupe (pour le redéfinir si ses UF ont changé)">✕</span>`;
+      tag.querySelector('input[type="checkbox"]').addEventListener("change", (ev) => {
+        const current = new Set(loadGroupesActifs(finess));
+        if (ev.target.checked) current.add(nom); else current.delete(nom);
+        saveGroupesActifs(finess, Array.from(current));
+      });
+      tag.querySelector(".remove").addEventListener("click", () => {
+        const g = loadGroupes(finess);
+        delete g[nom];
+        saveGroupes(finess, g);
+        const act = loadGroupesActifs(finess).filter(n => n !== nom);
+        saveGroupesActifs(finess, act);
+        block.remove();
+        renderFinessGroupBlock(finess);
+      });
+      list.appendChild(tag);
+    });
+  }
+
+  function refreshYearAvailability() {
+    const chosenFiness = selectedValues(finessBox, "finess");
+    const available = new Set();
+    (chosenFiness.length ? chosenFiness : Object.keys(yearsByFiness)).forEach(f => {
+      (yearsByFiness[f] || []).forEach(y => available.add(y));
+    });
+    yearsBox.querySelectorAll("label.chip").forEach(label => {
+      const input = label.querySelector("input");
+      const has = available.has(input.value);
+      label.classList.toggle("disabled", !has);
+      input.disabled = !has;
+      if (!has) input.checked = false;
+    });
+    enforceYearLimit();
+  }
+
+  function enforceYearLimit() {
+    const checked = yearsBox.querySelectorAll('input[name="year"]:checked');
+    const atMax = checked.length >= MAX_ANNEES;
+    yearsBox.querySelectorAll('input[name="year"]').forEach(input => {
+      if (!input.checked) input.disabled = atMax || input.disabled;
+    });
+    // ré-active celles qui ne sont pas au-delà de la limite (sauf si année indisponible)
+    if (!atMax) refreshDisabledFromAvailability();
+    updateGoState();
+  }
+
+  function refreshDisabledFromAvailability() {
+    const chosenFiness = selectedValues(finessBox, "finess");
+    const available = new Set();
+    (chosenFiness.length ? chosenFiness : Object.keys(yearsByFiness)).forEach(f => {
+      (yearsByFiness[f] || []).forEach(y => available.add(y));
+    });
+    yearsBox.querySelectorAll('input[name="year"]').forEach(input => {
+      if (!input.checked) input.disabled = !available.has(input.value);
+    });
+  }
+
+  function updateGoState() {
+    const years = selectedValues(yearsBox, "year");
+    const finess = selectedValues(finessBox, "finess");
+    goBtn.disabled = !(years.length > 0 && finess.length > 0);
+  }
+
+  fetch("/api/meta").then(r => r.json()).then(meta => {
+    yearsByFiness = meta.years_by_finess || {};
+    const allYears = Array.from(new Set(Object.values(yearsByFiness).flat())).sort();
+
+    yearsBox.innerHTML = allYears.map(y =>
+      `<label class="chip"><input type="checkbox" name="year" value="${y}"> ${y}</label>`
+    ).join("") || '<span class="hint">Aucune donnée disponible.</span>';
+
+    finessBox.innerHTML = (meta.finess || []).map(f =>
+      `<label class="chip"><input type="checkbox" name="finess" value="${f}"> ${f}</label>`
+    ).join("") || '<span class="hint">Aucun établissement en base.</span>';
+
+    yearsBox.addEventListener("change", enforceYearLimit);
+    finessBox.addEventListener("change", () => { refreshYearAvailability(); refreshGroupesUfCard(); });
+    refreshYearAvailability();
+  }).catch(err => {
+    yearsBox.innerHTML = finessBox.innerHTML = '<span class="hint">Erreur de chargement.</span>';
+    console.error(err);
+  });
+
+  document.querySelectorAll('input[name="axis"]').forEach(r => r.addEventListener("change", refreshGroupesUfCard));
+
+  // ---- Apparence du TDB (2026-09-12, demande utilisateur) : champs masqués
+  // tant que la personnalisation n'est pas activée, pour ne rien envoyer au
+  // serveur (donc garder le thème par défaut) si l'utilisateur ne touche à
+  // rien. Valeurs par défaut des sélecteurs = thème habituel du TDB.
+  const APP_DEFAULTS = { fond: "#f9f9f7", contenu: "#fcfcfb", police: "systeme", cadre: "#2a78d6" };
+  const appActive = document.getElementById("app-active");
+  const appFields = document.getElementById("app-fields");
+  const appFond = document.getElementById("app-fond");
+  const appContenu = document.getElementById("app-contenu");
+  const appPolice = document.getElementById("app-police");
+  const appCadre = document.getElementById("app-cadre");
+  function resetAppFields() {
+    appFond.value = APP_DEFAULTS.fond;
+    appContenu.value = APP_DEFAULTS.contenu;
+    appPolice.value = APP_DEFAULTS.police;
+    appCadre.value = APP_DEFAULTS.cadre;
+  }
+  resetAppFields();
+  appActive.addEventListener("change", () => {
+    appFields.style.display = appActive.checked ? "flex" : "none";
+  });
+  document.getElementById("app-reset").addEventListener("click", resetAppFields);
+
+  goBtn.addEventListener("click", () => {
+    const years = selectedValues(yearsBox, "year");
+    const finess = selectedValues(finessBox, "finess");
+    const axis = document.querySelector('input[name="axis"]:checked').value;
+    const moisFinRaw = document.getElementById("mois-fin").value;
+    const mois_fin = moisFinRaw ? parseInt(moisFinRaw, 10) : null;
+    const groupes_uf = {};
+    const selection_uf = {};
+    if (axis === "uf") {
+      finess.forEach(f => {
+        // Seuls les groupes ACTIFS (cochés) sont envoyés — un groupe défini
+        // mais non coché est juste une définition réutilisable, pas incluse
+        // par défaut dans la génération (décision utilisateur 2026-08-25).
+        const g = loadGroupes(f);
+        const actifs = loadGroupesActifs(f);
+        const gActifs = {};
+        actifs.forEach(nom => { if (g[nom]) gActifs[nom] = g[nom]; });
+        if (Object.keys(gActifs).length) groupes_uf[f] = gActifs;
+        const sel = loadSelection(f);
+        if (sel !== null) selection_uf[f] = sel;
+      });
+    }
+
+    const signalisation_couleur = document.getElementById("signalisation-couleur").checked;
+    const apparence = appActive.checked
+      ? { fond: appFond.value, contenu: appContenu.value, police: appPolice.value, cadre: appCadre.value }
+      : {};
+
+    msgBox.innerHTML = '<p class="spinner">Génération en cours…</p>';
+    resultsBox.innerHTML = "";
+    goBtn.disabled = true;
+
+    fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ years, finess, axis, mois_fin, groupes_uf, selection_uf, signalisation_couleur, apparence })
+    })
+      .then(r => r.json().then(body => ({ ok: r.ok, body })))
+      .then(({ ok, body }) => {
+        goBtn.disabled = false;
+        if (!ok) {
+          msgBox.innerHTML = `<div class="msg error">${body.error || "Erreur inconnue."}</div>`;
+          exportZone.hidden = true;
+          setExportMode(false);
+          return;
+        }
+        msgBox.innerHTML = "";
+        // Case à cocher par LIEN généré (Tableau de bord / Annexe / Journal /
+        // chaque TDB secondaire), pas par établissement — demande utilisateur
+        // 2026-09-16 : on doit pouvoir exporter le TDB principal d'un
+        // établissement sans forcément prendre son Annexe/Journal, ou
+        // l'inverse.
+        // `libelle` peut porter un nom de groupe d'UF saisi librement par
+        // l'utilisateur (voir refreshGroupesUfCard plus bas) — échappé avant
+        // insertion dans innerHTML pour éviter qu'un nom de groupe contenant
+        // du HTML ne s'exécute (audit 2026-09-18).
+        const lienCoche = (url, libelle) => `
+              <span class="link-row">
+                <input type="checkbox" class="report-check" data-url="${escapeHtml(url)}">
+                <a href="${escapeHtml(url)}" target="_blank">${escapeHtml(libelle)}</a>
+              </span>`;
+        resultsBox.innerHTML = body.reports.map(r => `
+          <div class="report">
+            <div class="fin">${escapeHtml(r.finess)} — ${escapeHtml(r.annees.join(", "))}</div>
+            ${lienCoche(r.tdb, "Tableau de bord")}
+            ${lienCoche(r.annexe, "Annexe")}
+            ${lienCoche(r.journal, "Journal")}
+            ${(r.secondaires || []).map(s => lienCoche(s.url, `TDB — ${s.libelle}`)).join("")}
+          </div>
+        `).join("");
+        exportZone.hidden = body.reports.length === 0;
+        setExportMode(false);
+      })
+      .catch(err => {
+        goBtn.disabled = false;
+        exportZone.hidden = true;
+        setExportMode(false);
+        msgBox.innerHTML = `<div class="msg error">Erreur réseau : ${err}</div>`;
+      });
+  });
+})();
+</script>
+<script>PmsiTheme.mount();</script>
+</body>
+</html>

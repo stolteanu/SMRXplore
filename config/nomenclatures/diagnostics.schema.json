@@ -1,0 +1,18 @@
+{
+  "nomenclature": "diagnostics",
+  "spec_source": "Kit de nomenclature CIM 10 (ATIH) — LIBCIM10MULTI.TXT, fichier séquentiel pipe-delimited, encodé ANSI/cp1252, 1 ligne/code, sans en-tête",
+  "table": "nomenclature_diagnostics",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "code CIM-10-FR PMSI, 6 caractères max, point omis (ex. A009, S0230)"},
+    {"name": "type_mco_had", "type": "INTEGER", "modalite": {"0": "pas de restriction", "1": "interdit en DP et DR - autorisé ailleurs", "2": "interdit en DP et DR - cause externe de morbidité", "3": "interdit en DP, DR et DA", "4": "interdit en DP - autorisé ailleurs"}},
+    {"name": "profil_smr", "type": "TEXT", "len": 3, "note": "3 digits O/N : [finalité principale ou manifestation morbide principale, affection étiologique, DAS]"},
+    {"name": "type_psy", "type": "INTEGER", "modalite": {"0": "pas de restriction", "1": "interdit en DP", "3": "interdit en DP et DA"}},
+    {"name": "libelle_court", "type": "TEXT", "note": "max 70 car., ANSI standard sans accents"},
+    {"name": "libelle_complet", "type": "TEXT", "note": "libellé officiel CIM-10, accents ANSI complets"}
+  ],
+  "notes": [
+    "Le kit ATIH fournit aussi LIBCIM10_CH20.TXT et LIBCIM10_SAUFCH20.TXT : ce sont des sous-ensembles redondants du fichier complet (chapitre 20 / hors chapitre 20) — non chargés séparément, voir src/nomenclatures/cim10.py.",
+    "Dernier-libellé-gagne : les fichiers de plusieurs années sont chargés dans l'ordre chronologique (année dans le nom de fichier) et INSERT OR REPLACE sur `code` fait gagner la version la plus récente."
+  ]
+}

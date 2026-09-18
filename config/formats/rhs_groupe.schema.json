@@ -1,0 +1,119 @@
+{
+  "format": "RHS_groupe",
+  "spec_source": "RHS_groupe.csv (PMSI-SMR, DAF/ex-OQN, 2026)",
+  "record_length_formula": "190 + 8*n1 + 35*n2 + 30*n3 + 23*n4",
+  "natural_key": ["finess_epmsi", "numero_admin_sejour", "numero_semaine", "numero_unite_medicale", "date_entree_um"],
+  "natural_key_note": "Corrigé le 2026-08-13 : une clé sans numero_unite_medicale fusionne silencieusement deux RHS distincts quand le patient change d'UM par mutation interne au sein d'une même semaine calendaire (mode_entree_um='6') — confirmé sur des fichiers réels (95 cas où (finess, numero_admin_sejour, numero_semaine) apparaît deux fois avec un numero_unite_medicale différent). La table a dû être recréée et tous les fichiers input/ rechargés pour récupérer les RHS perdus par l'ancienne clé. Complété le 2026-08-21 : date_entree_um ajoutée, cas non couvert par le premier correctif — un patient qui revient dans la MÊME UM au sein de la même semaine après un aller-retour vers une autre UM (ex. 112D→112C→112D) produit deux RHS avec la même UM, qui collisionnaient encore sur l'ancienne clé à 4 éléments. date_entree_um diffère toujours entre les deux passages dans la même UM (confirmé sur quelques cas trouvés chez un seul établissement réel, le seul où le cas a été observé).",
+  "version_field": {"start": 11, "end": 13, "values": ["M1D"], "note": "voir rhs_groupe_m1c.schema.json pour le format M1C (avant M3 2025)"},
+  "required_codes": {"O": "obligatoire", "C": "conditionnel", "F": "filler/non exploité", "N": "non renseigné habituellement"},
+  "fixed_block": [
+    {"name": "filler_1", "start": 1, "end": 10, "len": 10, "type": "A*", "required": "F"},
+    {"name": "version_format_rhs_groupe", "start": 11, "end": 13, "len": 3, "type": "A", "required": "O", "modalite": "valeur fixe, ex. M1D"},
+    {"name": "finess_epmsi", "start": 14, "end": 22, "len": 9, "type": "A", "required": "O"},
+    {"name": "version_format_rhs", "start": 23, "end": 25, "len": 3, "type": "A", "required": "O", "modalite": "valeur fixe, ex. M0D"},
+    {"name": "numero_sejour_smr", "start": 26, "end": 32, "len": 7, "type": "A*", "required": "O"},
+    {"name": "numero_admin_sejour", "start": 33, "end": 52, "len": 20, "type": "A*", "required": "O"},
+
+    {"name": "version_classification", "start": 53, "end": 54, "len": 2, "type": "A", "required": "O", "note": "détermine la nomenclature GME applicable"},
+    {"name": "code_gme", "start": 55, "end": 61, "len": 7, "type": "A", "required": "O", "note": "Code GME (Groupe Médico-Économique), champ composite, structure interne dépendante de version_classification. Stocké tel quel (atomique), non décomposé pour l'instant."},
+    {"name": "code_retour_groupage", "start": 62, "end": 64, "len": 3, "type": "A", "required": "O", "note": "commun à toutes les versions de classification"},
+    {"name": "indicateur_erreur", "start": 65, "end": 65, "len": 1, "type": "A", "required": "O", "note": "commun à toutes les versions de classification"},
+
+    {"name": "date_debut_sejour", "start": 66, "end": 73, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+    {"name": "date_fin_sejour", "start": 74, "end": 81, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "C", "condition": "si séjour terminé"},
+    {"name": "date_naissance", "start": 82, "end": 89, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+    {"name": "sexe", "start": 90, "end": 90, "len": 1, "type": "A", "required": "O", "modalite": {"1": "homme", "2": "femme", "3": "indéterminé"}},
+    {"name": "code_postal_residence", "start": 91, "end": 95, "len": 5, "type": "A", "required": "O"},
+    {"name": "type_hospitalisation", "start": 96, "end": 96, "len": 1, "type": "A", "required": "O", "modalite": {"1": "complète", "2": "partielle de jour", "3": "partielle de nuit", "4": "séances"}},
+    {"name": "date_entree_um", "start": 97, "end": 104, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+    {"name": "mode_entree_um", "start": 105, "end": 105, "len": 1, "type": "A", "required": "O", "modalite": {"6": "mutation", "7": "transfert définitif", "0": "transfert provisoire", "8": "domicile"}},
+    {"name": "provenance", "start": 106, "end": 106, "len": 1, "type": "A*", "required": "C", "condition": "obligatoire si mode_entree_um = 6, 7 ou 0", "modalite": {"1": "MCO", "2": "SMR", "3": "SLD", "4": "psychiatrie", "6": "HAD", "5": "urgences EG", "U": "urgences autre EG", "7": "structure hébergement médicosociale"}},
+    {"name": "date_sortie_um", "start": 107, "end": 114, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "C", "condition": "si sortie de l'unité"},
+    {"name": "mode_sortie", "start": 115, "end": 115, "len": 1, "type": "A", "required": "C", "modalite": {"6": "mutation", "7": "transfert définitif", "0": "transfert provisoire", "8": "domicile", "9": "décès"}},
+    {"name": "destination", "start": 116, "end": 116, "len": 1, "type": "A*", "required": "C", "condition": "obligatoire si mode_sortie = 6, 7 ou 0", "modalite": {"1": "MCO", "2": "SMR", "3": "SLD", "4": "psychiatrie", "6": "HAD", "7": "structure hébergement médicosociale"}},
+    {"name": "numero_semaine", "start": 117, "end": 122, "len": 6, "type": "A", "format": "N° semaine ISO8601 (2) + Année (4)", "required": "O"},
+    {"name": "jours_hors_weekend", "start": 123, "end": 127, "len": 5, "type": "A", "required": "O", "note": "1 car/jour L,Ma,Me,J,V — 0=absent,1=présent"},
+    {"name": "jours_weekend", "start": 128, "end": 129, "len": 2, "type": "A", "required": "O", "note": "1 car/jour Sa,Di"},
+    {"name": "numero_unite_medicale", "start": 130, "end": 133, "len": 4, "type": "A*", "required": "O"},
+    {"name": "type_autorisation_um", "start": 134, "end": 136, "len": 3, "type": "A", "required": "O", "note": "liste UM SMR"},
+    {"name": "date_intervention_chirurgicale", "start": 137, "end": 144, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "C"},
+    {"name": "filler_2", "start": 145, "end": 152, "len": 8, "type": "A*", "required": "F"},
+    {"name": "manifestation_morbide_principale", "start": 153, "end": 160, "len": 8, "type": "A*", "ref": "CIM10-PMSI-FR", "required": "O"},
+    {"name": "affection_etiologique", "start": 161, "end": 168, "len": 8, "type": "A*", "ref": "CIM10-PMSI-FR", "required": "C"},
+
+    {"name": "dependance_habillage_toilette", "start": 169, "end": 169, "len": 1, "type": "A*", "required": "C", "modalite": {"1": "indépendance complète/modifiée", "2": "supervision/arrangement", "3": "assistance partielle", "4": "assistance totale"}},
+    {"name": "dependance_deplacement", "start": 170, "end": 170, "len": 1, "type": "A*", "required": "C", "modalite": "idem grille AVQ ci-dessus"},
+    {"name": "dependance_alimentation", "start": 171, "end": 171, "len": 1, "type": "A*", "required": "C", "modalite": "idem grille AVQ ci-dessus"},
+    {"name": "dependance_continence", "start": 172, "end": 172, "len": 1, "type": "A*", "required": "C", "modalite": "idem grille AVQ ci-dessus"},
+    {"name": "dependance_comportement", "start": 173, "end": 173, "len": 1, "type": "A*", "required": "C", "modalite": "idem grille AVQ ci-dessus"},
+    {"name": "dependance_relation", "start": 174, "end": 174, "len": 1, "type": "A*", "required": "C", "modalite": "idem grille AVQ ci-dessus"},
+
+    {"name": "n1_nb_das", "start": 175, "end": 176, "len": 2, "type": "N", "required": "O", "range": "[00-99]"},
+    {"name": "n2_nb_csarr", "start": 177, "end": 179, "len": 3, "type": "N", "required": "O", "range": "[000-999]"},
+    {"name": "n3_nb_csar", "start": 180, "end": 182, "len": 3, "type": "N", "required": "O", "range": "[000-999]"},
+    {"name": "n4_nb_ccam", "start": 183, "end": 184, "len": 2, "type": "N", "required": "O", "range": "[00-99]"},
+
+    {"name": "poursuite_projet_therapeutique", "start": 185, "end": 185, "len": 1, "type": "A*", "required": "C", "modalite": {"1": "oui", "2": "non"}},
+    {"name": "filler_3", "start": 186, "end": 186, "len": 1, "type": "A*", "required": "F"},
+    {"name": "lits_places_dedies", "start": 187, "end": 188, "len": 2, "type": "A*", "required": "F"},
+    {"name": "type_unite_specifique", "start": 189, "end": 190, "len": 2, "type": "A*", "required": "F", "modalite": {"08": "soins palliatifs", "09": "UCC", "10": "EVC-EPR"}}
+  ],
+  "repeated_blocks": [
+    {
+      "name": "DAS", "counter_field": "n1_nb_das", "block_len": 8,
+      "fields": [{"name": "code_das", "start": 1, "end": 8, "len": 8, "type": "A*", "ref": "CIM10-PMSI-FR", "required": "O pour DAS n°1, C ensuite"}]
+    },
+    {
+      "name": "CSARR", "counter_field": "n2_nb_csarr", "block_len": 35,
+      "fields": [
+        {"name": "code_principal", "start": 1, "end": 7, "len": 7, "type": "A*", "ref": "CSARR", "required": "O"},
+        {"name": "code_suppl_appareillage", "start": 8, "end": 10, "len": 3, "type": "A*", "required": "C"},
+        {"name": "code_modulateur_lieu", "start": 11, "end": 12, "len": 2, "type": "A*", "required": "F"},
+        {"name": "code_modulateur_patient", "start": 13, "end": 14, "len": 2, "type": "A*", "required": "F"},
+        {"name": "code_modulateur_technicite", "start": 15, "end": 16, "len": 2, "type": "A*", "required": "F"},
+        {"name": "code_intervenant", "start": 17, "end": 18, "len": 2, "type": "A*", "required": "O"},
+        {"name": "module_niveau_technicite", "start": 19, "end": 19, "len": 1, "type": "A*", "required": "C"},
+        {"name": "nombre_realisations", "start": 20, "end": 21, "len": 2, "type": "N", "required": "O"},
+        {"name": "date_realisation", "start": 22, "end": 29, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+        {"name": "nombre_reel_patients", "start": 30, "end": 31, "len": 2, "type": "N", "required": "O"},
+        {"name": "nombre_intervenants", "start": 32, "end": 33, "len": 2, "type": "N", "required": "C"},
+        {"name": "extension_documentaire", "start": 34, "end": 35, "len": 2, "type": "A*", "required": "F"}
+      ]
+    },
+    {
+      "name": "CSAR", "counter_field": "n3_nb_csar", "block_len": 30,
+      "fields": [
+        {"name": "code_principal", "start": 1, "end": 5, "len": 5, "type": "A*", "ref": "CSAR", "required": "O"},
+        {"name": "code_modulateur_lieu", "start": 6, "end": 7, "len": 2, "type": "A*", "required": "F", "modalite": ["L1", "L2", "L3"]},
+        {"name": "code_modulateur_temps", "start": 8, "end": 9, "len": 2, "type": "A*", "required": "F", "modalite": ["T0", "T1", "T2", "T3", "T4"]},
+        {"name": "code_modulateur_technicite", "start": 10, "end": 11, "len": 2, "type": "A*", "required": "F", "modalite": ["QI", "QF", "QS", "QQ", "QC", "QM"]},
+        {"name": "module_niveau_technicite", "start": 12, "end": 12, "len": 1, "type": "A*", "required": "F"},
+        {"name": "code_intervenant", "start": 13, "end": 14, "len": 2, "type": "A*", "required": "O"},
+        {"name": "modalite_collective", "start": 15, "end": 15, "len": 1, "type": "N", "required": "F", "modalite": {"1": "vrai", "0": "faux/NC"}},
+        {"name": "modalite_pluriprofessionnelle", "start": 16, "end": 16, "len": 1, "type": "N", "required": "F", "modalite": {"1": "vrai", "0": "faux/NC"}},
+        {"name": "nombre_realisations", "start": 17, "end": 18, "len": 2, "type": "N", "required": "O"},
+        {"name": "date_realisation", "start": 19, "end": 26, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+        {"name": "extension_documentaire", "start": 27, "end": 28, "len": 2, "type": "A*", "required": "F"},
+        {"name": "filler", "start": 29, "end": 30, "len": 2, "type": "A*", "required": "F"}
+      ]
+    },
+    {
+      "name": "CCAM", "counter_field": "n4_nb_ccam", "block_len": 23,
+      "fields": [
+        {"name": "date_realisation", "start": 1, "end": 8, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+        {"name": "code_ccam", "start": 9, "end": 15, "len": 7, "type": "A", "required": "O"},
+        {"name": "extension_pmsi", "start": 16, "end": 18, "len": 3, "type": "A**", "required": "C"},
+        {"name": "code_phase", "start": 19, "end": 19, "len": 1, "type": "A*", "required": "O"},
+        {"name": "code_activite", "start": 20, "end": 20, "len": 1, "type": "A*", "required": "O"},
+        {"name": "extension_documentaire", "start": 21, "end": 21, "len": 1, "type": "A*", "required": "C"},
+        {"name": "nombre_realisations", "start": 22, "end": 23, "len": 2, "type": "N", "required": "O"}
+      ]
+    }
+  ],
+  "validation_notes": [
+    "Somme des tailles du bloc fixe = 190 (vérifié).",
+    "Tailles des blocs répétés (DAS=8, CSARR=35, CSAR=30, CCAM=23) vérifiées conformes à la formule de longueur d'enregistrement.",
+    "code_gme (55-61) confirmé par l'utilisateur comme champ composite unique (Groupe Médico-Économique), non décomposé en sous-variables x²/GL/GR/GN/CM/Code/NR/NL/sévérité — ces libellés du CSV sont des noms hérités de versions de classification antérieures.",
+    "Positions vérifiées empiriquement sur un fichier RHS réel (version_classification='13', code_gme='0875UC1')."
+  ]
+}

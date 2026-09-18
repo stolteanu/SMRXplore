@@ -1,0 +1,14 @@
+{
+  "nomenclature": "ccam",
+  "spec_source": "Fichier complémentaire CCAM descriptive à usage PMSI (ATIH), feuille CCAM_Final_2026, lignes Typo='L' uniquement (code + libellé, hors ICR/modificateurs/gestes complémentaires/avis HAS/etc.)",
+  "table": "nomenclature_ccam",
+  "natural_key": ["code"],
+  "columns": [
+    {"name": "code", "type": "TEXT", "note": "code acte CCAM 7 caractères, éventuellement + extension PMSI (ex. AHQP002-P0), ou code modificateur 1 caractère (ex. U, P, S, F)"},
+    {"name": "libelle", "type": "TEXT"},
+    {"name": "parent_code", "type": "TEXT", "note": "code du sous-paragraphe (si présent) sinon du paragraphe dans nomenclature_ccam_hierarchie — remonter parent_code permet de reconstituer chapitre/sous-chapitre/paragraphe/sous-paragraphe pour n'importe quel acte"}
+  ],
+  "notes": [
+    "Un même code peut apparaître plusieurs fois dans la source avec des libellés différents (historique de révisions) — le loader trie par date de début de validité croissante avant insertion, dernier-libellé-gagne comme pour les autres nomenclatures."
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "nomenclature": "csar_majoration_lieu",
+  "spec_source": "CSAR_infos.xlsx (ATIH, annexe 7), feuille modulateur_modalite_extension, lignes Variable=Lieu — reprend le §3.3.1.4 du Manuel des GME vol.1",
+  "table": "nomenclature_csar_majoration_lieu",
+  "natural_key": ["modalite"],
+  "columns": [
+    {"name": "modalite", "type": "TEXT", "modalite": {"L1": "hors établissement", "L2": "sur le lieu d'activité du patient", "L3": "dans un autre établissement"}},
+    {"name": "majoration_individuel", "type": "REAL", "note": "L1/L3=30, L2=60"},
+    {"name": "majoration_collectif", "type": "TEXT", "note": "L1/L3=5, L2='sans objet' (texte, pas de majoration collective pour ce lieu)"}
+  ],
+  "notes": [
+    "Manuel des GME vol.1 §3.3.1.4 : L1 et L3 CSAR se transcodent vers le groupe de majoration CSARR HW/LJ/L3 (30% individuel / 5% collectif) ; L2 se transcode vers XH (60% individuel seulement). La majoration s'applique à la pondération retenue de l'acte (cf. nomenclature_csar_ponderation_temps), selon la modalité collective codée sur le RHS (modalite_collective, bloc CSAR)."
+  ]
+}

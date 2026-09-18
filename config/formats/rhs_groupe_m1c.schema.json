@@ -1,0 +1,98 @@
+{
+  "format": "RHS_groupe",
+  "spec_source": "Déduit empiriquement d'un fichier RHS réel (version M1C, avant M3 2025) + historique de mise à jour de formats_smr_2025_0.xlsx (\"nouveau CSAR à partir de M3 2025\")",
+  "record_length_formula": "187 + 8*n1 + 35*n2 + 23*n4 (pas de bloc CSAR avant M3 2025 : confirmé par l'utilisateur)",
+  "version_field": {"start": 11, "end": 13, "values": ["M1C"]},
+  "note": "Schéma de PARSING uniquement (positions différentes de rhs_groupe.schema.json) — même 'format' donc même table SQLite (n3_nb_csar et le bloc CSAR restent NULL/absents pour ces lignes). Identique à rhs_groupe.schema.json jusqu'à n2_nb_csarr (fin 179) ; pas de champ n3 (CSAR n'existait pas) donc n4 suit directement n2, et tout le reste du bloc fixe est décalé de 3 positions plus tôt.",
+  "fixed_block": [
+    {"name": "filler_1", "start": 1, "end": 10, "len": 10, "type": "A*", "required": "F"},
+    {"name": "version_format_rhs_groupe", "start": 11, "end": 13, "len": 3, "type": "A", "required": "O", "modalite": "valeur fixe, M1C"},
+    {"name": "finess_epmsi", "start": 14, "end": 22, "len": 9, "type": "A", "required": "O"},
+    {"name": "version_format_rhs", "start": 23, "end": 25, "len": 3, "type": "A", "required": "O", "modalite": "valeur fixe, ex. M0C"},
+    {"name": "numero_sejour_smr", "start": 26, "end": 32, "len": 7, "type": "A*", "required": "O"},
+    {"name": "numero_admin_sejour", "start": 33, "end": 52, "len": 20, "type": "A*", "required": "O"},
+
+    {"name": "version_classification", "start": 53, "end": 54, "len": 2, "type": "A", "required": "O", "note": "détermine la nomenclature GME applicable"},
+    {"name": "code_gme", "start": 55, "end": 61, "len": 7, "type": "A", "required": "O", "note": "Code GME, champ composite, cf. rhs_groupe.schema.json"},
+    {"name": "code_retour_groupage", "start": 62, "end": 64, "len": 3, "type": "A", "required": "O"},
+    {"name": "indicateur_erreur", "start": 65, "end": 65, "len": 1, "type": "A", "required": "O"},
+
+    {"name": "date_debut_sejour", "start": 66, "end": 73, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+    {"name": "date_fin_sejour", "start": 74, "end": 81, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "C"},
+    {"name": "date_naissance", "start": 82, "end": 89, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+    {"name": "sexe", "start": 90, "end": 90, "len": 1, "type": "A", "required": "O", "modalite": {"1": "homme", "2": "femme", "3": "indéterminé"}},
+    {"name": "code_postal_residence", "start": 91, "end": 95, "len": 5, "type": "A", "required": "O"},
+    {"name": "type_hospitalisation", "start": 96, "end": 96, "len": 1, "type": "A", "required": "O", "modalite": {"1": "complète", "2": "partielle de jour", "3": "partielle de nuit", "4": "séances"}},
+    {"name": "date_entree_um", "start": 97, "end": 104, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+    {"name": "mode_entree_um", "start": 105, "end": 105, "len": 1, "type": "A", "required": "O"},
+    {"name": "provenance", "start": 106, "end": 106, "len": 1, "type": "A*", "required": "C"},
+    {"name": "date_sortie_um", "start": 107, "end": 114, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "C"},
+    {"name": "mode_sortie", "start": 115, "end": 115, "len": 1, "type": "A", "required": "C"},
+    {"name": "destination", "start": 116, "end": 116, "len": 1, "type": "A*", "required": "C"},
+    {"name": "numero_semaine", "start": 117, "end": 122, "len": 6, "type": "A", "format": "N° semaine ISO8601 (2) + Année (4)", "required": "O"},
+    {"name": "jours_hors_weekend", "start": 123, "end": 127, "len": 5, "type": "A", "required": "O"},
+    {"name": "jours_weekend", "start": 128, "end": 129, "len": 2, "type": "A", "required": "O"},
+    {"name": "numero_unite_medicale", "start": 130, "end": 133, "len": 4, "type": "A*", "required": "O"},
+    {"name": "type_autorisation_um", "start": 134, "end": 136, "len": 3, "type": "A", "required": "O"},
+    {"name": "date_intervention_chirurgicale", "start": 137, "end": 144, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "C"},
+    {"name": "filler_2", "start": 145, "end": 152, "len": 8, "type": "A*", "required": "F"},
+    {"name": "manifestation_morbide_principale", "start": 153, "end": 160, "len": 8, "type": "A*", "ref": "CIM10-PMSI-FR", "required": "O"},
+    {"name": "affection_etiologique", "start": 161, "end": 168, "len": 8, "type": "A*", "ref": "CIM10-PMSI-FR", "required": "C"},
+
+    {"name": "dependance_habillage_toilette", "start": 169, "end": 169, "len": 1, "type": "A*", "required": "C"},
+    {"name": "dependance_deplacement", "start": 170, "end": 170, "len": 1, "type": "A*", "required": "C"},
+    {"name": "dependance_alimentation", "start": 171, "end": 171, "len": 1, "type": "A*", "required": "C"},
+    {"name": "dependance_continence", "start": 172, "end": 172, "len": 1, "type": "A*", "required": "C"},
+    {"name": "dependance_comportement", "start": 173, "end": 173, "len": 1, "type": "A*", "required": "C"},
+    {"name": "dependance_relation", "start": 174, "end": 174, "len": 1, "type": "A*", "required": "C"},
+
+    {"name": "n1_nb_das", "start": 175, "end": 176, "len": 2, "type": "N", "required": "O", "range": "[00-99]"},
+    {"name": "n2_nb_csarr", "start": 177, "end": 179, "len": 3, "type": "N", "required": "O", "range": "[000-999]"},
+    {"name": "n4_nb_ccam", "start": 180, "end": 181, "len": 2, "type": "N", "required": "O", "range": "[00-99]", "note": "directement après n2 : pas de champ n3/CSAR avant M3 2025"},
+
+    {"name": "poursuite_projet_therapeutique", "start": 182, "end": 182, "len": 1, "type": "A*", "required": "C"},
+    {"name": "filler_3", "start": 183, "end": 183, "len": 1, "type": "A*", "required": "F"},
+    {"name": "lits_places_dedies", "start": 184, "end": 185, "len": 2, "type": "A*", "required": "F"},
+    {"name": "type_unite_specifique", "start": 186, "end": 187, "len": 2, "type": "A*", "required": "F"}
+  ],
+  "repeated_blocks": [
+    {
+      "name": "DAS", "counter_field": "n1_nb_das", "block_len": 8,
+      "fields": [{"name": "code_das", "start": 1, "end": 8, "len": 8, "type": "A*", "ref": "CIM10-PMSI-FR", "required": "O pour DAS n°1, C ensuite"}]
+    },
+    {
+      "name": "CSARR", "counter_field": "n2_nb_csarr", "block_len": 35,
+      "fields": [
+        {"name": "code_principal", "start": 1, "end": 7, "len": 7, "type": "A*", "ref": "CSARR", "required": "O"},
+        {"name": "code_suppl_appareillage", "start": 8, "end": 10, "len": 3, "type": "A*", "required": "C"},
+        {"name": "code_modulateur_lieu", "start": 11, "end": 12, "len": 2, "type": "A*", "required": "F"},
+        {"name": "code_modulateur_patient", "start": 13, "end": 14, "len": 2, "type": "A*", "required": "F"},
+        {"name": "code_modulateur_technicite", "start": 15, "end": 16, "len": 2, "type": "A*", "required": "F"},
+        {"name": "code_intervenant", "start": 17, "end": 18, "len": 2, "type": "A*", "required": "O"},
+        {"name": "module_niveau_technicite", "start": 19, "end": 19, "len": 1, "type": "A*", "required": "C"},
+        {"name": "nombre_realisations", "start": 20, "end": 21, "len": 2, "type": "N", "required": "O"},
+        {"name": "date_realisation", "start": 22, "end": 29, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+        {"name": "nombre_reel_patients", "start": 30, "end": 31, "len": 2, "type": "N", "required": "O"},
+        {"name": "nombre_intervenants", "start": 32, "end": 33, "len": 2, "type": "N", "required": "C"},
+        {"name": "extension_documentaire", "start": 34, "end": 35, "len": 2, "type": "A*", "required": "F"}
+      ]
+    },
+    {
+      "name": "CCAM", "counter_field": "n4_nb_ccam", "block_len": 23,
+      "fields": [
+        {"name": "date_realisation", "start": 1, "end": 8, "len": 8, "type": "Date", "format": "JJMMAAAA", "required": "O"},
+        {"name": "code_ccam", "start": 9, "end": 15, "len": 7, "type": "A", "required": "O"},
+        {"name": "extension_pmsi", "start": 16, "end": 18, "len": 3, "type": "A**", "required": "C"},
+        {"name": "code_phase", "start": 19, "end": 19, "len": 1, "type": "A*", "required": "O"},
+        {"name": "code_activite", "start": 20, "end": 20, "len": 1, "type": "A*", "required": "O"},
+        {"name": "extension_documentaire", "start": 21, "end": 21, "len": 1, "type": "A*", "required": "C"},
+        {"name": "nombre_realisations", "start": 22, "end": 23, "len": 2, "type": "N", "required": "O"}
+      ]
+    }
+  ],
+  "validation_notes": [
+    "310/310 lignes M1C d'un fichier RHS réel valident exactement la formule 187+8n1+35n2+23n4 (vérifié programmatiquement).",
+    "Absence de bloc CSAR confirmée explicitement par l'utilisateur : CSAR n'existait pas avant M3 2025, seul CSARR existait.",
+    "Bloc fixe 187 vérifié empiriquement : DAS commence en position 188 avec 10 codes CIM10 parfaitement cadrés à gauche (ex. 'R296    ', 'Z958    ', 'M180    ', ...) ; le bloc CSARR (35 car/acte) démarre ensuite exactement là où n2 l'annonce, avec des codes CSARR valides (ex. 'PZE+057')."
+  ]
+}

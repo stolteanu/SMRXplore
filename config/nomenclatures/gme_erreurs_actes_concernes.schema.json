@@ -1,0 +1,14 @@
+{
+  "nomenclature": "gme_erreurs_actes_concernes",
+  "spec_source": "Fichier ATIH FG_erreurs.TXT — annexes en texte libre ('Erreur 162 : liste des actes concernés', 'Erreur 163 : actes concernés'), séparateur tabulation",
+  "table": "nomenclature_gme_erreurs_actes_concernes",
+  "natural_key": ["code_erreur", "code_acte"],
+  "columns": [
+    {"name": "code_erreur", "type": "TEXT", "note": "référence nomenclature_gme_erreurs.code (ex. '162', '163')"},
+    {"name": "code_acte", "type": "TEXT", "note": "code acte CSARR concerné par cette erreur"},
+    {"name": "libelle_acte", "type": "TEXT"}
+  ],
+  "notes": [
+    "Seules 2 des 184 erreurs (162 et 163) ont une liste d'actes concernés dans le fichier source — les autres erreurs n'ont pas d'entrée dans cette table."
+  ]
+}
